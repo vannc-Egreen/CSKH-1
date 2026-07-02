@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eGreen · Quản lý MPĐ Biogas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#eef4f1; --panel:#ffffff; --panel-soft:#f6faf8; --line:#dce7e1; --line-2:#c3d8cd;
+  --text:#16251f; --muted:#60716a; --green:#0f8f54; --green-d:#086438; --green-l:#e2f4eb;
+  --amber:#c07806; --amber-bg:#fef3d9; --red:#c0392b; --red-bg:#fbe4e0; --slate:#64748b;
+  --ok:#15803d; --shadow:0 8px 22px rgba(17,48,34,.08); --radius:14px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font-family:'Be Vietnam Pro',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.45}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{font-family:inherit;font-size:14px}
+a{color:var(--green-d)}
+.hidden{display:none!important}
+
+/* ---------- Connect gate ---------- */
+.gate{min-height:100vh;display:grid;place-items:center;padding:24px}
+.gate-card{background:var(--panel);border-radius:20px;box-shadow:var(--shadow);max-width:520px;width:100%;padding:34px 30px;border:1px solid var(--line)}
+.gate-card h1{margin:.2em 0 .1em;font-size:22px}
+.gate-card p{color:var(--muted);margin:.2em 0 18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;color:var(--green-d);font-size:20px;letter-spacing:.3px}
+.brand .dot{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--green),var(--green-d));display:grid;place-items:center;color:#fff;font-size:14px}
+.field{margin:12px 0}
+.field label{display:block;font-weight:600;margin-bottom:5px;font-size:13px}
+.field input{width:100%;padding:11px 12px;border:1px solid var(--line-2);border-radius:10px;background:#fff}
+.field input:focus{outline:2px solid var(--green-l);border-color:var(--green)}
+.hint{font-size:12px;color:var(--muted);margin-top:5px}
+.btn{border:1px solid var(--line-2);background:#fff;color:var(--text);padding:10px 16px;border-radius:10px;font-weight:600;transition:.15s}
+.btn:hover{background:var(--panel-soft)}
+.btn.primary{background:var(--green);border-color:var(--green);color:#fff}
+.btn.primary:hover{background:var(--green-d)}
+.btn.sm{padding:6px 11px;font-size:13px;border-radius:9px}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--green-d)}
+.err{color:var(--red);font-size:13px;min-height:18px;margin-top:6px}
+
+/* ---------- Layout ---------- */
+.layout{display:grid;grid-template-columns:236px 1fr;min-height:100vh}
+.side{background:linear-gradient(180deg,#0d7a48,#0a5c37);color:#eafaf1;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.side .brand{color:#fff;padding:20px 18px 14px}
+.side .brand .dot{background:rgba(255,255,255,.16)}
+.nav{display:flex;flex-direction:column;gap:2px;padding:8px 10px;flex:1}
+.nav button{display:flex;align-items:center;gap:11px;text-align:left;background:transparent;border:0;color:#d6efe1;padding:11px 12px;border-radius:10px;font-weight:600;font-size:13.5px}
+.nav button .ic{width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.1);display:grid;place-items:center;font-size:12px;font-weight:700;flex:none}
+.nav button:hover{background:rgba(255,255,255,.09);color:#fff}
+.nav button.active{background:#fff;color:var(--green-d)}
+.nav button.active .ic{background:var(--green-l);color:var(--green-d)}
+.side .foot{padding:12px 16px;font-size:11.5px;color:#bfe6d3;border-top:1px solid rgba(255,255,255,.12)}
+.side .foot b{color:#fff}
+
+.main{padding:22px 26px 60px;max-width:1240px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.topbar h2{margin:0;font-size:21px}
+.topbar .sub{color:var(--muted);font-size:13px;margin-top:2px}
+.page{display:none}
+.page.active{display:block}
+
+/* ---------- Cards / KPI ---------- */
+.grid{display:grid;gap:14px}
+.kpis{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 17px;box-shadow:var(--shadow)}
+.kpi .lab{font-size:12.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.kpi .val{font-size:30px;font-weight:800;line-height:1.1;margin-top:6px}
+.kpi .foot{font-size:12.5px;margin-top:4px;color:var(--muted)}
+.kpi .foot.up{color:var(--ok)} .kpi .foot.down{color:var(--red)}
+.kpi.accent{background:linear-gradient(135deg,#0f8f54,#0a5c37);color:#fff;border:0}
+.kpi.accent .lab,.kpi.accent .foot{color:#d9f3e6}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+.card h3{margin:0 0 4px;font-size:15px}
+.card .cap{color:var(--muted);font-size:12.5px;margin-bottom:12px}
+.two{grid-template-columns:1.3fr 1fr}
+.three{grid-template-columns:repeat(3,1fr)}
+@media(max-width:920px){.two,.three{grid-template-columns:1fr}.layout{grid-template-columns:1fr}.side{position:static;height:auto}.nav{flex-direction:row;overflow:auto}}
+
+/* ---------- Table ---------- */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.3px;background:var(--panel-soft);position:sticky;top:0}
+tbody tr:hover{background:var(--panel-soft)}
+.tbl-wrap{max-height:460px;overflow:auto;border:1px solid var(--line);border-radius:12px}
+.right{text-align:right}
+.mono{font-variant-numeric:tabular-nums}
+
+/* ---------- Badges ---------- */
+.badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
+.b-overdue{background:var(--red-bg);color:var(--red)}
+.b-soon{background:var(--amber-bg);color:var(--amber)}
+.b-ok{background:var(--green-l);color:var(--green-d)}
+.b-run{background:var(--green-l);color:var(--green-d)}
+.b-stop{background:var(--red-bg);color:var(--red)}
+.b-maint{background:#e6edf5;color:var(--slate)}
+.b-mute{background:#eef1f0;color:var(--muted)}
+
+/* ---------- Forms inline ---------- */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:640px){.form-grid{grid-template-columns:1fr}}
+.form-grid label,.fld label{display:block;font-weight:600;font-size:12.5px;margin-bottom:4px}
+.form-grid input,.form-grid select,.form-grid textarea,.fld input,.fld select{width:100%;padding:9px 10px;border:1px solid var(--line-2);border-radius:9px;background:#fff}
+.form-grid input:focus,.form-grid select:focus{outline:2px solid var(--green-l);border-color:var(--green)}
+.row-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.filters input,.filters select{padding:8px 10px;border:1px solid var(--line-2);border-radius:9px;background:#fff}
+.seg{display:inline-flex;background:var(--panel-soft);border:1px solid var(--line);border-radius:10px;padding:3px}
+.seg button{border:0;background:transparent;padding:7px 14px;border-radius:8px;font-weight:600;color:var(--muted)}
+.seg button.active{background:#fff;color:var(--green-d);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+
+/* ---------- Toast / modal ---------- */
+.toast{position:fixed;right:20px;bottom:20px;background:#16251f;color:#fff;padding:12px 16px;border-radius:11px;box-shadow:var(--shadow);z-index:60;max-width:340px;font-size:13.5px;opacity:0;transform:translateY(8px);transition:.2s}
+.toast.show{opacity:1;transform:none}
+.toast.bad{background:#7a1f16}
+.modal{position:fixed;inset:0;background:rgba(10,30,20,.42);display:none;place-items:center;z-index:50;padding:18px}
+.modal.show{display:grid}
+.modal .box{background:#fff;border-radius:16px;max-width:520px;width:100%;padding:22px;box-shadow:var(--shadow);max-height:90vh;overflow:auto}
+.modal .box h3{margin:0 0 14px;font-size:17px}
+.empty{color:var(--muted);text-align:center;padding:30px;font-size:13.5px}
+.spin{display:inline-block;width:15px;height:15px;border:2px solid var(--green-l);border-top-color:var(--green);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;margin-top:10px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+.stat-line{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed var(--line)}
+.stat-line b{font-variant-numeric:tabular-nums}
+.pill-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.note{font-size:12.5px;color:var(--muted)}
+.warnbar{background:var(--amber-bg);border:1px solid #f0d79a;color:#7a5300;border-radius:12px;padding:11px 14px;font-size:13px;margin-bottom:14px}
+</style>
+</head>
+<body>
+
+<!-- ============ MÀN HÌNH KẾT NỐI ============ -->
+<div class="gate" id="gate">
+  <div class="gate-card">
+    <div class="brand"><span class="dot">eG</span> eGreen · MPĐ Biogas</div>
+    <h1>Kết nối Google Sheet</h1>
+    <p>Dán link Web App (Apps Script) của bạn để app đọc/ghi dữ liệu hai chiều.</p>
+    <div class="field">
+      <label>Link API (Apps Script /exec)</label>
+      <input id="apiUrl" placeholder="https://script.google.com/macros/s/AKfy.../exec" autocomplete="off">
+      <div class="hint">Lấy ở Apps Script → Deploy → Web app → Web app URL.</div>
+    </div>
+    <div class="field">
+      <label>Mã bảo vệ (để ghi dữ liệu)</label>
+      <input id="passcode" type="password" placeholder="vd: egreen2024" autocomplete="off">
+      <div class="hint">Trùng với <code>WRITE_PASSCODE</code> trong Code.gs. Bỏ trống nếu chỉ xem.</div>
+    </div>
+    <div class="row-actions">
+      <button class="btn primary" id="connectBtn" onclick="connect()">Kết nối</button>
+      <button class="btn ghost" onclick="loadDemo()">Xem thử dữ liệu mẫu</button>
+    </div>
+    <div class="err" id="gateErr"></div>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div class="layout hidden" id="app">
+  <aside class="side">
+    <div class="brand"><span class="dot">eG</span> MPĐ Biogas</div>
+    <nav class="nav" id="nav">
+      <button class="active" data-page="overview"><span class="ic">TQ</span> Tổng quan</button>
+      <button data-page="maint"><span class="ic">BD</span> Bảo dưỡng &amp; Zalo</button>
+      <button data-page="stock"><span class="ic">VT</span> Vật tư tại trại</button>
+      <button data-page="report"><span class="ic">BC</span> Báo cáo</button>
+      <button data-page="power"><span class="ic">kW</span> Điện &amp; hiệu suất</button>
+      <button data-page="catalog"><span class="ic">DM</span> Danh mục máy</button>
+    </nav>
+    <div class="foot">
+      <div>Đồng bộ: <b id="syncTime">—</b></div>
+      <div style="margin-top:6px"><a href="#" onclick="refresh();return false">Tải lại dữ liệu</a> · <a href="#" onclick="disconnect();return false">Đổi kết nối</a></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- ===== TỔNG QUAN ===== -->
+    <section class="page active" id="page-overview">
+      <div class="topbar"><div><h2>Tổng quan hệ thống</h2><div class="sub" id="ov-sub">—</div></div>
+        <button class="btn sm" onclick="refresh()">↻ Làm mới</button></div>
+      <div class="grid kpis" id="ov-kpis"></div>
+      <div class="grid two" style="margin-top:16px">
+        <div class="card"><h3>Điện phát – tháng này so tháng trước</h3><div class="cap">Tổng kWh toàn hệ thống (nguồn: sheet 5)</div><div id="ov-chart-power"></div></div>
+        <div class="card"><h3>Cảnh báo cần xử lý</h3><div class="cap">Ưu tiên từ trên xuống</div><div id="ov-alerts"></div></div>
+      </div>
+      <div class="grid two" style="margin-top:16px">
+        <div class="card"><h3>Tình trạng máy</h3><div class="cap">Đang chạy / dừng / bảo trì</div><div id="ov-chart-status"></div></div>
+        <div class="card"><h3>Hiệu suất so thiết kế (tháng)</h3><div class="cap">kWh thực tế / (kW × giờ chạy)</div><div id="ov-eff"></div></div>
+      </div>
+    </section>
+
+    <!-- ===== BẢO DƯỠNG ===== -->
+    <section class="page" id="page-maint">
+      <div class="topbar"><div><h2>Bảo dưỡng định kỳ &amp; nhắc Zalo</h2><div class="sub">Tự tính theo giờ chạy hiện tại vs chu kỳ định mức</div></div>
+        <div class="row-actions" style="margin:0">
+          <button class="btn primary sm" onclick="openReplace()">+ Ghi nhận thay vật tư</button>
+          <button class="btn sm" onclick="sendZalo()" id="zaloBtn">Gửi nhắc Zalo</button>
+        </div></div>
+      <div class="filters">
+        <select id="maint-filter" onchange="renderMaint()">
+          <option value="all">Tất cả tình trạng</option>
+          <option value="overdue">Quá hạn</option>
+          <option value="soon">Sắp đến hạn</option>
+          <option value="ok">Còn hạn</option>
+        </select>
+        <input id="maint-search" placeholder="Tìm mã máy / vật tư…" oninput="renderMaint()">
+      </div>
+      <div class="card" style="padding:0"><div class="tbl-wrap"><table id="maint-tbl"></table></div></div>
+    </section>
+
+    <!-- ===== VẬT TƯ TẠI TRẠI ===== -->
+    <section class="page" id="page-stock">
+      <div class="topbar"><div><h2>Vật tư dự phòng tại trại</h2><div class="sub">Tồn dưới định mức → cần gửi hàng bổ sung</div></div></div>
+      <div class="warnbar" id="stock-warn"></div>
+      <div class="grid two">
+        <div class="card" style="padding:0"><div style="padding:14px 16px 0"><h3>Cần gửi bổ sung</h3><div class="cap">Tồn ≤ định mức tối thiểu</div></div>
+          <div class="tbl-wrap" style="margin:12px;max-height:420px"><table id="stock-low"></table></div></div>
+        <div class="card"><h3>Cập nhật tồn kho</h3><div class="cap">Sau khi kiểm đếm hoặc gửi hàng về trại</div>
+          <div class="fld"><label>Máy</label><select id="st-machine" onchange="fillStockMats()"></select></div>
+          <div class="fld" style="margin-top:10px"><label>Vật tư</label><select id="st-mat"></select></div>
+          <div class="form-grid" style="margin-top:10px">
+            <div><label>Tồn hiện tại</label><input id="st-stock" type="number" min="0" step="1"></div>
+            <div><label>Định mức tối thiểu</label><input id="st-min" type="number" min="0" step="1"></div>
+          </div>
+          <div class="row-actions"><button class="btn primary" onclick="saveStock()">Lưu tồn kho</button></div>
+        </div>
+      </div>
+      <div class="card" style="padding:0;margin-top:16px"><div style="padding:14px 16px 0"><h3>Toàn bộ tồn vật tư theo máy</h3></div>
+        <div class="tbl-wrap" style="margin:12px"><table id="stock-all"></table></div></div>
+    </section>
+
+    <!-- ===== BÁO CÁO ===== -->
+    <section class="page" id="page-report">
+      <div class="topbar"><div><h2>Báo cáo vận hành</h2><div class="sub">Máy chạy / không chạy · tỷ lệ lỗi theo nhóm · hiệu suất</div></div>
+        <div class="seg" id="rep-seg">
+          <button class="active" data-mode="day" onclick="setRepMode('day')">Ngày</button>
+          <button data-mode="week" onclick="setRepMode('week')">Tuần</button>
+          <button data-mode="month" onclick="setRepMode('month')">Tháng</button>
+        </div></div>
+
+      <div class="filters" id="rep-filters"></div>
+      <div class="grid three" id="rep-kpis" style="margin-bottom:16px"></div>
+      <div class="grid two">
+        <div class="card"><h3>Tỷ lệ lỗi theo nhóm</h3><div class="cap" id="rep-err-cap">—</div><div id="rep-err"></div></div>
+        <div class="card" id="rep-daily-entry">
+          <h3>Điền báo cáo ngày</h3><div class="cap">Trạng thái + nhóm lỗi cho từng máy (ghi vào sheet)</div>
+          <div class="fld"><label>Máy</label><select id="dr-machine"></select></div>
+          <div class="form-grid" style="margin-top:10px">
+            <div><label>Trạng thái</label><select id="dr-status"><option>Chạy</option><option>Không chạy</option></select></div>
+            <div><label>Nhóm lỗi</label><select id="dr-err"></select></div>
+          </div>
+          <div class="fld" style="margin-top:10px"><label>Chi tiết</label><input id="dr-detail" placeholder="mô tả ngắn…"></div>
+          <div class="row-actions"><button class="btn primary" onclick="saveDaily()">Lưu báo cáo ngày</button>
+            <span class="note">Ngày: <b id="dr-date-lbl"></b></span></div>
+        </div>
+      </div>
+      <div class="card" style="padding:0;margin-top:16px"><div style="padding:14px 16px 0"><h3>Chi tiết theo máy</h3></div>
+        <div class="tbl-wrap" style="margin:12px"><table id="rep-tbl"></table></div></div>
+    </section>
+
+    <!-- ===== ĐIỆN & HIỆU SUẤT ===== -->
+    <section class="page" id="page-power">
+      <div class="topbar"><div><h2>Điện phát &amp; hiệu suất tháng</h2><div class="sub">So sánh với tháng trước · phân tích nguyên nhân tăng/giảm</div></div>
+        <div class="filters" style="margin:0"><label class="note" style="font-weight:600">Tháng:</label><input type="month" id="pw-month" onchange="renderPower()"></div>
+      </div>
+      <div class="grid kpis" id="pw-kpis"></div>
+      <div class="card" style="margin-top:16px"><h3>Phân tích chênh lệch so tháng trước</h3>
+        <div class="cap">Tách phần thay đổi do <b>thời gian chạy</b> và do <b>hiệu suất</b> (ΔkWh = kW·eff·Δh + kW·h·Δeff)</div>
+        <div id="pw-cause"></div>
+      </div>
+      <div class="card" style="padding:0;margin-top:16px"><div style="padding:14px 16px 0"><h3>Chi tiết từng máy</h3></div>
+        <div class="tbl-wrap" style="margin:12px"><table id="pw-tbl"></table></div></div>
+    </section>
+
+    <!-- ===== DANH MỤC ===== -->
+    <section class="page" id="page-catalog">
+      <div class="topbar"><div><h2>Danh mục máy &amp; SIM/Camera</h2><div class="sub">Thông tin gốc – Master, chủ trại, thiết bị viễn thông</div></div>
+        <button class="btn primary sm" onclick="openMachine()">+ Thêm / sửa máy</button></div>
+      <div class="card" style="padding:0"><div style="padding:14px 16px 0"><h3>Danh sách máy</h3></div>
+        <div class="tbl-wrap" style="margin:12px"><table id="cat-tbl"></table></div></div>
+      <div class="card" style="padding:0;margin-top:16px"><div style="padding:14px 16px 8px;display:flex;justify-content:space-between;align-items:center">
+        <h3 style="margin:0">SIM / Camera / Gói cước</h3><button class="btn sm" onclick="openSim()">+ Thêm dòng</button></div>
+        <div class="tbl-wrap" style="margin:12px"><table id="sim-tbl"></table></div></div>
+    </section>
+  </main>
+</div>
+
+<!-- Modals -->
+<div class="modal" id="modal"><div class="box" id="modalBox"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ================= STATE & STORAGE ================= */
+var API = '', PASS = '', DEMO = false;
+var D = null;              // dữ liệu bootstrap
+var repMode = 'day';
+function store(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+function load(k){try{return localStorage.getItem(k)||''}catch(e){return ''}}
+
+/* ================= HELPERS ================= */
+function $(id){return document.getElementById(id)}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function n(v){if(v===''||v==null)return null;var x=Number(String(v).replace(/[^0-9.\-]/g,''));return isNaN(x)?null:x}
+function fmt(v,d){if(v==null||isNaN(v))return '—';return Number(v).toLocaleString('vi-VN',{maximumFractionDigits:d==null?0:d})}
+function toast(msg,bad){var t=$('toast');t.textContent=msg;t.className='toast show'+(bad?' bad':'');setTimeout(function(){t.className='toast'+(bad?' bad':'')},3200)}
+function todayISO(){return new Date().toISOString().slice(0,10)}
+function curMonth(){return new Date().toISOString().slice(0,7)}
+function prevMonth(m){var p=m.split('-');var d=new Date(+p[0],+p[1]-2,1);return d.toISOString().slice(0,7)}
+function daysInMonth(m){var p=m.split('-');return new Date(+p[0],+p[1],0).getDate()}
+
+/* API call: POST body dạng chuỗi -> content-type text/plain -> không bị CORS preflight */
+function api(payload){
+  if(DEMO){return Promise.resolve(demoResponse(payload))}
+  payload.passcode = PASS;
+  return fetch(API,{method:'POST',body:JSON.stringify(payload)})
+    .then(function(r){return r.text()})
+    .then(function(t){var j;try{j=JSON.parse(t)}catch(e){throw new Error('Phản hồi không phải JSON. Kiểm tra link /exec và quyền "Anyone".')}
+      if(!j.ok)throw new Error(j.error||'Lỗi không rõ');return j});
+}
+
+/* ================= CONNECT ================= */
+window.addEventListener('DOMContentLoaded',function(){
+  $('apiUrl').value=load('mpd_api'); $('passcode').value=load('mpd_pass');
+});
+function connect(){
+  var url=$('apiUrl').value.trim();
+  if(!url){$('gateErr').textContent='Hãy dán link API.';return}
+  API=url;PASS=$('passcode').value.trim();DEMO=false;
+  $('connectBtn').innerHTML='<span class="spin"></span> Đang kết nối…';$('gateErr').textContent='';
+  api({action:'bootstrap'}).then(function(j){
+    store('mpd_api',url);store('mpd_pass',PASS);
+    D=j;enterApp();
+  }).catch(function(e){$('gateErr').textContent=e.message;$('connectBtn').textContent='Kết nối'});
+}
+function loadDemo(){DEMO=true;API='demo';D=demoResponse({action:'bootstrap'});enterApp()}
+function disconnect(){location.reload()}
+function enterApp(){
+  $('gate').classList.add('hidden');$('app').classList.remove('hidden');
+  $('connectBtn').textContent='Kết nối';
+  buildDerived();renderAll();
+  $('syncTime').textContent=new Date().toLocaleTimeString('vi-VN');
+}
+function refresh(){
+  if(DEMO){D=demoResponse({action:'bootstrap'});buildDerived();renderAll();$('syncTime').textContent=new Date().toLocaleTimeString('vi-VN');toast('Đã tải dữ liệu mẫu');return}
+  api({action:'bootstrap'}).then(function(j){D=j;buildDerived();renderAll();$('syncTime').textContent=new Date().toLocaleTimeString('vi-VN');toast('Đã đồng bộ');})
+    .catch(function(e){toast(e.message,true)});
+}
+
+/* ================= NAV ================= */
+$('nav').addEventListener('click',function(e){
+  var b=e.target.closest('button[data-page]');if(!b)return;
+  document.querySelectorAll('.nav button').forEach(function(x){x.classList.remove('active')});b.classList.add('active');
+  document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active')});
+  $('page-'+b.dataset.page).classList.add('active');
+});
+
+/* ================= DERIVED (TỰ ĐỘNG TÍNH) ================= */
+var DV={};
+function buildDerived(){
+  DV={};
+  // map cơ bản
+  DV.master=D.master||[]; DV.norm=D.norm||[]; DV.operator=D.operator||[];
+  DV.runtime=D.runtime||[]; DV.perf=D.perf||[]; DV.sim=D.sim||[];
+  DV.material=D.material||[]; DV.daily=D.daily||[]; DV.history=D.history||[];
+  DV.errorGroups=(D.config&&D.config.errorGroups)||['Không lỗi'];
+  DV.today=D.today||todayISO();
+
+  // công suất TK theo máy
+  DV.power={}; DV.masterByCode={};
+  DV.master.forEach(function(m){var c=String(m['Mã máy']).trim();DV.masterByCode[c]=m;DV.power[c]=n(m['Công suất TK (kW)'])});
+  // định mức vật tư
+  DV.normByCode={}; DV.norm.forEach(function(x){DV.normByCode[String(x['Mã VT']).trim()]={name:x['Tên vật tư'],cycle:n(x['Chu kỳ (giờ)'])||0,warn:n(x['Cảnh báo trước (giờ)'])||0}});
+  // giờ vận hành hiện tại = tổng giờ lớn nhất ở sheet 4
+  DV.curHours={};
+  DV.runtime.forEach(function(r){var c=String(r['Mã máy']).trim();var t=n(r['Tổng giờ vận hành (h)']);if(t!=null)DV.curHours[c]=Math.max(DV.curHours[c]||0,t)});
+  // báo cáo ngày mới nhất theo máy
+  DV.lastDaily={};
+  DV.daily.forEach(function(r){var c=String(r['Mã máy']).trim();var dt=String(r['Ngày']).slice(0,10);if(!DV.lastDaily[c]||dt>DV.lastDaily[c].Ngày)DV.lastDaily[c]=r});
+
+  // ---- CẢNH BÁO BẢO DƯỠNG ----
+  DV.maint=[];
+  DV.material.forEach(function(m){
+    var code=String(m['Mã máy']).trim(),mc=String(m['Mã VT']).trim();
+    var cfg=DV.normByCode[mc];if(!cfg)return;
+    var last=n(m['Giờ VH lần thay gần nhất (h)']),cur=DV.curHours[code];
+    var elapsed=(last!=null&&cur!=null)?cur-last:null;
+    var remain=(elapsed!=null&&cfg.cycle)?cfg.cycle-elapsed:null;
+    var level='missing';
+    if(remain!=null){level=remain<=0?'overdue':(remain<=cfg.warn?'soon':'ok')}
+    DV.maint.push({code:code,mc:mc,name:cfg.name||m['Tên vật tư'],cycle:cfg.cycle,warn:cfg.warn,last:last,cur:cur,elapsed:elapsed,remain:remain,level:level});
+  });
+  DV.maint.sort(function(a,b){var o={overdue:0,soon:1,ok:2,missing:3};return o[a.level]-o[b.level]||(a.remain||1e9)-(b.remain||1e9)});
+
+  // ---- TỒN VẬT TƯ DƯỚI ĐỊNH MỨC ----
+  DV.stockLow=[];
+  DV.material.forEach(function(m){
+    var stock=n(m['Tồn tại trại']),min=n(m['Định mức tồn tối thiểu']);
+    if(stock!=null&&min!=null&&stock<=min)DV.stockLow.push({code:String(m['Mã máy']).trim(),mc:String(m['Mã VT']).trim(),name:m['Tên vật tư'],stock:stock,min:min,need:Math.max(min-stock+1,1)});
+  });
+
+  // ---- TRẠNG THÁI CHẠY/KHÔNG ----
+  DV.statusCount={run:0,stop:0,maint:0};
+  DV.master.forEach(function(m){var s=String(m['Trạng thái']||'').trim();
+    if(s==='Đang chạy')DV.statusCount.run++;else if(s==='Bảo trì')DV.statusCount.maint++;else DV.statusCount.stop++});
+
+  // ---- HIỆU SUẤT THÁNG ----
+  DV.perfBy={}; // code -> {month -> {kwh,hours}}
+  DV.perf.forEach(function(p){var c=String(p['Mã máy']).trim();var mo=String(p['Tháng (YYYY-MM)']).slice(0,7);
+    DV.perfBy[c]=DV.perfBy[c]||{};DV.perfBy[c][mo]={kwh:n(p['Số điện tháng (kWh)']),hours:n(p['Giờ chạy tháng (h)'])}});
+}
+
+/* eff factor = kWh / (kW*h) */
+function effOf(code,rec){var kw=DV.power[code];if(!kw||!rec||rec.hours==null||!rec.hours||rec.kwh==null)return null;return rec.kwh/(kw*rec.hours)}
+
+/* ================= RENDER ALL ================= */
+function renderAll(){
+  renderOverview();renderMaint();renderStock();
+  buildRepFilters();renderReport();
+  $('pw-month').value=curMonth();renderPower();
+  renderCatalog();
+}
+
+/* ---------- OVERVIEW ---------- */
+function renderOverview(){
+  var total=DV.master.length;
+  var mo=curMonth(),pm=prevMonth(mo);
+  var kwhNow=0,kwhPrev=0;
+  Object.keys(DV.perfBy).forEach(function(c){if(DV.perfBy[c][mo])kwhNow+=DV.perfBy[c][mo].kwh||0;if(DV.perfBy[c][pm])kwhPrev+=DV.perfBy[c][pm].kwh||0});
+  var diff=kwhPrev?((kwhNow-kwhPrev)/kwhPrev*100):null;
+  var overdue=DV.maint.filter(function(x){return x.level==='overdue'}).length;
+  var soon=DV.maint.filter(function(x){return x.level==='soon'}).length;
+
+  $('ov-sub').textContent=total+' máy · tháng '+mo+' · cập nhật '+DV.today;
+  var k=$('ov-kpis');k.innerHTML='';
+  k.appendChild(kpi('Máy đang chạy',DV.statusCount.run+'/'+total,DV.statusCount.stop+' dừng · '+DV.statusCount.maint+' bảo trì',''));
+  k.appendChild(kpi('Điện tháng này',fmt(kwhNow)+' kWh',diff==null?'chưa có tháng trước':(diff>=0?'▲ ':'▼ ')+fmt(Math.abs(diff),1)+'% so tháng trước',diff==null?'':(diff>=0?'up':'down'),true));
+  k.appendChild(kpi('Quá hạn bảo dưỡng',overdue,'hạng mục cần thay ngay',overdue?'down':''));
+  k.appendChild(kpi('Sắp đến hạn',soon,'trong ngưỡng cảnh báo',soon?'':''));
+  k.appendChild(kpi('Tồn dưới định mức',DV.stockLow.length,'cần gửi hàng bổ sung',DV.stockLow.length?'down':''));
+
+  // chart điện
+  $('ov-chart-power').innerHTML=barChart([{label:'Tháng trước',v:kwhPrev,c:'#9ab9aa'},{label:'Tháng này',v:kwhNow,c:'#0f8f54'}],' kWh');
+  // status donut
+  $('ov-chart-status').innerHTML=donut([{label:'Đang chạy',v:DV.statusCount.run,c:'#0f8f54'},{label:'Dừng',v:DV.statusCount.stop,c:'#c0392b'},{label:'Bảo trì',v:DV.statusCount.maint,c:'#64748b'}]);
+  // alerts
+  var al=DV.maint.filter(function(x){return x.level==='overdue'||x.level==='soon'}).slice(0,6);
+  var stk=DV.stockLow.slice(0,3);
+  var h='';
+  al.forEach(function(a){h+='<div class="stat-line"><span><span class="badge '+(a.level==='overdue'?'b-overdue':'b-soon')+'">'+(a.level==='overdue'?'Quá hạn':'Sắp hạn')+'</span> '+esc(a.code)+' · '+esc(a.name)+'</span><b>'+(a.remain!=null?(a.remain<=0?('quá '+fmt(-a.remain)+'h'):('còn '+fmt(a.remain)+'h')):'—')+'</b></div>'});
+  stk.forEach(function(s){h+='<div class="stat-line"><span><span class="badge b-mute">Tồn</span> '+esc(s.code)+' · '+esc(s.name)+'</span><b>'+fmt(s.stock)+'/'+fmt(s.min)+'</b></div>'});
+  $('ov-alerts').innerHTML=h||'<div class="empty">Không có cảnh báo. 👍</div>';
+  // eff list
+  var rows=DV.master.map(function(m){var c=String(m['Mã máy']).trim();var rec=DV.perfBy[c]&&DV.perfBy[c][mo];var e=effOf(c,rec);return{c:c,e:e}}).filter(function(x){return x.e!=null}).sort(function(a,b){return a.e-b.e});
+  var eh=rows.slice(0,8).map(function(r){var pct=r.e*100;var col=pct>=90?'#15803d':pct>=75?'#c07806':'#c0392b';return '<div class="stat-line"><span>'+esc(r.c)+'</span><b style="color:'+col+'">'+fmt(pct,1)+'%</b></div>'}).join('');
+  $('ov-eff').innerHTML=eh||'<div class="empty">Chưa có dữ liệu hiệu suất tháng.</div>';
+}
+function kpi(lab,val,foot,cls,accent){var d=document.createElement('div');d.className='kpi'+(accent?' accent':'');d.innerHTML='<div class="lab">'+lab+'</div><div class="val">'+val+'</div><div class="foot '+(cls||'')+'">'+foot+'</div>';return d}
+
+/* ---------- MAINT ---------- */
+function renderMaint(){
+  var f=$('maint-filter').value,q=($('maint-search').value||'').toLowerCase();
+  var rows=DV.maint.filter(function(x){
+    if(f!=='all'&&x.level!==f)return false;
+    if(q&&!(String(x.code)+String(x.name)+String(x.mc)).toLowerCase().includes(q))return false;
+    return true;
+  });
+  var h='<thead><tr><th>Máy</th><th>Vật tư</th><th class="right">Chu kỳ</th><th class="right">Đã chạy</th><th class="right">Còn lại</th><th>Tình trạng</th><th></th></tr></thead><tbody>';
+  if(!rows.length)h+='<tr><td colspan="7"><div class="empty">Không có hạng mục phù hợp.</div></td></tr>';
+  rows.forEach(function(x){
+    var bd=x.level==='overdue'?'b-overdue':x.level==='soon'?'b-soon':x.level==='ok'?'b-ok':'b-mute';
+    var lbl={overdue:'Quá hạn',soon:'Sắp hạn',ok:'Còn hạn',missing:'Thiếu dữ liệu'}[x.level];
+    h+='<tr><td><b>'+esc(x.code)+'</b></td><td>'+esc(x.name)+'</td><td class="right mono">'+fmt(x.cycle)+'h</td>'+
+       '<td class="right mono">'+(x.elapsed!=null?fmt(x.elapsed)+'h':'—')+'</td>'+
+       '<td class="right mono">'+(x.remain!=null?(x.remain<=0?'-'+fmt(-x.remain):fmt(x.remain))+'h':'—')+'</td>'+
+       '<td><span class="badge '+bd+'">'+lbl+'</span></td>'+
+       '<td class="right"><button class="btn sm" onclick="openReplace(\''+esc(x.code)+'\',\''+esc(x.mc)+'\')">Đã thay</button></td></tr>';
+  });
+  $('maint-tbl').innerHTML=h+'</tbody>';
+}
+
+/* ---------- STOCK ---------- */
+function renderStock(){
+  var w=$('stock-warn');
+  w.innerHTML=DV.stockLow.length?('⚠ Có <b>'+DV.stockLow.length+'</b> loại vật tư ở '+new Set(DV.stockLow.map(function(x){return x.code})).size+' trại đang ở/dưới định mức — nên lên đơn gửi bổ sung.'):'✔ Tồn vật tư tại các trại đang trên định mức.';
+  if(!DV.stockLow.length)w.style.background='var(--green-l)',w.style.borderColor='#bfe3d0',w.style.color='var(--green-d)';else{w.style.background='';w.style.borderColor='';w.style.color=''}
+  var h='<thead><tr><th>Máy</th><th>Vật tư</th><th class="right">Tồn</th><th class="right">Định mức</th><th class="right">Cần gửi</th></tr></thead><tbody>';
+  if(!DV.stockLow.length)h+='<tr><td colspan="5"><div class="empty">Không có mục nào dưới định mức.</div></td></tr>';
+  DV.stockLow.forEach(function(s){h+='<tr><td><b>'+esc(s.code)+'</b></td><td>'+esc(s.name)+'</td><td class="right mono">'+fmt(s.stock)+'</td><td class="right mono">'+fmt(s.min)+'</td><td class="right mono"><b style="color:var(--red)">+'+fmt(s.need)+'</b></td></tr>'});
+  $('stock-low').innerHTML=h+'</tbody>';
+
+  // all
+  var ha='<thead><tr><th>Máy</th><th>Vật tư</th><th class="right">Tồn</th><th class="right">Định mức</th><th>Trạng thái</th></tr></thead><tbody>';
+  DV.material.forEach(function(m){var st=n(m['Tồn tại trại']),mn=n(m['Định mức tồn tối thiểu']);var low=(st!=null&&mn!=null&&st<=mn);
+    ha+='<tr><td>'+esc(m['Mã máy'])+'</td><td>'+esc(m['Tên vật tư'])+'</td><td class="right mono">'+(st!=null?fmt(st):'—')+'</td><td class="right mono">'+(mn!=null?fmt(mn):'—')+'</td><td>'+(st==null||mn==null?'<span class="badge b-mute">—</span>':low?'<span class="badge b-overdue">Thiếu</span>':'<span class="badge b-ok">Đủ</span>')+'</td></tr>'});
+  $('stock-all').innerHTML=ha+'</tbody>';
+
+  // machine select
+  var sel=$('st-machine');sel.innerHTML=DV.master.map(function(m){return '<option>'+esc(m['Mã máy'])+'</option>'}).join('');
+  fillStockMats();
+}
+function fillStockMats(){
+  var code=$('st-machine').value;
+  var mats=DV.material.filter(function(m){return String(m['Mã máy']).trim()===code});
+  $('st-mat').innerHTML=mats.map(function(m){return '<option value="'+esc(m['Mã VT'])+'">'+esc(m['Tên vật tư'])+'</option>'}).join('')||'<option value="">(chưa có)</option>';
+  syncStockInputs();
+  $('st-mat').onchange=syncStockInputs;
+}
+function syncStockInputs(){
+  var code=$('st-machine').value,mc=$('st-mat').value;
+  var m=DV.material.filter(function(x){return String(x['Mã máy']).trim()===code&&String(x['Mã VT']).trim()===mc})[0];
+  $('st-stock').value=m?(n(m['Tồn tại trại'])!=null?n(m['Tồn tại trại']):''):'';
+  $('st-min').value=m?(n(m['Định mức tồn tối thiểu'])!=null?n(m['Định mức tồn tối thiểu']):''):'';
+}
+function saveStock(){
+  var p={action:'updateStock',machineCode:$('st-machine').value,materialCode:$('st-mat').value,stock:$('st-stock').value,min:$('st-min').value};
+  if(!p.materialCode){toast('Chưa chọn vật tư',true);return}
+  api(p).then(function(j){toast(j.message||'Đã lưu');refresh()}).catch(function(e){toast(e.message,true)});
+}
+
+/* ---------- REPORT ---------- */
+function setRepMode(m){repMode=m;document.querySelectorAll('#rep-seg button').forEach(function(b){b.classList.toggle('active',b.dataset.mode===m)});buildRepFilters();renderReport()}
+function buildRepFilters(){
+  var f=$('rep-filters');
+  if(repMode==='day')f.innerHTML='<label class="note" style="font-weight:600">Ngày:</label><input type="date" id="rf-date" value="'+DV.today+'" onchange="renderReport()">';
+  else if(repMode==='week')f.innerHTML='<label class="note" style="font-weight:600">Tuần kết thúc:</label><input type="date" id="rf-date" value="'+DV.today+'" onchange="renderReport()"><span class="note">(7 ngày gần nhất tính tới ngày chọn)</span>';
+  else f.innerHTML='<label class="note" style="font-weight:600">Tháng:</label><input type="month" id="rf-month" value="'+curMonth()+'" onchange="renderReport()">';
+  // fill daily entry machine + error
+  $('dr-machine').innerHTML=DV.master.map(function(m){return '<option>'+esc(m['Mã máy'])+'</option>'}).join('');
+  $('dr-err').innerHTML=DV.errorGroups.map(function(g){return '<option>'+esc(g)+'</option>'}).join('');
+}
+function repRange(){
+  if(repMode==='day'){var d=$('rf-date').value;return{from:d,to:d,label:'ngày '+d}}
+  if(repMode==='week'){var to=$('rf-date').value;var d=new Date(to);var f=new Date(d);f.setDate(d.getDate()-6);var from=f.toISOString().slice(0,10);return{from:from,to:to,label:'tuần '+from+' → '+to}}
+  var mo=$('rf-month').value;return{from:mo+'-01',to:mo+'-31',label:'tháng '+mo,month:mo}
+}
+function renderReport(){
+  var r=repRange();
+  if(repMode==='day')$('rep-daily-entry').style.display='',$('dr-date-lbl').textContent=r.from;
+  else $('rep-daily-entry').style.display='none';
+  // lọc báo cáo ngày trong khoảng
+  var inRange=DV.daily.filter(function(x){var dt=String(x['Ngày']).slice(0,10);return dt>=r.from&&dt<=r.to});
+  // đếm theo nhóm lỗi
+  var errCount={};DV.errorGroups.forEach(function(g){errCount[g]=0});
+  var stop=0,run=0;
+  inRange.forEach(function(x){var g=x['Nhóm lỗi']||'Không lỗi';errCount[g]=(errCount[g]||0)+1;if(String(x['Trạng thái'])==='Không chạy')stop++;else run++});
+  var totalEntries=inRange.length;
+  var errEntries=totalEntries-(errCount['Không lỗi']||0);
+  var errRate=totalEntries?errEntries/totalEntries*100:0;
+
+  // kWh trong kỳ (từ sheet 4 số điện ngày, hoặc sheet 5 nếu tháng)
+  var kwh=0;
+  if(repMode==='month'){Object.keys(DV.perfBy).forEach(function(c){if(DV.perfBy[c][r.month])kwh+=DV.perfBy[c][r.month].kwh||0})}
+  else{DV.runtime.forEach(function(x){var dt=String(x['Ngày']).slice(0,10);if(dt>=r.from&&dt<=r.to)kwh+=n(x['Số điện ngày (kWh)'])||0})}
+
+  var kp=$('rep-kpis');kp.innerHTML='';
+  kp.appendChild(kpi('Lượt báo cáo',totalEntries,'trong '+r.label,''));
+  kp.appendChild(kpi('Tỷ lệ lỗi',fmt(errRate,1)+'%',errEntries+' lượt có lỗi / '+totalEntries,errRate>20?'down':''));
+  kp.appendChild(kpi('Điện phát',fmt(kwh)+' kWh','tổng trong kỳ',''));
+
+  // error chart
+  var arr=DV.errorGroups.filter(function(g){return errCount[g]>0}).map(function(g,i){return{label:g,v:errCount[g],c:errColor(g)}});
+  $('rep-err-cap').textContent=totalEntries?('Tổng '+totalEntries+' lượt · '+r.label):'Chưa có báo cáo trong kỳ';
+  $('rep-err').innerHTML=arr.length?donut(arr):'<div class="empty">Chưa có dữ liệu báo cáo.</div>';
+
+  // detail table (theo máy)
+  var byMachine={};
+  inRange.forEach(function(x){var c=String(x['Mã máy']).trim();byMachine[c]=byMachine[c]||{stop:0,total:0,errs:{}};byMachine[c].total++;if(String(x['Trạng thái'])==='Không chạy')byMachine[c].stop++;var g=x['Nhóm lỗi']||'Không lỗi';if(g!=='Không lỗi')byMachine[c].errs[g]=(byMachine[c].errs[g]||0)+1});
+  var h='<thead><tr><th>Máy</th><th>Vị trí</th><th class="right">Lượt</th><th class="right">Không chạy</th><th>Nhóm lỗi</th></tr></thead><tbody>';
+  var codes=Object.keys(byMachine);
+  if(!codes.length)h+='<tr><td colspan="5"><div class="empty">Không có báo cáo trong kỳ này.</div></td></tr>';
+  codes.forEach(function(c){var b=byMachine[c];var m=DV.masterByCode[c]||{};var errs=Object.keys(b.errs).map(function(g){return '<span class="badge b-mute" style="margin:1px">'+esc(g)+' ×'+b.errs[g]+'</span>'}).join(' ')||'<span class="note">—</span>';
+    h+='<tr><td><b>'+esc(c)+'</b></td><td>'+esc(m['Tên / Vị trí lắp đặt']||'')+'</td><td class="right mono">'+b.total+'</td><td class="right mono">'+(b.stop?('<b style="color:var(--red)">'+b.stop+'</b>'):'0')+'</td><td>'+errs+'</td></tr>'});
+  $('rep-tbl').innerHTML=h+'</tbody>';
+}
+function saveDaily(){
+  var r=repRange();
+  var p={action:'saveDailyReport',date:r.from,machineCode:$('dr-machine').value,status:$('dr-status').value,errorGroup:$('dr-err').value,detail:$('dr-detail').value};
+  api(p).then(function(j){toast(j.message||'Đã lưu');$('dr-detail').value='';refresh()}).catch(function(e){toast(e.message,true)});
+}
+
+/* ---------- POWER ---------- */
+function renderPower(){
+  var mo=$('pw-month').value||curMonth(),pm=prevMonth(mo);
+  var kwhNow=0,kwhPrev=0,hrsNow=0,hrsPrev=0,desNow=0;
+  var rows=[];
+  DV.master.forEach(function(m){
+    var c=String(m['Mã máy']).trim();var kw=DV.power[c]||0;
+    var cur=(DV.perfBy[c]&&DV.perfBy[c][mo])||{kwh:null,hours:null};
+    var prev=(DV.perfBy[c]&&DV.perfBy[c][pm])||{kwh:null,hours:null};
+    var kNow=cur.kwh||0,kPrev=prev.kwh||0,hN=cur.hours||0,hP=prev.hours||0;
+    kwhNow+=kNow;kwhPrev+=kPrev;hrsNow+=hN;hrsPrev+=hP;desNow+=kw*hN;
+    var eNow=(kw&&hN)?kNow/(kw*hN):null,ePrev=(kw&&hP)?kPrev/(kw*hP):null;
+    rows.push({c:c,kw:kw,kNow:kNow,kPrev:kPrev,hN:hN,hP:hP,eNow:eNow,ePrev:ePrev,diff:kNow-kPrev});
+  });
+  var diffPct=kwhPrev?((kwhNow-kwhPrev)/kwhPrev*100):null;
+  var effNow=desNow?kwhNow/desNow*100:null;
+
+  var k=$('pw-kpis');k.innerHTML='';
+  k.appendChild(kpi('Điện tháng '+mo,fmt(kwhNow)+' kWh',diffPct==null?'—':(diffPct>=0?'▲ ':'▼ ')+fmt(Math.abs(diffPct),1)+'% vs '+pm,diffPct==null?'':(diffPct>=0?'up':'down'),true));
+  k.appendChild(kpi('Tháng trước',fmt(kwhPrev)+' kWh',pm,''));
+  k.appendChild(kpi('Giờ chạy tháng',fmt(hrsNow)+' h','tháng trước '+fmt(hrsPrev)+' h',''));
+  k.appendChild(kpi('Hiệu suất TB',effNow==null?'—':fmt(effNow,1)+'%','so công suất thiết kế',effNow!=null&&effNow<80?'down':''));
+
+  // cause decomposition tổng: ΔkWh = Σ kw*ePrev*(hN-hP) + Σ kw*hN*(eNow-ePrev)
+  var byHours=0,byEff=0;
+  rows.forEach(function(r){var eP=r.ePrev==null?0:r.ePrev,eN=r.eNow==null?0:r.eNow;byHours+=r.kw*eP*(r.hN-r.hP);byEff+=r.kw*r.hN*(eN-eP)});
+  var total=kwhNow-kwhPrev;
+  var cause=$('pw-cause');
+  if(!kwhPrev){cause.innerHTML='<div class="empty">Chưa có dữ liệu tháng trước ('+pm+') để so sánh.</div>'}
+  else{
+    cause.innerHTML=
+      '<div class="stat-line"><span>Tổng thay đổi</span><b style="color:'+(total>=0?'var(--ok)':'var(--red)')+'">'+(total>=0?'+':'')+fmt(total)+' kWh</b></div>'+
+      '<div class="stat-line"><span>· Hiệu ứng <b>thời gian chạy</b> (Δgiờ ròng '+(hrsNow-hrsPrev>=0?'+':'')+fmt(hrsNow-hrsPrev)+'h)</span><b style="color:'+(byHours>=0?'var(--ok)':'var(--red)')+'">'+(byHours>=0?'+':'')+fmt(byHours)+' kWh</b></div>'+
+      '<div class="stat-line"><span>· Hiệu ứng <b>hiệu suất</b> (kWh/giờ · máy mới)</span><b style="color:'+(byEff>=0?'var(--ok)':'var(--red)')+'">'+(byEff>=0?'+':'')+fmt(byEff)+' kWh</b></div>'+
+      '<div class="note" style="margin-top:10px">Diễn giải: '+causeText(byHours,byEff)+'</div>';
+  }
+  // table
+  var h='<thead><tr><th>Máy</th><th class="right">kW TK</th><th class="right">kWh '+mo+'</th><th class="right">kWh '+pm+'</th><th class="right">Chênh</th><th class="right">HS này</th><th class="right">HS trước</th></tr></thead><tbody>';
+  rows.forEach(function(r){var col=r.diff>=0?'var(--ok)':'var(--red)';
+    h+='<tr><td><b>'+esc(r.c)+'</b></td><td class="right mono">'+fmt(r.kw)+'</td><td class="right mono">'+fmt(r.kNow)+'</td><td class="right mono">'+fmt(r.kPrev)+'</td><td class="right mono" style="color:'+col+'">'+(r.diff>=0?'+':'')+fmt(r.diff)+'</td><td class="right mono">'+(r.eNow!=null?fmt(r.eNow*100,1)+'%':'—')+'</td><td class="right mono">'+(r.ePrev!=null?fmt(r.ePrev*100,1)+'%':'—')+'</td></tr>'});
+  $('pw-tbl').innerHTML=h+'</tbody>';
+}
+function causeText(byHours,byEff){
+  var a=Math.abs(byHours),b=Math.abs(byEff);
+  var main=a>=b?'thời gian chạy':'hiệu suất / máy mới';
+  var dir=(byHours+byEff)>=0?'tăng':'giảm';
+  var hEff=byHours>=0?'thời gian chạy làm sản lượng tăng':'thời gian chạy làm sản lượng giảm (các máy năng suất cao chạy ít giờ hơn)';
+  var eEff=byEff>=0?'hiệu suất/công suất bổ sung làm sản lượng tăng':'hiệu suất giảm làm sản lượng giảm';
+  return 'Sản lượng '+dir+' chủ yếu do <b>'+main+'</b>. Cụ thể: '+hEff+'; '+eEff+'.';
+}
+
+/* ---------- CATALOG ---------- */
+function renderCatalog(){
+  var h='<thead><tr><th>Mã máy</th><th>Vị trí</th><th>Khu vực</th><th>HĐ</th><th class="right">kW</th><th>Trạng thái</th><th>Giờ VH</th><th></th></tr></thead><tbody>';
+  DV.master.forEach(function(m){var c=String(m['Mã máy']).trim();var st=String(m['Trạng thái']||'');var bd=st==='Đang chạy'?'b-run':st==='Bảo trì'?'b-maint':'b-stop';
+    h+='<tr><td><b>'+esc(c)+'</b></td><td>'+esc(m['Tên / Vị trí lắp đặt']||'')+'</td><td>'+esc(m['Khu vực']||'')+'</td><td>'+esc(m['Loại hợp đồng']||'')+'</td><td class="right mono">'+fmt(n(m['Công suất TK (kW)']))+'</td><td><span class="badge '+bd+'">'+esc(st||'—')+'</span></td><td class="mono">'+(DV.curHours[c]!=null?fmt(DV.curHours[c])+'h':'—')+'</td><td class="right"><button class="btn sm" onclick="openMachine(\''+esc(c)+'\')">Sửa</button></td></tr>'});
+  $('cat-tbl').innerHTML=h+'</tbody>';
+
+  var s='<thead><tr><th>Máy</th><th>Loại</th><th>Định danh</th><th>Gói cước</th><th>Hết hạn</th><th>Còn lại</th></tr></thead><tbody>';
+  if(!DV.sim.length)s+='<tr><td colspan="6"><div class="empty">Chưa có dữ liệu SIM/Camera.</div></td></tr>';
+  DV.sim.forEach(function(x){var exp=String(x['Ngày hết hạn']||'').slice(0,10);var days=exp?Math.round((new Date(exp)-new Date())/86400000):null;var col=days==null?'':days<0?'var(--red)':days<=7?'var(--amber)':'var(--muted)';
+    s+='<tr><td>'+esc(x['Mã máy'])+'</td><td>'+esc(x['Loại'])+'</td><td>'+esc(x['Số / Định danh'])+'</td><td>'+esc(x['Gói cước'])+'</td><td class="mono">'+esc(exp||'—')+'</td><td class="mono" style="color:'+col+'">'+(days==null?'—':days<0?('quá '+(-days)+'d'):(days+'d'))+'</td></tr>'});
+  $('sim-tbl').innerHTML=s+'</tbody>';
+}
+
+/* ================= MODALS ================= */
+function showModal(html){$('modalBox').innerHTML=html;$('modal').classList.add('show')}
+function closeModal(){$('modal').classList.remove('show')}
+$('modal').addEventListener('click',function(e){if(e.target===$('modal'))closeModal()});
+
+function openReplace(code,mc){
+  var machines=DV.master.map(function(m){return esc(m['Mã máy'])}).join('|').split('|');
+  var opts=DV.master.map(function(m){var c=esc(m['Mã máy']);return '<option '+(c===code?'selected':'')+'>'+c+'</option>'}).join('');
+  var matOpts=DV.norm.map(function(x){var v=esc(x['Mã VT']);return '<option value="'+v+'" '+(v===mc?'selected':'')+'>'+esc(x['Tên vật tư'])+'</option>'}).join('');
+  showModal('<h3>Ghi nhận thay vật tư</h3>'+
+    '<div class="fld"><label>Máy</label><select id="rp-machine">'+opts+'</select></div>'+
+    '<div class="fld" style="margin-top:10px"><label>Vật tư</label><select id="rp-mat">'+matOpts+'</select></div>'+
+    '<div class="form-grid" style="margin-top:10px"><div><label>Số giờ VH khi thay</label><input id="rp-hours" type="number" placeholder="vd 4200"></div><div><label>Ngày thay</label><input id="rp-date" type="date" value="'+DV.today+'"></div></div>'+
+    '<div class="fld" style="margin-top:10px"><label>Ghi chú</label><input id="rp-note" placeholder="tuỳ chọn"></div>'+
+    '<div class="row-actions"><button class="btn primary" onclick="doReplace()">Lưu</button><button class="btn" onclick="closeModal()">Huỷ</button><span class="note" id="rp-hint"></span></div>');
+  // gợi ý giờ hiện tại
+  var c=$('rp-machine').value;if(DV.curHours[c]!=null){$('rp-hours').value=DV.curHours[c];$('rp-hint').textContent='Giờ VH hiện tại: '+fmt(DV.curHours[c])+'h'}
+  $('rp-machine').onchange=function(){var cc=$('rp-machine').value;if(DV.curHours[cc]!=null){$('rp-hours').value=DV.curHours[cc];$('rp-hint').textContent='Giờ VH hiện tại: '+fmt(DV.curHours[cc])+'h'}};
+}
+function doReplace(){
+  var mcSel=$('rp-mat');var name=mcSel.options[mcSel.selectedIndex].text;
+  var p={action:'recordReplacement',machineCode:$('rp-machine').value,materialCode:mcSel.value,materialName:name,hours:$('rp-hours').value,date:$('rp-date').value,note:$('rp-note').value};
+  if(!p.hours){toast('Nhập số giờ VH khi thay',true);return}
+  api(p).then(function(j){toast(j.message||'Đã ghi nhận');closeModal();refresh()}).catch(function(e){toast(e.message,true)});
+}
+
+function openMachine(code){
+  var m=code?(DV.masterByCode[code]||{}):{};
+  var op=code?(DV.operator.filter(function(o){return String(o['Mã máy']).trim()===code})[0]||{}):{};
+  var stOpts=['Đang chạy','Dừng','Bảo trì'].map(function(s){return '<option '+(s===(m['Trạng thái']||'')?'selected':'')+'>'+s+'</option>'}).join('');
+  var ctOpts=['Thuê','Bán','Hợp tác'].map(function(s){return '<option '+(s===(m['Loại hợp đồng']||'')?'selected':'')+'>'+s+'</option>'}).join('');
+  showModal('<h3>'+(code?'Sửa máy '+esc(code):'Thêm máy mới')+'</h3>'+
+    '<div class="form-grid">'+
+    '<div><label>Mã máy</label><input id="mc-code" value="'+esc(m['Mã máy']||'')+'" '+(code?'readonly':'')+'></div>'+
+    '<div><label>Công suất TK (kW)</label><input id="mc-power" type="number" value="'+(n(m['Công suất TK (kW)'])!=null?n(m['Công suất TK (kW)']):'')+'"></div>'+
+    '<div style="grid-column:1/-1"><label>Tên / Vị trí lắp đặt</label><input id="mc-name" value="'+esc(m['Tên / Vị trí lắp đặt']||'')+'"></div>'+
+    '<div><label>Khu vực</label><input id="mc-area" value="'+esc(m['Khu vực']||'')+'"></div>'+
+    '<div><label>Loại hợp đồng</label><select id="mc-contract">'+ctOpts+'</select></div>'+
+    '<div><label>Ngày lắp đặt</label><input id="mc-install" type="date" value="'+esc(String(m['Ngày lắp đặt']||'').slice(0,10))+'"></div>'+
+    '<div><label>Trạng thái</label><select id="mc-status">'+stOpts+'</select></div>'+
+    '<div><label>Chủ trại</label><input id="mc-owner" value="'+esc(op['Chủ trại']||'')+'"></div>'+
+    '<div><label>SĐT</label><input id="mc-phone" value="'+esc(op['SĐT']||'')+'"></div>'+
+    '<div style="grid-column:1/-1"><label>Zalo user ID (để nhắc)</label><input id="mc-zalo" value="'+esc(op['Zalo user ID']||'')+'"></div>'+
+    '</div><div class="row-actions"><button class="btn primary" onclick="doMachine()">Lưu</button><button class="btn" onclick="closeModal()">Huỷ</button></div>');
+}
+function doMachine(){
+  var p={action:'upsertMachine',machineCode:$('mc-code').value.trim(),name:$('mc-name').value,area:$('mc-area').value,contract:$('mc-contract').value,power:$('mc-power').value,installDate:$('mc-install').value,status:$('mc-status').value,owner:$('mc-owner').value,phone:$('mc-phone').value,zalo:$('mc-zalo').value};
+  if(!p.machineCode){toast('Nhập mã máy',true);return}
+  api(p).then(function(j){toast(j.message||'Đã lưu');closeModal();refresh()}).catch(function(e){toast(e.message,true)});
+}
+
+function openSim(){
+  var opts=DV.master.map(function(m){return '<option>'+esc(m['Mã máy'])+'</option>'}).join('');
+  showModal('<h3>Thêm SIM / Camera</h3>'+
+    '<div class="form-grid">'+
+    '<div><label>Máy</label><select id="sm-machine">'+opts+'</select></div>'+
+    '<div><label>Loại</label><select id="sm-kind"><option>SIM</option><option>Camera</option></select></div>'+
+    '<div><label>Số / Định danh</label><input id="sm-ident"></div>'+
+    '<div><label>Gói cước</label><input id="sm-plan"></div>'+
+    '<div><label>Ngày hết hạn</label><input id="sm-expiry" type="date"></div>'+
+    '<div><label>Ghi chú</label><input id="sm-note"></div>'+
+    '</div><div class="row-actions"><button class="btn primary" onclick="doSim()">Lưu</button><button class="btn" onclick="closeModal()">Huỷ</button></div>');
+}
+function doSim(){
+  var p={action:'updateSimCamera',machineCode:$('sm-machine').value,kind:$('sm-kind').value,ident:$('sm-ident').value,plan:$('sm-plan').value,expiry:$('sm-expiry').value,note:$('sm-note').value};
+  api(p).then(function(j){toast(j.message||'Đã lưu');closeModal();refresh()}).catch(function(e){toast(e.message,true)});
+}
+
+/* ---------- ZALO ---------- */
+function sendZalo(){
+  if(DEMO){toast('Chế độ xem thử – không gửi Zalo',true);return}
+  if(!confirm('Gửi tin nhắc thay vật tư tới Zalo chủ trại của các máy tới hạn?'))return;
+  $('zaloBtn').innerHTML='<span class="spin"></span> Đang gửi…';
+  api({action:'sendZalo'}).then(function(j){$('zaloBtn').textContent='Gửi nhắc Zalo';toast(j.message||'Đã gửi');refresh()}).catch(function(e){$('zaloBtn').textContent='Gửi nhắc Zalo';toast(e.message,true)});
+}
+
+/* ================= MINI CHARTS (SVG, không cần thư viện) ================= */
+function barChart(items,unit){
+  var max=Math.max.apply(null,items.map(function(i){return i.v||0}).concat([1]));
+  var h=items.map(function(i){var pct=Math.round((i.v||0)/max*100);
+    return '<div style="display:flex;align-items:center;gap:10px;margin:9px 0"><div style="width:96px;font-size:12.5px;color:var(--muted)">'+esc(i.label)+'</div>'+
+      '<div style="flex:1;background:var(--panel-soft);border-radius:8px;height:26px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:'+i.c+';border-radius:8px"></div></div>'+
+      '<div style="width:110px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums">'+fmt(i.v)+(unit||'')+'</div></div>';}).join('');
+  return h;
+}
+function donut(items){
+  var total=items.reduce(function(s,i){return s+(i.v||0)},0)||1;
+  var r=52,cx=64,cy=64,circ=2*Math.PI*r,off=0;
+  var segs=items.map(function(i){var frac=(i.v||0)/total;var len=frac*circ;var s='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+i.c+'" stroke-width="20" stroke-dasharray="'+len+' '+(circ-len)+'" stroke-dashoffset="'+(-off)+'" transform="rotate(-90 '+cx+' '+cy+')"/>';off+=len;return s}).join('');
+  var leg=items.map(function(i){return '<span><i style="background:'+i.c+'"></i>'+esc(i.label)+' · <b>'+fmt(i.v)+'</b> ('+fmt((i.v||0)/total*100,0)+'%)</span>'}).join('');
+  return '<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap"><svg width="128" height="128" viewBox="0 0 128 128">'+segs+'<text x="64" y="60" text-anchor="middle" font-size="13" fill="var(--muted)">Tổng</text><text x="64" y="80" text-anchor="middle" font-size="20" font-weight="800" fill="var(--text)">'+fmt(total)+'</text></svg><div class="legend" style="flex-direction:column;gap:7px">'+leg+'</div></div>';
+}
+function errColor(g){var map={'Không lỗi':'#0f8f54','Lỗi khí/biogas':'#0e7490','Lỗi động cơ':'#c0392b','Lỗi đầu phát':'#b45309','Lỗi điều khiển/điện':'#7c3aed','Đang bảo dưỡng':'#64748b','Chủ trại chủ động dừng':'#0891b2','Khác':'#9ca3af'};return map[g]||'#9ca3af'}
+
+/* ================= DEMO DATA ================= */
+function demoResponse(p){
+  if(p.action&&p.action!=='bootstrap')return{ok:true,message:'(demo) đã lưu tạm – kết nối Sheet thật để ghi.'};
+  var mo=curMonth(),pm=prevMonth(mo),t=todayISO();
+  return {ok:true,tz:'Asia/Ho_Chi_Minh',today:t,
+    config:{errorGroups:['Không lỗi','Lỗi khí/biogas','Lỗi động cơ','Lỗi đầu phát','Lỗi điều khiển/điện','Đang bảo dưỡng','Chủ trại chủ động dừng','Khác'],machineStatus:['Đang chạy','Dừng','Bảo trì']},
+    master:[
+      {'Mã máy':'MPD-001','Tên / Vị trí lắp đặt':'Trại A – Đồng Nai','Khu vực':'Đông Nam Bộ','Loại hợp đồng':'Thuê','Công suất TK (kW)':100,'Ngày lắp đặt':'2024-01-15','Trạng thái':'Đang chạy','Ghi chú':''},
+      {'Mã máy':'MPD-002','Tên / Vị trí lắp đặt':'Trại B – Bình Phước','Khu vực':'Đông Nam Bộ','Loại hợp đồng':'Bán','Công suất TK (kW)':150,'Ngày lắp đặt':'2023-11-02','Trạng thái':'Đang chạy','Ghi chú':''},
+      {'Mã máy':'MPD-003','Tên / Vị trí lắp đặt':'Trại C – Long An','Khu vực':'Tây Nam Bộ','Loại hợp đồng':'Hợp tác','Công suất TK (kW)':120,'Ngày lắp đặt':'2024-03-20','Trạng thái':'Dừng','Ghi chú':''},
+      {'Mã máy':'MPD-004','Tên / Vị trí lắp đặt':'Trại D – Hà Nam','Khu vực':'Đồng bằng SH','Loại hợp đồng':'Thuê','Công suất TK (kW)':80,'Ngày lắp đặt':'2024-05-10','Trạng thái':'Bảo trì','Ghi chú':''}
+    ],
+    norm:[
+      {'Mã VT':'DAITU','Tên vật tư':'Đại tu','Chu kỳ (giờ)':5500,'Cảnh báo trước (giờ)':300},
+      {'Mã VT':'NHOT','Tên vật tư':'Nhớt + lọc nhớt','Chu kỳ (giờ)':400,'Cảnh báo trước (giờ)':50},
+      {'Mã VT':'LOC','Tên vật tư':'Hạt lọc','Chu kỳ (giờ)':300,'Cảnh báo trước (giờ)':50},
+      {'Mã VT':'BUGI','Tên vật tư':'Bugi','Chu kỳ (giờ)':800,'Cảnh báo trước (giờ)':100},
+      {'Mã VT':'LOCGIO','Tên vật tư':'Lọc gió','Chu kỳ (giờ)':1200,'Cảnh báo trước (giờ)':100}
+    ],
+    operator:[
+      {'Mã máy':'MPD-001','Chủ trại':'Anh Sơn','SĐT':'0900000001','Zalo user ID':'','Ghi chú':''},
+      {'Mã máy':'MPD-002','Chủ trại':'Chị Lan','SĐT':'0900000002','Zalo user ID':'','Ghi chú':''}
+    ],
+    runtime:[
+      {'Mã máy':'MPD-001','Ngày':t,'Giờ chạy trong ngày (h)':18.5,'Tổng giờ vận hành (h)':4290,'Số điện ngày (kWh)':1650},
+      {'Mã máy':'MPD-002','Ngày':t,'Giờ chạy trong ngày (h)':21,'Tổng giờ vận hành (h)':3120,'Số điện ngày (kWh)':2820},
+      {'Mã máy':'MPD-003','Ngày':t,'Giờ chạy trong ngày (h)':0,'Tổng giờ vận hành (h)':2600,'Số điện ngày (kWh)':0},
+      {'Mã máy':'MPD-004','Ngày':t,'Giờ chạy trong ngày (h)':6,'Tổng giờ vận hành (h)':900,'Số điện ngày (kWh)':420}
+    ],
+    perf:[
+      {'Mã máy':'MPD-001','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':48000,'Giờ chạy tháng (h)':540},
+      {'Mã máy':'MPD-001','Tháng (YYYY-MM)':pm,'Số điện tháng (kWh)':52000,'Giờ chạy tháng (h)':580},
+      {'Mã máy':'MPD-002','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':78000,'Giờ chạy tháng (h)':600},
+      {'Mã máy':'MPD-002','Tháng (YYYY-MM)':pm,'Số điện tháng (kWh)':70000,'Giờ chạy tháng (h)':560},
+      {'Mã máy':'MPD-003','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':30000,'Giờ chạy tháng (h)':300},
+      {'Mã máy':'MPD-003','Tháng (YYYY-MM)':pm,'Số điện tháng (kWh)':41000,'Giờ chạy tháng (h)':400},
+      {'Mã máy':'MPD-004','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':15000,'Giờ chạy tháng (h)':220}
+    ],
+    sim:[
+      {'Mã máy':'MPD-001','Loại':'SIM','Số / Định danh':'Viettel 03xxx','Gói cước':'4G 5GB','Ngày hết hạn':nextDays(4),'Ghi chú':''},
+      {'Mã máy':'MPD-001','Loại':'Camera','Số / Định danh':'IMOU-A1','Gói cước':'Cloud 30d','Ngày hết hạn':nextDays(25),'Ghi chú':''},
+      {'Mã máy':'MPD-002','Loại':'SIM','Số / Định danh':'Mobi 07xxx','Gói cước':'4G 8GB','Ngày hết hạn':nextDays(-3),'Ghi chú':''}
+    ],
+    material:[
+      {'Mã máy':'MPD-001','Mã VT':'NHOT','Tên vật tư':'Nhớt + lọc nhớt','Giờ VH lần thay gần nhất (h)':3960,'Tồn tại trại':2,'Định mức tồn tối thiểu':3,'Ghi chú':''},
+      {'Mã máy':'MPD-001','Mã VT':'LOC','Tên vật tư':'Hạt lọc','Giờ VH lần thay gần nhất (h)':4050,'Tồn tại trại':1,'Định mức tồn tối thiểu':4,'Ghi chú':''},
+      {'Mã máy':'MPD-001','Mã VT':'BUGI','Tên vật tư':'Bugi','Giờ VH lần thay gần nhất (h)':3600,'Tồn tại trại':5,'Định mức tồn tối thiểu':6,'Ghi chú':''},
+      {'Mã máy':'MPD-002','Mã VT':'NHOT','Tên vật tư':'Nhớt + lọc nhớt','Giờ VH lần thay gần nhất (h)':2780,'Tồn tại trại':0,'Định mức tồn tối thiểu':3,'Ghi chú':''},
+      {'Mã máy':'MPD-002','Mã VT':'LOCGIO','Tên vật tư':'Lọc gió','Giờ VH lần thay gần nhất (h)':2000,'Tồn tại trại':3,'Định mức tồn tối thiểu':2,'Ghi chú':''}
+    ],
+    daily:[
+      {'Ngày':t,'Mã máy':'MPD-001','Trạng thái':'Chạy','Nhóm lỗi':'Không lỗi','Chi tiết':'','Người nhập':'demo','Thời gian ghi':''},
+      {'Ngày':t,'Mã máy':'MPD-002','Trạng thái':'Chạy','Nhóm lỗi':'Không lỗi','Chi tiết':'','Người nhập':'demo','Thời gian ghi':''},
+      {'Ngày':t,'Mã máy':'MPD-003','Trạng thái':'Không chạy','Nhóm lỗi':'Lỗi khí/biogas','Chi tiết':'Áp khí thấp','Người nhập':'demo','Thời gian ghi':''},
+      {'Ngày':nextDays(-1),'Mã máy':'MPD-004','Trạng thái':'Không chạy','Nhóm lỗi':'Đang bảo dưỡng','Chi tiết':'Thay nhớt','Người nhập':'demo','Thời gian ghi':''},
+      {'Ngày':nextDays(-2),'Mã máy':'MPD-001','Trạng thái':'Không chạy','Nhóm lỗi':'Lỗi điều khiển/điện','Chi tiết':'Reset ECU','Người nhập':'demo','Thời gian ghi':''}
+    ],
+    history:[]};
+}
+function nextDays(d){var x=new Date();x.setDate(x.getDate()+d);return x.toISOString().slice(0,10)}
+</script>
+</body>
+</html>
