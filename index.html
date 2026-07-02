@@ -141,7 +141,7 @@ tbody tr:hover{background:var(--panel-soft)}
   <div class="gate-card">
     <div class="brand"><span class="dot">eG</span> eGreen · MPĐ Biogas</div>
     <h1>Kết nối Google Sheet</h1>
-    <p>Dán link Web App (Apps Script) của bạn để app đọc/ghi dữ liệu hai chiều.</p>
+    <p>Dán link Web App (Apps Script) để app đọc/ghi 2 chiều với chính Sheet của bạn — dùng luôn tab <b>"1. Danh sách máy"</b> và các tab 4/5/6/7 hiện có, không nhập lại dữ liệu.</p>
     <div class="field">
       <label>Link API (Apps Script /exec)</label>
       <input id="apiUrl" placeholder="https://script.google.com/macros/s/AKfy.../exec" autocomplete="off">
@@ -179,6 +179,7 @@ tbody tr:hover{background:var(--panel-soft)}
   </aside>
 
   <main class="main">
+    <div id="map-note" style="display:none;margin:0 0 14px;padding:10px 14px;border:1px solid #f0d8a6;background:#fdf6e3;border-radius:10px;font-size:13px;color:#7a5b12"></div>
     <!-- ===== TỔNG QUAN ===== -->
     <section class="page active" id="page-overview">
       <div class="topbar"><div><h2>Tổng quan hệ thống</h2><div class="sub" id="ov-sub">—</div></div>
@@ -189,7 +190,7 @@ tbody tr:hover{background:var(--panel-soft)}
         <div class="card"><h3>Cảnh báo cần xử lý</h3><div class="cap">Ưu tiên từ trên xuống</div><div id="ov-alerts"></div></div>
       </div>
       <div class="grid two" style="margin-top:16px">
-        <div class="card"><h3>Tình trạng máy</h3><div class="cap">Đang chạy / dừng / bảo trì</div><div id="ov-chart-status"></div></div>
+        <div class="card"><h3>Tình trạng máy</h3><div class="cap">Phân bố theo trạng thái hợp đồng/vận hành</div><div id="ov-chart-status"></div></div>
         <div class="card"><h3>Hiệu suất so thiết kế (tháng)</h3><div class="cap">kWh thực tế / (kW × giờ chạy)</div><div id="ov-eff"></div></div>
       </div>
     </section>
@@ -281,7 +282,14 @@ tbody tr:hover{background:var(--panel-soft)}
     <section class="page" id="page-catalog">
       <div class="topbar"><div><h2>Danh mục máy &amp; SIM/Camera</h2><div class="sub">Thông tin gốc – Master, chủ trại, thiết bị viễn thông</div></div>
         <button class="btn primary sm" onclick="openMachine()">+ Thêm / sửa máy</button></div>
-      <div class="card" style="padding:0"><div style="padding:14px 16px 0"><h3>Danh sách máy</h3></div>
+      <div class="card" style="padding:0"><div style="padding:14px 16px 0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">Danh sách máy</h3><span class="note" id="cat-count"></span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;padding:10px 16px 0">
+          <input id="cat-search" placeholder="Tìm mã máy / trang trại / tỉnh…" oninput="renderCatalog()" style="flex:1;min-width:180px">
+          <select id="cat-region" onchange="renderCatalog()"></select>
+          <select id="cat-type" onchange="renderCatalog()"></select>
+          <select id="cat-partner" onchange="renderCatalog()"></select>
+          <select id="cat-status" onchange="renderCatalog()"></select>
+        </div>
         <div class="tbl-wrap" style="margin:12px"><table id="cat-tbl"></table></div></div>
       <div class="card" style="padding:0;margin-top:16px"><div style="padding:14px 16px 8px;display:flex;justify-content:space-between;align-items:center">
         <h3 style="margin:0">SIM / Camera / Gói cước</h3><button class="btn sm" onclick="openSim()">+ Thêm dòng</button></div>
@@ -344,6 +352,24 @@ function enterApp(){
   $('connectBtn').textContent='Kết nối';
   buildDerived();renderAll();
   $('syncTime').textContent=new Date().toLocaleTimeString('vi-VN');
+  showMapReport();
+}
+function showMapReport(){
+  if(DEMO||!D||!D.mapReport)return;
+  var mr=D.mapReport,miss=[];
+  Object.keys(mr).forEach(function(k){var r=mr[k];if(!r.found||!r.rows)miss.push(r.tab+(r.rows?'':' (0 dòng)'))});
+  var el=$('map-note');if(!el)return;
+  if(!miss.length){el.style.display='none';return}
+  el.style.display='block';
+  el.innerHTML='ⓘ Đã đọc <b>'+ (mr.master.rows) +' máy</b> từ "'+esc(mr.master.tab)+'". Chưa khớp/không có dữ liệu: <b>'+esc(miss.join(' · '))+'</b>. '+
+    'Nếu tab có tồn tại, hãy kiểm tra tên cột hoặc đổi tên tab trong Code.gs (mục TAB/COLS). '+
+    '<a href="#" onclick="runDiagnose();return false" style="color:var(--green-d)">Xem header các tab →</a>';
+}
+function runDiagnose(){
+  api({action:'diagnose'}).then(function(j){
+    var lines=(j.tabs||[]).map(function(t){return '• '+t.name+'  ['+t.header.filter(Boolean).join(' | ')+']'}).join('\n');
+    alert('Các tab & dòng tiêu đề trong Sheet:\n\n'+lines);
+  }).catch(function(e){toast(e.message,true)});
 }
 function refresh(){
   if(DEMO){D=demoResponse({action:'bootstrap'});buildDerived();renderAll();$('syncTime').textContent=new Date().toLocaleTimeString('vi-VN');toast('Đã tải dữ liệu mẫu');return}
@@ -403,16 +429,28 @@ function buildDerived(){
     if(stock!=null&&min!=null&&stock<=min)DV.stockLow.push({code:String(m['Mã máy']).trim(),mc:String(m['Mã VT']).trim(),name:m['Tên vật tư'],stock:stock,min:min,need:Math.max(min-stock+1,1)});
   });
 
-  // ---- TRẠNG THÁI CHẠY/KHÔNG ----
-  DV.statusCount={run:0,stop:0,maint:0};
-  DV.master.forEach(function(m){var s=String(m['Trạng thái']||'').trim();
-    if(s==='Đang chạy')DV.statusCount.run++;else if(s==='Bảo trì')DV.statusCount.maint++;else DV.statusCount.stop++});
+  // ---- TRẠNG THÁI (theo giá trị thật trong Sheet 1) ----
+  DV.statusBy={}; DV.master.forEach(function(m){var s=String(m['Trạng thái']||'').trim()||'(trống)';DV.statusBy[s]=(DV.statusBy[s]||0)+1});
+  DV.active=DV.master.filter(function(m){return stateOf(m['Trạng thái'])==='run'}).length;
+  DV.inactive=DV.master.filter(function(m){return stateOf(m['Trạng thái'])==='stop'}).length;
 
   // ---- HIỆU SUẤT THÁNG ----
   DV.perfBy={}; // code -> {month -> {kwh,hours}}
   DV.perf.forEach(function(p){var c=String(p['Mã máy']).trim();var mo=String(p['Tháng (YYYY-MM)']).slice(0,7);
     DV.perfBy[c]=DV.perfBy[c]||{};DV.perfBy[c][mo]={kwh:n(p['Số điện tháng (kWh)']),hours:n(p['Giờ chạy tháng (h)'])}});
 }
+
+/* ---- Trạng thái máy (giá trị thật trong Sheet 1. Danh sách máy) ---- */
+var STATUS_LIST=['Hđ bình thường','Không hoạt động','Chờ thu hồi','Chưa lắp đặt','Tồn kho'];
+function stateOf(s){s=String(s||'').trim().toLowerCase();
+  if(s.indexOf('bình thường')>=0)return 'run';
+  if(s.indexOf('không hoạt')>=0)return 'stop';
+  return 'other'; /* chờ thu hồi, chưa lắp đặt, tồn kho, trống */ }
+function statusBadge(s){var st=stateOf(s);var cls=st==='run'?'b-run':st==='stop'?'b-stop':(String(s).toLowerCase().indexOf('thu hồi')>=0?'b-soon':'b-mute');
+  return '<span class="badge '+cls+'">'+esc(s||'—')+'</span>'}
+function statusColor(s){var l=String(s).toLowerCase();if(l.indexOf('bình thường')>=0)return '#0f8f54';if(l.indexOf('không hoạt')>=0)return '#c0392b';if(l.indexOf('thu hồi')>=0)return '#c07806';if(l.indexOf('chưa lắp')>=0)return '#64748b';return '#9ca3af'}
+/* danh sách giá trị có thật trong dữ liệu (cho bộ lọc & dropdown) */
+function distinct(field){var s={};DV.master.forEach(function(m){var v=String(m[field]||'').trim();if(v)s[v]=1});return Object.keys(s).sort()}
 
 /* eff factor = kWh / (kW*h) */
 function effOf(code,rec){var kw=DV.power[code];if(!kw||!rec||rec.hours==null||!rec.hours||rec.kwh==null)return null;return rec.kwh/(kw*rec.hours)}
@@ -437,7 +475,7 @@ function renderOverview(){
 
   $('ov-sub').textContent=total+' máy · tháng '+mo+' · cập nhật '+DV.today;
   var k=$('ov-kpis');k.innerHTML='';
-  k.appendChild(kpi('Máy đang chạy',DV.statusCount.run+'/'+total,DV.statusCount.stop+' dừng · '+DV.statusCount.maint+' bảo trì',''));
+  k.appendChild(kpi('Máy hoạt động',DV.active+'/'+total,DV.inactive+' không hoạt động · '+(total-DV.active-DV.inactive)+' khác',''));
   k.appendChild(kpi('Điện tháng này',fmt(kwhNow)+' kWh',diff==null?'chưa có tháng trước':(diff>=0?'▲ ':'▼ ')+fmt(Math.abs(diff),1)+'% so tháng trước',diff==null?'':(diff>=0?'up':'down'),true));
   k.appendChild(kpi('Quá hạn bảo dưỡng',overdue,'hạng mục cần thay ngay',overdue?'down':''));
   k.appendChild(kpi('Sắp đến hạn',soon,'trong ngưỡng cảnh báo',soon?'':''));
@@ -445,8 +483,9 @@ function renderOverview(){
 
   // chart điện
   $('ov-chart-power').innerHTML=barChart([{label:'Tháng trước',v:kwhPrev,c:'#9ab9aa'},{label:'Tháng này',v:kwhNow,c:'#0f8f54'}],' kWh');
-  // status donut
-  $('ov-chart-status').innerHTML=donut([{label:'Đang chạy',v:DV.statusCount.run,c:'#0f8f54'},{label:'Dừng',v:DV.statusCount.stop,c:'#c0392b'},{label:'Bảo trì',v:DV.statusCount.maint,c:'#64748b'}]);
+  // status donut (theo giá trị thật)
+  var stKeys=Object.keys(DV.statusBy).sort(function(a,b){return DV.statusBy[b]-DV.statusBy[a]});
+  $('ov-chart-status').innerHTML=donut(stKeys.map(function(s){return {label:s,v:DV.statusBy[s],c:statusColor(s)}}));
   // alerts
   var al=DV.maint.filter(function(x){return x.level==='overdue'||x.level==='soon'}).slice(0,6);
   var stk=DV.stockLow.slice(0,3);
@@ -635,10 +674,31 @@ function causeText(byHours,byEff){
 }
 
 /* ---------- CATALOG ---------- */
+function buildCatFilters(){
+  function fill(id,field,label){var el=$(id);if(!el)return;var cur=el.value;
+    el.innerHTML='<option value="">'+label+'</option>'+distinct(field).map(function(v){return '<option'+(v===cur?' selected':'')+'>'+esc(v)+'</option>'}).join('')}
+  fill('cat-region','Khu vực','Mọi khu vực');
+  fill('cat-type','Loại hợp đồng','Mọi loại hình');
+  fill('cat-partner','Đơn vị hợp tác','Mọi đơn vị');
+  fill('cat-status','Trạng thái','Mọi trạng thái');
+}
 function renderCatalog(){
-  var h='<thead><tr><th>Mã máy</th><th>Vị trí</th><th>Khu vực</th><th>HĐ</th><th class="right">kW</th><th>Trạng thái</th><th>Giờ VH</th><th></th></tr></thead><tbody>';
-  DV.master.forEach(function(m){var c=String(m['Mã máy']).trim();var st=String(m['Trạng thái']||'');var bd=st==='Đang chạy'?'b-run':st==='Bảo trì'?'b-maint':'b-stop';
-    h+='<tr><td><b>'+esc(c)+'</b></td><td>'+esc(m['Tên / Vị trí lắp đặt']||'')+'</td><td>'+esc(m['Khu vực']||'')+'</td><td>'+esc(m['Loại hợp đồng']||'')+'</td><td class="right mono">'+fmt(n(m['Công suất TK (kW)']))+'</td><td><span class="badge '+bd+'">'+esc(st||'—')+'</span></td><td class="mono">'+(DV.curHours[c]!=null?fmt(DV.curHours[c])+'h':'—')+'</td><td class="right"><button class="btn sm" onclick="openMachine(\''+esc(c)+'\')">Sửa</button></td></tr>'});
+  buildCatFilters();
+  var q=($('cat-search')&&$('cat-search').value||'').toLowerCase();
+  var fR=$('cat-region')?$('cat-region').value:'',fT=$('cat-type')?$('cat-type').value:'',fP=$('cat-partner')?$('cat-partner').value:'',fS=$('cat-status')?$('cat-status').value:'';
+  var list=DV.master.filter(function(m){
+    if(fR&&String(m['Khu vực']||'')!==fR)return false;
+    if(fT&&String(m['Loại hợp đồng']||'')!==fT)return false;
+    if(fP&&String(m['Đơn vị hợp tác']||'')!==fP)return false;
+    if(fS&&String(m['Trạng thái']||'')!==fS)return false;
+    if(q&&(String(m['Mã máy'])+String(m['Tên / Vị trí lắp đặt']||'')+String(m['Tỉnh Thành']||'')+String(m['Đơn vị hợp tác']||'')).toLowerCase().indexOf(q)<0)return false;
+    return true;
+  });
+  if($('cat-count'))$('cat-count').textContent=list.length+'/'+DV.master.length+' máy';
+  var h='<thead><tr><th>Mã máy</th><th>Loại hình</th><th>Đơn vị</th><th>Trang trại / Vị trí</th><th>Tỉnh</th><th>Khu vực</th><th class="right">≈kW</th><th>Trạng thái</th><th>Giờ VH</th><th></th></tr></thead><tbody>';
+  if(!list.length)h+='<tr><td colspan="10"><div class="empty">Không có máy phù hợp bộ lọc.</div></td></tr>';
+  list.forEach(function(m){var c=String(m['Mã máy']).trim();var kw=n(m['Công suất TK (kW)']);
+    h+='<tr><td><b>'+esc(c)+'</b></td><td>'+esc(m['Loại hợp đồng']||'')+'</td><td>'+esc(m['Đơn vị hợp tác']||'')+'</td><td>'+esc(m['Tên / Vị trí lắp đặt']||'')+'</td><td>'+esc(m['Tỉnh Thành']||'')+'</td><td>'+esc(m['Khu vực']||'')+'</td><td class="right mono">'+(kw!=null?fmt(kw):'—')+'</td><td>'+statusBadge(m['Trạng thái'])+'</td><td class="mono">'+(DV.curHours[c]!=null?fmt(DV.curHours[c])+'h':'—')+'</td><td class="right"><button class="btn sm" onclick="openMachine(\''+esc(c)+'\')">Sửa</button></td></tr>'});
   $('cat-tbl').innerHTML=h+'</tbody>';
 
   var s='<thead><tr><th>Máy</th><th>Loại</th><th>Định danh</th><th>Gói cước</th><th>Hết hạn</th><th>Còn lại</th></tr></thead><tbody>';
@@ -674,27 +734,36 @@ function doReplace(){
   api(p).then(function(j){toast(j.message||'Đã ghi nhận');closeModal();refresh()}).catch(function(e){toast(e.message,true)});
 }
 
+function optList(field,fallback,cur){
+  var vals=distinct(field);(fallback||[]).forEach(function(v){if(vals.indexOf(v)<0)vals.push(v)});
+  return vals.map(function(s){return '<option'+(s===(cur||'')?' selected':'')+'>'+esc(s)+'</option>'}).join('')}
 function openMachine(code){
   var m=code?(DV.masterByCode[code]||{}):{};
   var op=code?(DV.operator.filter(function(o){return String(o['Mã máy']).trim()===code})[0]||{}):{};
-  var stOpts=['Đang chạy','Dừng','Bảo trì'].map(function(s){return '<option '+(s===(m['Trạng thái']||'')?'selected':'')+'>'+s+'</option>'}).join('');
-  var ctOpts=['Thuê','Bán','Hợp tác'].map(function(s){return '<option '+(s===(m['Loại hợp đồng']||'')?'selected':'')+'>'+s+'</option>'}).join('');
+  var stOpts='<option value=""></option>'+optList('Trạng thái',STATUS_LIST,m['Trạng thái']);
+  var tyOpts='<option value=""></option>'+optList('Loại hợp đồng',['Thuê','Bán','Hợp tác','Tồn kho'],m['Loại hợp đồng']);
+  var pnOpts='<option value=""></option>'+optList('Đơn vị hợp tác',[],m['Đơn vị hợp tác']);
+  var rgOpts='<option value=""></option>'+optList('Khu vực',['Miền Bắc','Miền Nam'],m['Khu vực']);
+  var pvOpts='<option value=""></option>'+optList('Tỉnh Thành',[],m['Tỉnh Thành']);
+  var kw=n(m['Công suất TK (kW)']);
   showModal('<h3>'+(code?'Sửa máy '+esc(code):'Thêm máy mới')+'</h3>'+
     '<div class="form-grid">'+
-    '<div><label>Mã máy</label><input id="mc-code" value="'+esc(m['Mã máy']||'')+'" '+(code?'readonly':'')+'></div>'+
-    '<div><label>Công suất TK (kW)</label><input id="mc-power" type="number" value="'+(n(m['Công suất TK (kW)'])!=null?n(m['Công suất TK (kW)']):'')+'"></div>'+
-    '<div style="grid-column:1/-1"><label>Tên / Vị trí lắp đặt</label><input id="mc-name" value="'+esc(m['Tên / Vị trí lắp đặt']||'')+'"></div>'+
-    '<div><label>Khu vực</label><input id="mc-area" value="'+esc(m['Khu vực']||'')+'"></div>'+
-    '<div><label>Loại hợp đồng</label><select id="mc-contract">'+ctOpts+'</select></div>'+
-    '<div><label>Ngày lắp đặt</label><input id="mc-install" type="date" value="'+esc(String(m['Ngày lắp đặt']||'').slice(0,10))+'"></div>'+
-    '<div><label>Trạng thái</label><select id="mc-status">'+stOpts+'</select></div>'+
+    '<div><label>Mã máy</label><input id="mc-code" value="'+esc(m['Mã máy']||'')+'" '+(code?'readonly':'')+' oninput="mcKw()"></div>'+
+    '<div><label>Công suất ≈ (tự suy từ mã …KVA)</label><input id="mc-kw" value="'+(kw!=null?kw+' kW':'—')+'" readonly></div>'+
+    '<div><label>Loại hình</label><select id="mc-type">'+tyOpts+'</select></div>'+
+    '<div><label>Đơn vị hợp tác</label><select id="mc-partner">'+pnOpts+'</select></div>'+
+    '<div style="grid-column:1/-1"><label>Tên trang trại / vị trí</label><input id="mc-site" value="'+esc(m['Tên / Vị trí lắp đặt']||'')+'"></div>'+
+    '<div><label>Khu vực</label><select id="mc-region">'+rgOpts+'</select></div>'+
+    '<div><label>Tỉnh thành</label><select id="mc-province">'+pvOpts+'</select></div>'+
+    '<div style="grid-column:1/-1"><label>Trạng thái</label><select id="mc-status">'+stOpts+'</select></div>'+
     '<div><label>Chủ trại</label><input id="mc-owner" value="'+esc(op['Chủ trại']||'')+'"></div>'+
     '<div><label>SĐT</label><input id="mc-phone" value="'+esc(op['SĐT']||'')+'"></div>'+
-    '<div style="grid-column:1/-1"><label>Zalo user ID (để nhắc)</label><input id="mc-zalo" value="'+esc(op['Zalo user ID']||'')+'"></div>'+
-    '</div><div class="row-actions"><button class="btn primary" onclick="doMachine()">Lưu</button><button class="btn" onclick="closeModal()">Huỷ</button></div>');
+    '<div style="grid-column:1/-1"><label>Zalo user ID (để nhắc thay vật tư)</label><input id="mc-zalo" value="'+esc(op['Zalo user ID']||'')+'"></div>'+
+    '</div><div class="row-actions"><button class="btn primary" onclick="doMachine()">Lưu</button><button class="btn" onclick="closeModal()">Huỷ</button><span class="note">kW ≈ KVA × 0,8; công suất/giờ chạy tự cập nhật từ Sheet.</span></div>');
 }
+function mcKw(){var code=$('mc-code').value||'';var m=code.match(/(\d+(?:[.,]\d+)?)\s*KVA/i);$('mc-kw').value=m?Math.round(Number(m[1].replace(',','.'))*0.8)+' kW':'—'}
 function doMachine(){
-  var p={action:'upsertMachine',machineCode:$('mc-code').value.trim(),name:$('mc-name').value,area:$('mc-area').value,contract:$('mc-contract').value,power:$('mc-power').value,installDate:$('mc-install').value,status:$('mc-status').value,owner:$('mc-owner').value,phone:$('mc-phone').value,zalo:$('mc-zalo').value};
+  var p={action:'upsertMachine',machineCode:$('mc-code').value.trim(),type:$('mc-type').value,partner:$('mc-partner').value,site:$('mc-site').value,region:$('mc-region').value,province:$('mc-province').value,status:$('mc-status').value,owner:$('mc-owner').value,phone:$('mc-phone').value,zalo:$('mc-zalo').value};
   if(!p.machineCode){toast('Nhập mã máy',true);return}
   api(p).then(function(j){toast(j.message||'Đã lưu');closeModal();refresh()}).catch(function(e){toast(e.message,true)});
 }
@@ -747,12 +816,12 @@ function demoResponse(p){
   if(p.action&&p.action!=='bootstrap')return{ok:true,message:'(demo) đã lưu tạm – kết nối Sheet thật để ghi.'};
   var mo=curMonth(),pm=prevMonth(mo),t=todayISO();
   return {ok:true,tz:'Asia/Ho_Chi_Minh',today:t,
-    config:{errorGroups:['Không lỗi','Lỗi khí/biogas','Lỗi động cơ','Lỗi đầu phát','Lỗi điều khiển/điện','Đang bảo dưỡng','Chủ trại chủ động dừng','Khác'],machineStatus:['Đang chạy','Dừng','Bảo trì']},
+    config:{errorGroups:['Không lỗi','Lỗi khí/biogas','Lỗi động cơ','Lỗi đầu phát','Lỗi điều khiển/điện','Đang bảo dưỡng','Chủ trại chủ động dừng','Khác']},
     master:[
-      {'Mã máy':'MPD-001','Tên / Vị trí lắp đặt':'Trại A – Đồng Nai','Khu vực':'Đông Nam Bộ','Loại hợp đồng':'Thuê','Công suất TK (kW)':100,'Ngày lắp đặt':'2024-01-15','Trạng thái':'Đang chạy','Ghi chú':''},
-      {'Mã máy':'MPD-002','Tên / Vị trí lắp đặt':'Trại B – Bình Phước','Khu vực':'Đông Nam Bộ','Loại hợp đồng':'Bán','Công suất TK (kW)':150,'Ngày lắp đặt':'2023-11-02','Trạng thái':'Đang chạy','Ghi chú':''},
-      {'Mã máy':'MPD-003','Tên / Vị trí lắp đặt':'Trại C – Long An','Khu vực':'Tây Nam Bộ','Loại hợp đồng':'Hợp tác','Công suất TK (kW)':120,'Ngày lắp đặt':'2024-03-20','Trạng thái':'Dừng','Ghi chú':''},
-      {'Mã máy':'MPD-004','Tên / Vị trí lắp đặt':'Trại D – Hà Nam','Khu vực':'Đồng bằng SH','Loại hợp đồng':'Thuê','Công suất TK (kW)':80,'Ngày lắp đặt':'2024-05-10','Trạng thái':'Bảo trì','Ghi chú':''}
+      {'Mã máy':'NS200KVA18','Loại hợp đồng':'Hợp tác','Đơn vị hợp tác':'DBC tổng','Tên / Vị trí lắp đặt':'Tam Nông - Phú Thọ','Khu vực':'Miền Bắc','Tỉnh Thành':'Phú Thọ','Trạng thái':'Hđ bình thường','Công suất TK (kW)':160,'KVA':200,'Ghi chú':''},
+      {'Mã máy':'NS250KVA13','Loại hợp đồng':'Hợp tác','Đơn vị hợp tác':'HPG','Tên / Vị trí lắp đặt':'Thái Thụy - Thái Bình','Khu vực':'Miền Bắc','Tỉnh Thành':'Thái Bình','Trạng thái':'Hđ bình thường','Công suất TK (kW)':200,'KVA':250,'Ghi chú':''},
+      {'Mã máy':'NS150KVA8','Loại hợp đồng':'Bán','Đơn vị hợp tác':'A Hùng BG','Tên / Vị trí lắp đặt':'Đông Hỷ TN','Khu vực':'Miền Bắc','Tỉnh Thành':'Thái Nguyên','Trạng thái':'Không hoạt động','Công suất TK (kW)':120,'KVA':150,'Ghi chú':''},
+      {'Mã máy':'NS250KVA8','Loại hợp đồng':'Tồn kho','Đơn vị hợp tác':'','Tên / Vị trí lắp đặt':'','Khu vực':'Miền Nam','Tỉnh Thành':'Bình Dương','Trạng thái':'Chưa lắp đặt','Công suất TK (kW)':200,'KVA':250,'Ghi chú':''}
     ],
     norm:[
       {'Mã VT':'DAITU','Tên vật tư':'Đại tu','Chu kỳ (giờ)':5500,'Cảnh báo trước (giờ)':300},
@@ -762,42 +831,42 @@ function demoResponse(p){
       {'Mã VT':'LOCGIO','Tên vật tư':'Lọc gió','Chu kỳ (giờ)':1200,'Cảnh báo trước (giờ)':100}
     ],
     operator:[
-      {'Mã máy':'MPD-001','Chủ trại':'Anh Sơn','SĐT':'0900000001','Zalo user ID':'','Ghi chú':''},
-      {'Mã máy':'MPD-002','Chủ trại':'Chị Lan','SĐT':'0900000002','Zalo user ID':'','Ghi chú':''}
+      {'Mã máy':'NS200KVA18','Chủ trại':'Anh Sơn','SĐT':'0900000001','Zalo user ID':'','Ghi chú':''},
+      {'Mã máy':'NS250KVA13','Chủ trại':'Chị Lan','SĐT':'0900000002','Zalo user ID':'','Ghi chú':''}
     ],
     runtime:[
-      {'Mã máy':'MPD-001','Ngày':t,'Giờ chạy trong ngày (h)':18.5,'Tổng giờ vận hành (h)':4290,'Số điện ngày (kWh)':1650},
-      {'Mã máy':'MPD-002','Ngày':t,'Giờ chạy trong ngày (h)':21,'Tổng giờ vận hành (h)':3120,'Số điện ngày (kWh)':2820},
-      {'Mã máy':'MPD-003','Ngày':t,'Giờ chạy trong ngày (h)':0,'Tổng giờ vận hành (h)':2600,'Số điện ngày (kWh)':0},
-      {'Mã máy':'MPD-004','Ngày':t,'Giờ chạy trong ngày (h)':6,'Tổng giờ vận hành (h)':900,'Số điện ngày (kWh)':420}
+      {'Mã máy':'NS200KVA18','Ngày':t,'Giờ chạy trong ngày (h)':18.5,'Tổng giờ vận hành (h)':4290,'Số điện ngày (kWh)':1650},
+      {'Mã máy':'NS250KVA13','Ngày':t,'Giờ chạy trong ngày (h)':21,'Tổng giờ vận hành (h)':3120,'Số điện ngày (kWh)':2820},
+      {'Mã máy':'NS150KVA8','Ngày':t,'Giờ chạy trong ngày (h)':0,'Tổng giờ vận hành (h)':2600,'Số điện ngày (kWh)':0},
+      {'Mã máy':'NS250KVA8','Ngày':t,'Giờ chạy trong ngày (h)':6,'Tổng giờ vận hành (h)':900,'Số điện ngày (kWh)':420}
     ],
     perf:[
-      {'Mã máy':'MPD-001','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':48000,'Giờ chạy tháng (h)':540},
-      {'Mã máy':'MPD-001','Tháng (YYYY-MM)':pm,'Số điện tháng (kWh)':52000,'Giờ chạy tháng (h)':580},
-      {'Mã máy':'MPD-002','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':78000,'Giờ chạy tháng (h)':600},
-      {'Mã máy':'MPD-002','Tháng (YYYY-MM)':pm,'Số điện tháng (kWh)':70000,'Giờ chạy tháng (h)':560},
-      {'Mã máy':'MPD-003','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':30000,'Giờ chạy tháng (h)':300},
-      {'Mã máy':'MPD-003','Tháng (YYYY-MM)':pm,'Số điện tháng (kWh)':41000,'Giờ chạy tháng (h)':400},
-      {'Mã máy':'MPD-004','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':15000,'Giờ chạy tháng (h)':220}
+      {'Mã máy':'NS200KVA18','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':48000,'Giờ chạy tháng (h)':540},
+      {'Mã máy':'NS200KVA18','Tháng (YYYY-MM)':pm,'Số điện tháng (kWh)':52000,'Giờ chạy tháng (h)':580},
+      {'Mã máy':'NS250KVA13','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':78000,'Giờ chạy tháng (h)':600},
+      {'Mã máy':'NS250KVA13','Tháng (YYYY-MM)':pm,'Số điện tháng (kWh)':70000,'Giờ chạy tháng (h)':560},
+      {'Mã máy':'NS150KVA8','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':30000,'Giờ chạy tháng (h)':300},
+      {'Mã máy':'NS150KVA8','Tháng (YYYY-MM)':pm,'Số điện tháng (kWh)':41000,'Giờ chạy tháng (h)':400},
+      {'Mã máy':'NS250KVA8','Tháng (YYYY-MM)':mo,'Số điện tháng (kWh)':15000,'Giờ chạy tháng (h)':220}
     ],
     sim:[
-      {'Mã máy':'MPD-001','Loại':'SIM','Số / Định danh':'Viettel 03xxx','Gói cước':'4G 5GB','Ngày hết hạn':nextDays(4),'Ghi chú':''},
-      {'Mã máy':'MPD-001','Loại':'Camera','Số / Định danh':'IMOU-A1','Gói cước':'Cloud 30d','Ngày hết hạn':nextDays(25),'Ghi chú':''},
-      {'Mã máy':'MPD-002','Loại':'SIM','Số / Định danh':'Mobi 07xxx','Gói cước':'4G 8GB','Ngày hết hạn':nextDays(-3),'Ghi chú':''}
+      {'Mã máy':'NS200KVA18','Loại':'SIM','Số / Định danh':'Viettel 03xxx','Gói cước':'4G 5GB','Ngày hết hạn':nextDays(4),'Ghi chú':''},
+      {'Mã máy':'NS200KVA18','Loại':'Camera','Số / Định danh':'IMOU-A1','Gói cước':'Cloud 30d','Ngày hết hạn':nextDays(25),'Ghi chú':''},
+      {'Mã máy':'NS250KVA13','Loại':'SIM','Số / Định danh':'Mobi 07xxx','Gói cước':'4G 8GB','Ngày hết hạn':nextDays(-3),'Ghi chú':''}
     ],
     material:[
-      {'Mã máy':'MPD-001','Mã VT':'NHOT','Tên vật tư':'Nhớt + lọc nhớt','Giờ VH lần thay gần nhất (h)':3960,'Tồn tại trại':2,'Định mức tồn tối thiểu':3,'Ghi chú':''},
-      {'Mã máy':'MPD-001','Mã VT':'LOC','Tên vật tư':'Hạt lọc','Giờ VH lần thay gần nhất (h)':4050,'Tồn tại trại':1,'Định mức tồn tối thiểu':4,'Ghi chú':''},
-      {'Mã máy':'MPD-001','Mã VT':'BUGI','Tên vật tư':'Bugi','Giờ VH lần thay gần nhất (h)':3600,'Tồn tại trại':5,'Định mức tồn tối thiểu':6,'Ghi chú':''},
-      {'Mã máy':'MPD-002','Mã VT':'NHOT','Tên vật tư':'Nhớt + lọc nhớt','Giờ VH lần thay gần nhất (h)':2780,'Tồn tại trại':0,'Định mức tồn tối thiểu':3,'Ghi chú':''},
-      {'Mã máy':'MPD-002','Mã VT':'LOCGIO','Tên vật tư':'Lọc gió','Giờ VH lần thay gần nhất (h)':2000,'Tồn tại trại':3,'Định mức tồn tối thiểu':2,'Ghi chú':''}
+      {'Mã máy':'NS200KVA18','Mã VT':'NHOT','Tên vật tư':'Nhớt + lọc nhớt','Giờ VH lần thay gần nhất (h)':3960,'Tồn tại trại':2,'Định mức tồn tối thiểu':3,'Ghi chú':''},
+      {'Mã máy':'NS200KVA18','Mã VT':'LOC','Tên vật tư':'Hạt lọc','Giờ VH lần thay gần nhất (h)':4050,'Tồn tại trại':1,'Định mức tồn tối thiểu':4,'Ghi chú':''},
+      {'Mã máy':'NS200KVA18','Mã VT':'BUGI','Tên vật tư':'Bugi','Giờ VH lần thay gần nhất (h)':3600,'Tồn tại trại':5,'Định mức tồn tối thiểu':6,'Ghi chú':''},
+      {'Mã máy':'NS250KVA13','Mã VT':'NHOT','Tên vật tư':'Nhớt + lọc nhớt','Giờ VH lần thay gần nhất (h)':2780,'Tồn tại trại':0,'Định mức tồn tối thiểu':3,'Ghi chú':''},
+      {'Mã máy':'NS250KVA13','Mã VT':'LOCGIO','Tên vật tư':'Lọc gió','Giờ VH lần thay gần nhất (h)':2000,'Tồn tại trại':3,'Định mức tồn tối thiểu':2,'Ghi chú':''}
     ],
     daily:[
-      {'Ngày':t,'Mã máy':'MPD-001','Trạng thái':'Chạy','Nhóm lỗi':'Không lỗi','Chi tiết':'','Người nhập':'demo','Thời gian ghi':''},
-      {'Ngày':t,'Mã máy':'MPD-002','Trạng thái':'Chạy','Nhóm lỗi':'Không lỗi','Chi tiết':'','Người nhập':'demo','Thời gian ghi':''},
-      {'Ngày':t,'Mã máy':'MPD-003','Trạng thái':'Không chạy','Nhóm lỗi':'Lỗi khí/biogas','Chi tiết':'Áp khí thấp','Người nhập':'demo','Thời gian ghi':''},
-      {'Ngày':nextDays(-1),'Mã máy':'MPD-004','Trạng thái':'Không chạy','Nhóm lỗi':'Đang bảo dưỡng','Chi tiết':'Thay nhớt','Người nhập':'demo','Thời gian ghi':''},
-      {'Ngày':nextDays(-2),'Mã máy':'MPD-001','Trạng thái':'Không chạy','Nhóm lỗi':'Lỗi điều khiển/điện','Chi tiết':'Reset ECU','Người nhập':'demo','Thời gian ghi':''}
+      {'Ngày':t,'Mã máy':'NS200KVA18','Trạng thái':'Chạy','Nhóm lỗi':'Không lỗi','Chi tiết':'','Người nhập':'demo','Thời gian ghi':''},
+      {'Ngày':t,'Mã máy':'NS250KVA13','Trạng thái':'Chạy','Nhóm lỗi':'Không lỗi','Chi tiết':'','Người nhập':'demo','Thời gian ghi':''},
+      {'Ngày':t,'Mã máy':'NS150KVA8','Trạng thái':'Không chạy','Nhóm lỗi':'Lỗi khí/biogas','Chi tiết':'Áp khí thấp','Người nhập':'demo','Thời gian ghi':''},
+      {'Ngày':nextDays(-1),'Mã máy':'NS250KVA8','Trạng thái':'Không chạy','Nhóm lỗi':'Đang bảo dưỡng','Chi tiết':'Thay nhớt','Người nhập':'demo','Thời gian ghi':''},
+      {'Ngày':nextDays(-2),'Mã máy':'NS200KVA18','Trạng thái':'Không chạy','Nhóm lỗi':'Lỗi điều khiển/điện','Chi tiết':'Reset ECU','Người nhập':'demo','Thời gian ghi':''}
     ],
     history:[]};
 }
