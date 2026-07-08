@@ -312,6 +312,7 @@ const S = {
     masterStatus:'',   // '', 'active', 'stopped', 'notinstalled'
     tracking:'',
     filter:'',
+    filterStatus:'',   // '', 'overdue', 'duesoon', 'ok'
     alerts:'all',      // '', 'all', 'overdue', 'due-soon', 'oil-high'
     alertsRegion:'',   // '', 'Miền Bắc', 'Miền Nam'
     eff:{ region:new Set(), type:new Set() }  // multi-select
@@ -319,42 +320,58 @@ const S = {
 };
 
 /* ============================================================
- * Bản đồ Tỉnh → Miền (dùng khi cột 'Miền' chưa có trong sheet)
+ * ÁNH XẠ CỘT THEO SHEET GỐC — Sheet 1 "Danh sách máy"
+ *   A: STT           B: Mã Máy       C: Loại Hình
+ *   D: Đơn vị hợp tác E: Tên Trại    F: Khu Vực   ← (Miền Bắc/Nam)
+ *   G: Tỉnh Thành    H: Trạng Thái   I: Công suất TK (kW)
+ *   J: Ngày lắp đặt  K: Tên vận hành L: SĐT       M: Zalo UID
+ *   N: Link Maps     O: Ghi chú
  * ============================================================ */
+const COL = {
+  MA:'B', LOAI:'C', DONVI:'D', TRAI:'E', KHU:'F', TINH:'G', TT:'H',
+  KW:'I', NGAY:'J', VH:'K', SDT:'L', ZALO:'M', MAP:'N', NOTE:'O'
+};
+
+/* Fallback tỉnh → miền (khi cột F trống) */
 const NORTH_PROVINCES = new Set([
   'Hà Nội','Hải Phòng','Bắc Ninh','Bắc Giang','Thái Nguyên','Phú Thọ','Tuyên Quang',
   'Yên Bái','Lào Cai','Hà Giang','Cao Bằng','Lạng Sơn','Sơn La','Điện Biên','Lai Châu',
   'Hòa Bình','Vĩnh Phúc','Hưng Yên','Hải Dương','Quảng Ninh','Thái Bình','Nam Định',
-  'Hà Nam','Ninh Bình','Thanh Hóa','Nghệ An','Hà Tĩnh','Quảng Bình','Bắc Kạn'
+  'Hà Nam','Ninh Bình','Thanh Hóa','Nghệ An','Hà Tĩnh','Quảng Bình','Bắc Kạn',
+  'Quảng Trị','Quảng Nam'
 ]);
 function regionOf(r){
-  // Nếu sheet đã có cột "Miền" (đặt ở _byLetter.P hoặc _byLetter.Q), ưu tiên dùng
-  const explicit = r._byLetter && (r._byLetter.MIEN || r._byLetter.Region || r._byLetter.mien);
-  if (explicit && /bắc|nam/i.test(explicit)) return /bắc/i.test(explicit) ? 'Miền Bắc' : 'Miền Nam';
-  // Fallback theo cột H (Tỉnh thành)
-  const prov = String(r._byLetter?.H || '').trim();
+  if (!r || !r._byLetter) return 'Chưa xác định';
+  const kv = String(r._byLetter[COL.KHU]||'').trim();
+  if (/bắc/i.test(kv)) return 'Miền Bắc';
+  if (/nam/i.test(kv)) return 'Miền Nam';
+  const prov = String(r._byLetter[COL.TINH]||'').trim();
   if (!prov) return 'Chưa xác định';
   return NORTH_PROVINCES.has(prov) ? 'Miền Bắc' : 'Miền Nam';
 }
 function statusKey(r){
-  const raw = String(r._byLetter?.I || r._byLetter?.H || '').toLowerCase();
-  if (/bình thường|hoạt/.test(raw)) return 'active';
-  if (/chưa/.test(raw)) return 'notinstalled';
-  if (/thu hồi|chờ/.test(raw)) return 'recall';
-  if (/không|dừng/.test(raw)) return 'stopped';
+  const raw = String(r._byLetter?.[COL.TT]||'').toLowerCase();
+  if (/không|dừng/.test(raw)) return 'stopped';       // "Không hoạt động"
+  if (/chưa/.test(raw)) return 'notinstalled';        // "Chưa lắp đặt"
+  if (/thu hồi/.test(raw)) return 'recall';           // "Chờ thu hồi"
+  if (/bình thường|hđ|hoạt/.test(raw)) return 'active'; // "Hđ bình thường"
   return 'other';
 }
 function statusLabelVi(k){
   return ({active:'HĐ bình thường',stopped:'Không hoạt động',notinstalled:'Chưa lắp đặt',recall:'Chờ thu hồi',other:'Khác'})[k]||k;
 }
 function typeOf(r){
-  const t = String(r._byLetter?.C || '').toLowerCase();
+  const t = String(r._byLetter?.[COL.LOAI] || '').toLowerCase();
   if (/thuê/.test(t)) return 'Thuê';
   if (/hợp tác|htkd/.test(t)) return 'Hợp tác';
   if (/bán/.test(t)) return 'Bán';
   if (/tồn|kho/.test(t)) return 'Tồn kho';
-  return String(r._byLetter?.C || 'Khác').trim() || 'Khác';
+  return String(r._byLetter?.[COL.LOAI] || 'Khác').trim() || 'Khác';
 }
+function powerKw(r){ const n = Number(r._byLetter?.[COL.KW]); return isNaN(n)?0:n; }
+
+/* 7 lựa chọn dropdown Tháp lọc số 1 / số 2 (Sheet 2 cột H, I) */
+const THAP_LOC_OPTIONS = ['Chạy lần 1','Chạy lần 2','Chờ hoàn nguyên','Chờ thay thế','Đã hoàn nguyên','Đã thay thế','Chờ sửa chữa'];
 
 /* Điều hướng có bộ lọc kèm theo */
 function navMasterWith(status){
@@ -395,7 +412,12 @@ async function reloadAll(){
 
     $('nb-master').textContent = S.master.rows.length;
     $('nb-track').textContent = S.tracking.rows.length;
-    $('nb-filter').textContent = S.filter.rows.length;
+    // "Data thay lọc" badge: số máy có Tình Trạng ≠ Bình thường (quá hạn + sắp đến hạn)
+    const filterWarn = S.tracking.rows.reduce((s,r)=>{
+      const n = Number(r._byLetter?.L);
+      return s + ((!isNaN(n) && n<=500) ? 1 : 0);
+    },0);
+    $('nb-filter').textContent = filterWarn;
     $('nb-alerts').textContent = S.alerts.total;
     const ineff = computeInefficient(S.master.rows);
     const nbEff = $('nb-eff'); if (nbEff) nbEff.textContent = ineff.length;
@@ -646,7 +668,7 @@ function viewAnalysis(){
   return `
     <div class="ph"><h1>Phân tích tổng hợp</h1><p>Biểu đồ theo khu vực, đơn vị, tỉnh, loại cảnh báo</p></div>
     <div class="cg2">
-      <div class="cc"><div class="ct">Công suất theo khu vực (KVA)</div><div class="cw"><canvas id="chP1"></canvas></div></div>
+      <div class="cc"><div class="ct">Công suất theo khu vực (kW)</div><div class="cw"><canvas id="chP1"></canvas></div></div>
       <div class="cc"><div class="ct">Số máy theo đơn vị hợp tác</div><div class="cw"><canvas id="chP2"></canvas></div></div>
     </div>
     <div class="cg2">
@@ -657,11 +679,12 @@ function viewAnalysis(){
 }
 function afterAnalysis(){
   const m = S.master.rows;
+  // Công suất (kW) theo Khu vực (F), giá trị I
   const sumBy = (k, valK) => m.reduce((o,r)=>{const key=String(r._byLetter[k]||'—').trim()||'—';o[key]=(o[key]||0)+(Number(r._byLetter[valK])||0);return o;},{});
   const cnt = (k) => m.reduce((o,r)=>{const key=String(r._byLetter[k]||'—').trim()||'—';o[key]=(o[key]||0)+1;return o;},{});
-  chartBar('chP1', sumBy('G','F'));
-  chartBar('chP2', cnt('D'));
-  const prov = cnt('H');
+  chartBar('chP1', sumBy(COL.KHU, COL.KW));   // CS (kW) theo Khu vực
+  chartBar('chP2', cnt(COL.DONVI));           // Số máy theo Đơn vị hợp tác
+  const prov = cnt(COL.TINH);
   chartBar('chP3', Object.fromEntries(Object.entries(prov).sort((a,b)=>b[1]-a[1]).slice(0,15)));
   const at = S.alerts.alerts.reduce((o,a)=>{
     const lbl = a.type==='overdue'?'Quá hạn':(a.type==='oil-high'?'Hao nhớt':'Sắp đến hạn');
@@ -699,22 +722,23 @@ function viewMaster(){
     <div class="card"><div class="tw" style="max-height:70vh"><table>
       <thead><tr>
         <th>Mã máy</th><th>Loại hình</th><th>Đơn vị</th><th>Trại</th>
-        <th style="text-align:right">CS (KVA)</th><th>Khu vực</th><th>Tỉnh</th>
+        <th>Khu vực</th><th>Tỉnh</th>
+        <th style="text-align:right">CS (kW)</th>
         <th>Trạng thái</th><th>Vận hành</th><th>SĐT</th><th>Zalo</th><th></th>
       </tr></thead>
       <tbody>${rows.map(r=>`<tr>
-        <td><span class="mm">${esc(r._byLetter.B)}</span></td>
-        <td>${esc(r._byLetter.C)}</td>
-        <td>${esc(r._byLetter.D)}</td>
-        <td>${esc(r._byLetter.E)}</td>
-        <td style="text-align:right;font-weight:600">${esc(r._byLetter.F)}</td>
-        <td>${esc(r._byLetter.G)}</td>
-        <td>${esc(r._byLetter.H)}</td>
-        <td>${statusBadge(r._byLetter.I||r._byLetter.H)}</td>
-        <td>${esc(r._byLetter.K)}</td>
-        <td>${esc(r._byLetter.L)}</td>
-        <td>${r._byLetter.M ? '<span class="b bg">✓ UID</span>' : '<span class="b bmu">—</span>'}</td>
-        <td><button class="btn bg-b sm" onclick="openMasterEdit('${esc(r._byLetter.B)}')">✎ Sửa</button></td>
+        <td><span class="mm">${esc(r._byLetter[COL.MA])}</span></td>
+        <td>${esc(r._byLetter[COL.LOAI])}</td>
+        <td>${esc(r._byLetter[COL.DONVI])}</td>
+        <td>${esc(r._byLetter[COL.TRAI])}</td>
+        <td>${esc(r._byLetter[COL.KHU])}</td>
+        <td>${esc(r._byLetter[COL.TINH])}</td>
+        <td style="text-align:right;font-weight:600">${esc(r._byLetter[COL.KW])}</td>
+        <td>${statusBadge(r._byLetter[COL.TT])}</td>
+        <td>${esc(r._byLetter[COL.VH])}</td>
+        <td>${esc(r._byLetter[COL.SDT])}</td>
+        <td>${r._byLetter[COL.ZALO] ? '<span class="b bg">✓ UID</span>' : '<span class="b bmu">—</span>'}</td>
+        <td><button class="btn bg-b sm" onclick="openMasterEdit('${esc(r._byLetter[COL.MA])}')">✎ Sửa</button></td>
       </tr>`).join('') || '<tr><td colspan="12"><div class="empty">Không có máy nào khớp.</div></td></tr>'}</tbody>
     </table></div></div>
   `;
@@ -739,18 +763,18 @@ function openMasterEdit(maCode){
         <div class="fsh"><div class="fsn">1</div><div class="fst">Thông tin cơ bản</div></div>
         <div class="fgrid fg3">
           <div class="iw"><div class="il">Mã máy *</div><input class="inp" id="fB" value="${esc(v('B'))}" ${isNew?'':'readonly'} placeholder="VD: NS200KVA18"></div>
-          <div class="iw">${autoWrap('fC','Loại hình', v('C'), dd.C?.options||[])}</div>
+          <div class="iw">${autoWrap('fC','Loại hình', v('C'), dd.C?.options||['Thuê','Hợp tác','Bán','Tồn kho'])}</div>
           <div class="iw">${autoWrap('fD','Đơn vị hợp tác', v('D'), dd.D?.options||[])}</div>
-          <div class="iw"><div class="il">Tên trại</div><input class="inp" id="fE" value="${esc(v('E'))}"></div>
-          <div class="iw"><div class="il">Công suất TK (KVA) · công thức</div><input class="inp" value="${esc(v('F'))}" readonly></div>
-          <div class="iw"><div class="il">Trạng thái phụ (I)</div><input class="inp" id="fI" value="${esc(v('I'))}"></div>
+          <div class="iw"><div class="il">Tên trại / Đơn vị</div><input class="inp" id="fE" value="${esc(v('E'))}"></div>
+          <div class="iw"><div class="il">Công suất TK (kW)</div><input class="inp" id="fI" type="number" step="1" value="${esc(v('I'))}" placeholder="VD: 80"></div>
+          <div class="iw">${autoWrap('fH','Trạng thái', v('H'), dd.H?.options||['Hđ bình thường','Chưa lắp đặt','Không hoạt động','Chờ thu hồi'])}</div>
         </div>
       </div>
       <div class="fsec">
-        <div class="fsh"><div class="fsn">2</div><div class="fst">Vị trí & Trạng thái</div></div>
+        <div class="fsh"><div class="fsn">2</div><div class="fst">Vị trí</div></div>
         <div class="fgrid fg3">
-          <div class="iw">${autoWrap('fG','Khu vực', v('G'), dd.G?.options||[])}</div>
-          <div class="iw">${autoWrap('fH','Tỉnh thành', v('H'), dd.H?.options||[])}</div>
+          <div class="iw">${autoWrap('fF','Khu vực', v('F'), dd.F?.options||['Miền Bắc','Miền Nam'])}</div>
+          <div class="iw">${autoWrap('fG','Tỉnh thành', v('G'), dd.G?.options||[])}</div>
           <div class="iw"><div class="il">Ngày lắp đặt</div><input class="inp" id="fJ" type="date" value="${dateVal(v('J'))}"></div>
         </div>
       </div>
@@ -775,11 +799,11 @@ function openMasterEdit(maCode){
       <button class="btn bg-g" onclick="saveMaster(${isNew})">💾 Lưu vào Google Sheet</button>
     </div>
   `);
-  setTimeout(()=>['fC','fD','fG','fH'].forEach(id=>{ const el=$(id); if (el) attachAutocomplete(el); }), 10);
+  setTimeout(()=>['fC','fD','fF','fG','fH'].forEach(id=>{ const el=$(id); if (el) attachAutocomplete(el); }), 10);
 }
 
 async function saveMaster(isNew){
-  const letters = ['B','C','D','E','G','H','I','J','K','L','M','N','O'];
+  const letters = ['B','C','D','E','F','G','H','I','J','K','L','M','N','O'];
   const data = {};
   letters.forEach(L=>{ const el=$('f'+L); if (el) data[L]=el.value; });
   if (!data.B){ toast('Thiếu mã máy','err'); return; }
@@ -793,40 +817,70 @@ async function saveMaster(isNew){
   } catch(e){ toast('Lỗi lưu: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
 }
 
+/* ============================================================
+ *  THEO DÕI BẢO DƯỠNG — hiển thị theo mã máy
+ *  Nguồn: Sheet 2 · lấy tất cả cột "Theo dõi cảnh báo…" (công thức)
+ *  Kết hợp: Sheet 1 để hiển thị Đơn vị / Trại / Khu vực
+ *  Chỉ đọc trên bảng · click ✎ Cập nhật để mở form nhập "Thời điểm…"
+ *  Hao nhớt (cột AE, header có chứa "hao nhớt") · so với Sheet 4 cột K
+ * ============================================================ */
 function viewTracking(){
   const q = (S.filters.tracking||'').toLowerCase();
-  const rows = q ? S.tracking.rows.filter(r=>JSON.stringify(r._byLetter).toLowerCase().includes(q)) : S.tracking.rows;
   const headers = S.tracking.headers.filter(x=>x);
-  const timeHeaders = headers.filter(h=>/thời điểm/i.test(h));
   const warnHeaders = headers.filter(h=>/theo dõi cảnh báo/i.test(h));
-  const oilHeader   = headers.find(h=>/hao nhớt/i.test(h));
+  const oilHeader = headers.find(h=>/hao nhớt/i.test(h));
+
+  const mByCode = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA]||'').trim(), m]));
+  const rows = S.tracking.rows.filter(r => {
+    if (!q) return true;
+    const code = String(r._byLetter[COL.MA]||'');
+    const m = mByCode.get(code.trim());
+    const hay = `${code} ${m?m._byLetter[COL.DONVI]:''} ${m?m._byLetter[COL.TRAI]:''}`.toLowerCase();
+    return hay.includes(q) || JSON.stringify(r._byLetter).toLowerCase().includes(q);
+  });
+
+  // Đếm cảnh báo tổng hợp
+  const warnCount = { overdue:0, duesoon:0 };
+  S.tracking.rows.forEach(r=>{
+    warnHeaders.forEach(h=>{
+      const n = Number(r[h]);
+      if (!isNaN(n)){ if (n<=0) warnCount.overdue++; else if (n<=500) warnCount.duesoon++; }
+    });
+  });
 
   return `
-    <div class="ph"><h1>Theo dõi hoạt động bảo dưỡng</h1><p>${S.tracking.rows.length} bản ghi · ${timeHeaders.length} mốc thời gian · ${warnHeaders.length} cảnh báo tự tính</p></div>
+    <div class="ph">
+      <h1>Theo dõi hoạt động bảo dưỡng</h1>
+      <p>${S.tracking.rows.length} máy · ${warnHeaders.length} hạng mục cảnh báo · <b style="color:var(--red)">${warnCount.overdue}</b> quá hạn · <b style="color:var(--amb)">${warnCount.duesoon}</b> sắp đến hạn</p>
+    </div>
     <div class="fbar">
-      <input class="si" placeholder="🔍 Tìm mã máy…" value="${esc(q)}" oninput="S.filters.tracking=this.value;renderPage('tracking')">
+      <input class="si" placeholder="🔍 Tìm mã máy, đơn vị, trại…" value="${esc(q)}" oninput="S.filters.tracking=this.value;renderPage('tracking')">
       <button class="btn bg-gr" onclick="exportCsv(S.tracking,'theo-doi-bao-duong')">⤓ CSV</button>
     </div>
     <div class="card"><div class="tw" style="max-height:70vh"><table>
       <thead><tr>
         <th>Mã máy</th>
-        ${timeHeaders.slice(0,3).map(h=>`<th>${esc(h)}</th>`).join('')}
-        ${warnHeaders[0]?`<th>${esc(warnHeaders[0])}</th>`:''}
-        ${oilHeader?`<th>${esc(oilHeader)}</th>`:''}
+        <th>Đơn vị · Trại</th>
+        <th>Khu vực</th>
+        ${warnHeaders.slice(0,4).map(h=>`<th style="text-align:right">${esc(h.replace(/theo dõi cảnh báo/i,'').trim())}</th>`).join('')}
+        ${oilHeader?`<th style="text-align:right">${esc(oilHeader)}</th>`:''}
         <th></th>
       </tr></thead>
       <tbody>${rows.map(r=>{
-        const remain = warnHeaders[0] ? Number(r[warnHeaders[0]]) : null;
-        let warnClass = '';
-        if (remain !== null && !isNaN(remain)){
-          if (remain <= 0) warnClass = 'br';
-          else if (remain <= 500) warnClass = 'ba';
-        }
+        const code = String(r._byLetter[COL.MA]||'').trim();
+        const m = mByCode.get(code);
+        const cells = warnHeaders.slice(0,4).map(h=>{
+          const n = Number(r[h]);
+          if (isNaN(n)) return `<td style="text-align:right">${esc(r[h])}</td>`;
+          const cls = n<=0 ? 'br' : (n<=500 ? 'ba' : 'bg');
+          return `<td style="text-align:right"><span class="b ${cls}">${n} h</span></td>`;
+        }).join('');
         return `<tr>
-          <td><span class="mm">${esc(r._byLetter.B)}</span></td>
-          ${timeHeaders.slice(0,3).map(h=>`<td>${fmtDate(r[h])}</td>`).join('')}
-          ${warnHeaders[0]?`<td>${warnClass?`<span class="b ${warnClass}">${esc(r[warnHeaders[0]])} h</span>`:esc(r[warnHeaders[0]])}</td>`:''}
-          ${oilHeader?`<td>${esc(r[oilHeader])}</td>`:''}
+          <td><span class="mm">${esc(code)}</span></td>
+          <td>${esc(m?(m._byLetter[COL.DONVI]||''):'')} · ${esc(m?(m._byLetter[COL.TRAI]||''):'')}</td>
+          <td>${esc(m?(m._byLetter[COL.KHU]||''):'')}</td>
+          ${cells}
+          ${oilHeader?`<td style="text-align:right">${esc(r[oilHeader]??'—')}</td>`:''}
           <td><button class="btn bg-b sm" onclick="openTrackingEdit(${r._row})">✎ Cập nhật</button></td>
         </tr>`;
       }).join('') || '<tr><td colspan="99"><div class="empty">Không có bản ghi.</div></td></tr>'}</tbody>
@@ -838,52 +892,77 @@ function openTrackingEdit(rowId){
   const row = S.tracking.rows.find(r=>r._row===rowId);
   if (!row){ toast('Không tìm thấy dòng '+rowId,'err'); return; }
   const headers = S.tracking.headers.filter(x=>x);
-  const isReadonly = h => /theo dõi cảnh báo/i.test(h) || h==='STT';
-  const timeHeaders = headers.filter(h=>/thời điểm/i.test(h) && !isReadonly(h));
-  const warnHeaders = headers.filter(h=>/theo dõi cảnh báo/i.test(h));
-  const oilHeader   = headers.find(h=>/hao nhớt/i.test(h));
-  const otherHeaders = headers.filter(h=>!isReadonly(h) && !/thời điểm|hao nhớt|^stt$/i.test(h) && h!==oilHeader && h!=='B');
+  // Bỏ qua các cột: STT (A), Mã máy (B, tra cứu), Cột E (auto từ code khác)
+  const isSkip = h => h==='STT' || h==='Mã Máy' || h==='Mã máy';
+  const isFormula = h => /theo dõi cảnh báo/i.test(h);
+  const isAutoFilled = h => {
+    // Cột E của Sheet 2 tự động điền — cần đoán tên header (thường là "Số giờ đang chạy" hoặc header thứ 5)
+    const idx = headers.indexOf(h);
+    return idx === 4;  // cột E (0-indexed = 4)
+  };
+  const timeHeaders = headers.filter(h => /thời điểm/i.test(h) && !isSkip(h) && !isFormula(h) && !isAutoFilled(h));
+  const oilHeader = headers.find(h=>/hao nhớt/i.test(h));
+  const warnHeaders = headers.filter(h => isFormula(h));
+  const towerHeaders = headers.filter(h => /tháp lọc/i.test(h));   // H, I
+
+  // "Còn lại" là mọi cột nhập tay chưa lọc
+  const other = headers.filter(h => !isSkip(h) && !isFormula(h) && !isAutoFilled(h) && !timeHeaders.includes(h) && h!==oilHeader && !towerHeaders.includes(h));
   const key = h => 'th_'+btoa(unescape(encodeURIComponent(h))).replace(/[^A-Za-z0-9]/g,'');
 
   openOv(`
     <div class="mh">
       <div>
         <h2>✎ Cập nhật theo dõi bảo dưỡng</h2>
-        <p>Máy <b>${esc(row._byLetter.B||'')}</b> · dòng ${rowId} · cột công thức là chỉ đọc</p>
+        <p>Máy <b>${esc(row._byLetter[COL.MA]||'')}</b> · dòng ${rowId} · Cột E do hệ thống tự điền · các cột công thức chỉ đọc</p>
       </div>
       <button class="mcl" onclick="closeOv()">✕</button>
     </div>
     <div class="mb">
+
       ${timeHeaders.length? `
       <div class="fsec">
-        <div class="fsh"><div class="fsn">1</div><div class="fst">Thời điểm thực hiện bảo dưỡng</div></div>
+        <div class="fsh"><div class="fsn">1</div><div class="fst">Thời điểm thực hiện · nhập theo thực tế</div></div>
         <div class="fgrid fg2">
           ${timeHeaders.map(h=>`<div class="iw"><div class="il">${esc(h)}</div><input class="inp" id="${key(h)}" type="date" value="${dateVal(row[h])}"></div>`).join('')}
         </div>
       </div>`:''}
 
+      ${towerHeaders.length? `
+      <div class="fsec">
+        <div class="fsh"><div class="fsn">2</div><div class="fst">Trạng thái tháp lọc</div></div>
+        <div class="fgrid fg2">
+          ${towerHeaders.map(h=>`
+            <div class="iw"><div class="il">${esc(h)}</div>
+              <select class="sel" id="${key(h)}">
+                <option value="">— chọn —</option>
+                ${THAP_LOC_OPTIONS.map(o=>`<option ${String(row[h]||'').trim().toLowerCase()===o.toLowerCase()?'selected':''}>${esc(o)}</option>`).join('')}
+              </select>
+            </div>`).join('')}
+        </div>
+      </div>`:''}
+
       ${oilHeader ? `
       <div class="fsec">
-        <div class="fsh"><div class="fsn">2</div><div class="fst">Chỉ số vận hành</div></div>
+        <div class="fsh"><div class="fsn">3</div><div class="fst">Chỉ số vận hành</div></div>
         <div class="fgrid fg2">
           <div class="iw"><div class="il">${esc(oilHeader)}</div>
             <input class="inp" id="${key(oilHeader)}" type="number" step="0.01" value="${esc(row[oilHeader]||'')}" placeholder="VD: 0.15">
-            <div style="font-size:9px;color:var(--mu);margin-top:3px">Vượt định mức Sheet 4 cột K sẽ tự bật cảnh báo hao nhớt</div>
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">So với định mức hao nhớt/20h (Sheet 4 cột K) để bật cảnh báo hao nhớt cao</div>
           </div>
         </div>
       </div>`:''}
 
-      ${otherHeaders.length? `
+      ${other.length? `
       <div class="fsec">
-        <div class="fsh"><div class="fsn">3</div><div class="fst">Thông tin khác</div></div>
+        <div class="fsh"><div class="fsn">4</div><div class="fst">Thông tin khác</div></div>
         <div class="fgrid fg2">
-          ${otherHeaders.map(h=>`<div class="iw"><div class="il">${esc(h)}</div><input class="inp" id="${key(h)}" value="${esc(row[h]||'')}"></div>`).join('')}
+          ${other.map(h=>`<div class="iw"><div class="il">${esc(h)}</div><input class="inp" id="${key(h)}" value="${esc(row[h]||'')}"></div>`).join('')}
         </div>
       </div>`:''}
 
       ${warnHeaders.length? `
       <div class="fsec">
-        <div class="fsh" style="background:linear-gradient(90deg,#fef3c7,#fff)"><div class="fsn" style="background:var(--amb)">!</div><div class="fst">Theo dõi cảnh báo (công thức · chỉ đọc)</div></div>
+        <div class="fsh" style="background:linear-gradient(90deg,#fef3c7,#fff)"><div class="fsn" style="background:var(--amb)">!</div><div class="fst">Theo dõi cảnh báo · công thức Sheet 2 (chỉ đọc)</div></div>
         <div class="fgrid fg3">
           ${warnHeaders.map(h=>{
             const val = Number(row[h]);
@@ -901,18 +980,19 @@ function openTrackingEdit(rowId){
       <button class="btn bg-g" onclick="saveTracking(${rowId})">💾 Lưu vào Google Sheet</button>
     </div>
   `);
-  window._trackingKeys = { timeHeaders, oilHeader, otherHeaders, key };
+  window._trackingKeys = { timeHeaders, oilHeader, otherHeaders:other, towerHeaders, key };
 }
 
 async function saveTracking(rowId){
   const row = S.tracking.rows.find(r=>r._row===rowId);
-  const { timeHeaders, oilHeader, otherHeaders, key } = window._trackingKeys || {};
+  const { timeHeaders, oilHeader, otherHeaders, towerHeaders, key } = window._trackingKeys || {};
   const updates = {};
   const push = h => {
     const el = $(key(h)); if (!el) return;
     if (String(el.value) !== String(row[h]??'')) updates[h] = el.value;
   };
   (timeHeaders||[]).forEach(push);
+  (towerHeaders||[]).forEach(push);
   if (oilHeader) push(oilHeader);
   (otherHeaders||[]).forEach(push);
 
@@ -927,82 +1007,182 @@ async function saveTracking(rowId){
   } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
 }
 
+/* ============================================================
+ *  DATA THAY LỌC — hiển thị dữ liệu theo mã máy
+ *  Nguồn dữ liệu vận hành: Sheet 2 "Theo dõi hoạt động bảo dưỡng"
+ *   - Cột B: Mã máy (khóa nối với Sheet 1)
+ *   - Cột H: Tháp lọc số 1  (2 chiều · dropdown 7 lựa chọn)
+ *   - Cột I: Tháp lọc số 2  (2 chiều · dropdown 7 lựa chọn)
+ *   - Cột K: Thời điểm hoàn nguyên hạt lọc hoặc thay (2 chiều · date)
+ *   - Cột L: Theo dõi/cảnh báo hoàn nguyên hạt lọc hoặc thay (chỉ đọc, số giờ còn lại)
+ *  Ngưỡng cảnh báo (Tình Trạng):
+ *   - L ≤ 0   → Quá hạn
+ *   - L ≤ 500 → Sắp đến hạn
+ *   - còn lại → Bình thường
+ * ============================================================ */
 function viewFilter(){
   const q = (S.filters.filter||'').toLowerCase();
-  const rows = q ? S.filter.rows.filter(r=>JSON.stringify(r._byLetter).toLowerCase().includes(q)) : S.filter.rows;
-  const headers = S.filter.headers.filter(x=>x);
-  const show = headers.slice(0, 10);
+  const status = S.filters.filterStatus || '';   // '', 'overdue', 'due-soon', 'ok'
+
+  // Ghép mã máy → dòng Sheet 2 (nếu có)
+  const tByCode = new Map(S.tracking.rows.map(t => [String(t._byLetter[COL.MA]||'').trim(), t]));
+  // Duyệt theo Sheet 1 để mọi máy đều xuất hiện
+  const list = S.master.rows
+    .filter(m => statusKey(m) !== 'notinstalled')  // Máy chưa lắp đặt không cần data thay lọc
+    .map(m => {
+      const code = String(m._byLetter[COL.MA]||'').trim();
+      const t = tByCode.get(code);
+      const remain = t ? Number(t._byLetter.L) : NaN;
+      let cond = 'ok';
+      if (!isNaN(remain)) {
+        if (remain <= 0) cond = 'overdue';
+        else if (remain <= 500) cond = 'duesoon';
+      } else cond = 'nodata';
+      return { m, t, code, remain, cond };
+    });
+
+  const filtered = list
+    .filter(x => !status || x.cond === status)
+    .filter(x => !q || `${x.code} ${x.m._byLetter[COL.DONVI]} ${x.m._byLetter[COL.TRAI]}`.toLowerCase().includes(q));
+
+  const c = { total:list.length, overdue:list.filter(x=>x.cond==='overdue').length, duesoon:list.filter(x=>x.cond==='duesoon').length, ok:list.filter(x=>x.cond==='ok').length };
+
+  const condBadge = cond => ({
+    overdue:  '<span class="b br">● Quá hạn</span>',
+    duesoon:  '<span class="b ba">● Sắp đến hạn</span>',
+    ok:       '<span class="b bg">● Bình thường</span>',
+    nodata:   '<span class="b bmu">— chưa có dữ liệu</span>'
+  })[cond] || '';
+
   return `
-    <div class="ph"><h1>Data thay lọc / hoàn nguyên hạt</h1><p>${S.filter.rows.length} bản ghi · 2 tháp lọc so le · định mức hao nhớt cột K</p></div>
-    <div class="fbar">
-      <input class="si" placeholder="🔍 Tìm mã máy…" value="${esc(q)}" oninput="S.filters.filter=this.value;renderPage('filter')">
-      <button class="btn bg-gr" onclick="exportCsv(S.filter,'data-thay-loc')">⤓ CSV</button>
+    <div class="ph">
+      <h1>Data thay lọc / hoàn nguyên hạt</h1>
+      <p>${list.length} máy · hiển thị ${filtered.length} · dữ liệu từ Sheet 2 "Theo dõi hoạt động bảo dưỡng"</p>
     </div>
+
+    <div class="fbar">
+      <input class="si" placeholder="🔍 Tìm mã máy, đơn vị, trại…" value="${esc(q)}" oninput="S.filters.filter=this.value;renderPage('filter')">
+      <button class="btn bg-gr" onclick="exportFilterCsv()">⤓ CSV</button>
+    </div>
+
+    <div class="fbar">
+      <span class="mslbl">Tình trạng</span>
+      <button class="fchip ${!status?'on':''}" onclick="setFilterStatus('')">Tất cả (${c.total})</button>
+      <button class="fchip ${status==='overdue'?'on':''}" onclick="setFilterStatus('overdue')">Quá hạn (${c.overdue})</button>
+      <button class="fchip ${status==='duesoon'?'on':''}" onclick="setFilterStatus('duesoon')">Sắp đến hạn (${c.duesoon})</button>
+      <button class="fchip ${status==='ok'?'on':''}" onclick="setFilterStatus('ok')">Bình thường (${c.ok})</button>
+    </div>
+
     <div class="card"><div class="tw" style="max-height:70vh"><table>
-      <thead><tr>${show.map(h=>`<th>${esc(h)}</th>`).join('')}<th></th></tr></thead>
-      <tbody>${rows.map(r=>`<tr>
-        ${show.map(h=>`<td>${esc(r[h])}</td>`).join('')}
-        <td><button class="btn bg-b sm" onclick="openFilterEdit(${r._row})">✎ Sửa</button></td>
-      </tr>`).join('') || '<tr><td colspan="99"><div class="empty">Không có bản ghi.</div></td></tr>'}</tbody>
+      <thead><tr>
+        <th>Mã máy</th>
+        <th>Đơn vị hợp tác</th>
+        <th>Tên Trang Trại / Đơn Vị</th>
+        <th>Tình Trạng</th>
+        <th style="text-align:right">Theo dõi/cảnh báo<br><span style="font-weight:400;text-transform:none">hoàn nguyên hạt lọc hoặc thay (h)</span></th>
+        <th>Thời điểm hoàn nguyên<br><span style="font-weight:400;text-transform:none">hạt lọc hoặc thay ✎</span></th>
+        <th>Tháp lọc số 1 ✎</th>
+        <th>Tháp lọc số 2 ✎</th>
+      </tr></thead>
+      <tbody>
+      ${filtered.map(x=>{
+        const rowId = x.t?._row;
+        const thap1 = x.t ? (x.t._byLetter.H || '') : '';
+        const thap2 = x.t ? (x.t._byLetter.I || '') : '';
+        const dateVal = x.t ? (x.t._byLetter.K || '') : '';
+        const canEdit = !!rowId;
+        const dropCls = canEdit ? 'sel' : 'sel';
+        return `<tr>
+          <td><span class="mm">${esc(x.code)}</span></td>
+          <td>${esc(x.m._byLetter[COL.DONVI]||'')}</td>
+          <td>${esc(x.m._byLetter[COL.TRAI]||'')}</td>
+          <td>${condBadge(x.cond)}</td>
+          <td style="text-align:right;font-family:var(--mono);font-weight:600">${isNaN(x.remain)?'—':x.remain+' h'}</td>
+          <td>${canEdit
+              ? `<input class="inp" style="min-width:140px" type="date" value="${esc(dvDate(dateVal))}" onchange="saveFilterCell(${rowId},'K',this.value)">`
+              : '<span class="b bmu">—</span>'}</td>
+          <td>${canEdit
+              ? `<select class="${dropCls}" style="min-width:150px" onchange="saveFilterCell(${rowId},'H',this.value)">
+                  <option value="">— chọn —</option>
+                  ${THAP_LOC_OPTIONS.map(o=>`<option ${String(thap1).trim().toLowerCase()===o.toLowerCase()?'selected':''}>${esc(o)}</option>`).join('')}
+                </select>`
+              : '<span class="b bmu">—</span>'}</td>
+          <td>${canEdit
+              ? `<select class="${dropCls}" style="min-width:150px" onchange="saveFilterCell(${rowId},'I',this.value)">
+                  <option value="">— chọn —</option>
+                  ${THAP_LOC_OPTIONS.map(o=>`<option ${String(thap2).trim().toLowerCase()===o.toLowerCase()?'selected':''}>${esc(o)}</option>`).join('')}
+                </select>`
+              : '<span class="b bmu">—</span>'}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="8"><div class="empty">Không có máy nào khớp.</div></td></tr>'}
+      </tbody>
     </table></div></div>
   `;
 }
 
-function openFilterEdit(rowId){
-  const row = S.filter.rows.find(r=>r._row===rowId);
-  const headers = S.filter.headers.filter(x=>x);
-  const states = S.alerts.towerStates || [];
-  openOv(`
-    <div class="mh">
-      <div><h2>✎ Cập nhật Data thay lọc</h2><p>Dòng ${rowId} · trạng thái tháp lọc từ Sheet 4 cột M</p></div>
-      <button class="mcl" onclick="closeOv()">✕</button>
-    </div>
-    <div class="mb">
-      <div class="fsec">
-        <div class="fsh"><div class="fsn">1</div><div class="fst">Thông tin thay / hoàn nguyên</div></div>
-        <div class="fgrid fg2">
-          ${headers.map((h,i)=>{
-            const val = row[h]??'';
-            const isState = /trạng thái/i.test(h);
-            if (isState && states.length){
-              return `<div class="iw"><div class="il">${esc(h)}</div>
-                <select class="sel" id="ff_${i}">
-                  <option value="">— chọn —</option>
-                  ${states.map(s=>`<option ${String(val)===String(s)?'selected':''}>${esc(s)}</option>`).join('')}
-                </select></div>`;
-            }
-            const isDate = /ngày|thời điểm/i.test(h);
-            return `<div class="iw"><div class="il">${esc(h)}</div>
-              <input class="inp" id="ff_${i}" ${isDate?'type="date"':''} value="${esc(isDate?dateVal(val):val)}"></div>`;
-          }).join('')}
-        </div>
-      </div>
-    </div>
-    <div class="mf">
-      <button class="btn bg-gr" onclick="closeOv()">Hủy</button>
-      <button class="btn bg-g" onclick="saveFilter(${rowId})">💾 Lưu vào Google Sheet</button>
-    </div>
-  `);
-}
+function setFilterStatus(s){ S.filters.filterStatus = s; renderPage('filter'); }
 
-async function saveFilter(rowId){
-  const row = S.filter.rows.find(r=>r._row===rowId);
-  const headers = S.filter.headers.filter(x=>x);
-  const updates = {};
-  headers.forEach((h,i)=>{
-    const el = $('ff_'+i); if (!el) return;
-    if (String(el.value) !== String(row[h]??'')) updates[h] = el.value;
-  });
-  if (!Object.keys(updates).length){ closeOv(); toast('Không có thay đổi','info'); return; }
+/**
+ * Lưu 1 ô Sheet 2 (H/I/K) → gọi Apps Script updateTracking.
+ * Yêu cầu Apps Script chấp nhận payload {action:'updateTracking', row, updates:{[letter]: value}}
+ * và map letter → cột đúng của Sheet 2.
+ */
+async function saveFilterCell(rowId, colLetter, value){
+  const row = S.tracking.rows.find(r=>r._row===rowId);
+  if (!row){ toast('Không tìm thấy dòng '+rowId,'err'); return; }
+  const headers = S.tracking.headers.filter(x=>x);
+  // Map letter → header name (dùng chỉ số cột: A=0, B=1, ...)
+  const idx = colLetter.charCodeAt(0) - 65;
+  const headerName = headers[idx] || colLetter;
   setStatus(true,'Đang lưu…');
   try {
-    const res = await apiPost({action:'updateFilter', row:rowId, updates});
-    if (!res.ok) throw new Error(res.error);
-    closeOv();
-    await reloadAll();
-    toast('✓ Đã lưu','ok');
-  } catch(e){ toast('Lỗi: '+e.message,'err'); }
+    const res = await apiPost({action:'updateTracking', row:rowId, updates:{[headerName]:value}});
+    if (!res.ok) throw new Error(res.error||'Lỗi lưu');
+    // cập nhật state cục bộ
+    row._byLetter[colLetter] = value;
+    row[headerName] = value;
+    setStatus(false,`Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
+    toast('✓ Đã đồng bộ vào Sheet 2','ok');
+    // Không cần re-render toàn bộ để giữ scroll position
+  } catch(e){
+    toast('Lỗi lưu: '+e.message,'err');
+    setStatus(false,'❌ '+e.message,true);
+  }
 }
+
+function dvDate(v){
+  if (!v) return '';
+  const d = new Date(v);
+  if (!isNaN(d)) return d.toISOString().slice(0,10);
+  return String(v).slice(0,10);
+}
+
+function exportFilterCsv(){
+  const tByCode = new Map(S.tracking.rows.map(t => [String(t._byLetter[COL.MA]||'').trim(), t]));
+  const rows = S.master.rows.filter(m=>statusKey(m)!=='notinstalled').map(m=>{
+    const code = String(m._byLetter[COL.MA]||'').trim();
+    const t = tByCode.get(code);
+    const remain = t? Number(t._byLetter.L) : NaN;
+    let cond = 'Bình thường';
+    if (!isNaN(remain)){ if (remain<=0) cond='Quá hạn'; else if (remain<=500) cond='Sắp đến hạn'; }
+    else cond = '—';
+    return {
+      'Mã máy': code,
+      'Đơn vị hợp tác': m._byLetter[COL.DONVI]||'',
+      'Tên Trang Trại / Đơn Vị': m._byLetter[COL.TRAI]||'',
+      'Tình Trạng': cond,
+      'Theo dõi/cảnh báo hoàn nguyên hạt lọc hoặc thay (h)': isNaN(remain)?'':remain,
+      'Thời điểm hoàn nguyên hạt lọc hoặc thay': t? (t._byLetter.K||'') : '',
+      'Tháp lọc số 1': t? (t._byLetter.H||'') : '',
+      'Tháp lọc số 2': t? (t._byLetter.I||'') : ''
+    };
+  });
+  exportCsv({ headers:Object.keys(rows[0]||{}), rows }, 'data-thay-loc');
+}
+
+/* Legacy modal removed – vẫn giữ hàm openFilterEdit làm no-op để nút cũ không lỗi */
+function openFilterEdit(){ toast('Đã chuyển sang chỉnh sửa trực tiếp trên bảng','info'); }
+async function saveFilter(){ /* legacy */ }
 
 /* ============================================================
  *  TRANG HIỆU QUẢ VẬN HÀNH (Sheet 5)
@@ -1414,7 +1594,7 @@ function ineffCardHtml(x, uid){
             ${x.badHr?'<span class="b ba">Giờ chạy thấp</span>':''}
             ${x.badKw?'<span class="b br">Công suất thấp</span>':''}
           </div>
-          <div class="effsub">${esc(r._byLetter.E||'')} · ${esc(r._byLetter.H||'')} · Vận hành: ${esc(r._byLetter.K||'—')}</div>
+          <div class="effsub">${esc(r._byLetter[COL.TRAI]||'')} · ${esc(r._byLetter[COL.TINH]||'')} · Vận hành: ${esc(r._byLetter[COL.VH]||'—')}</div>
         </div>
       </div>
       <div class="effstats">
