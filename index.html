@@ -64,12 +64,41 @@ body{background:var(--bg);color:var(--s);min-height:100vh;font-size:14px;overflo
 .ch h3{font-size:12px;font-weight:700;color:var(--s2)}
 .cb{padding:14px 16px}
 
-.kgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:11px;margin-bottom:16px}
-.kcard{background:var(--card);border-radius:var(--rl);padding:14px 16px;box-shadow:var(--sh);border-left:4px solid var(--g)}
-.kcard.bl{border-left-color:var(--bl)}.kcard.am{border-left-color:var(--amb)}.kcard.rd{border-left-color:var(--red)}.kcard.pu{border-left-color:var(--pu)}
+.krow{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;margin-bottom:11px}
+.krow.r1{grid-template-columns:repeat(4,1fr)}
+.kcard{background:var(--card);border-radius:var(--rl);padding:14px 16px;box-shadow:var(--sh);border-left:4px solid var(--g);cursor:pointer;transition:transform .12s ease, box-shadow .12s ease;position:relative}
+.kcard:hover{transform:translateY(-2px);box-shadow:var(--shl)}
+.kcard.bl{border-left-color:var(--bl)}.kcard.am{border-left-color:var(--amb)}.kcard.rd{border-left-color:var(--red)}.kcard.pu{border-left-color:var(--pu)}.kcard.tl{border-left-color:#0891b2}
+.kcard.pin{cursor:default;color:#fff;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:14px 16px}
+.kcard.pin:hover{transform:none;box-shadow:var(--sh)}
+.kcard.pin.n{background:linear-gradient(135deg,#083d24,#0d6e3f);border-left-color:#083d24}
+.kcard.pin.s{background:linear-gradient(135deg,#0e4d8a,#1e6bb8);border-left-color:#0e4d8a}
+.kcard.pin .pinlbl{font-size:9px;font-weight:700;opacity:.8;letter-spacing:.8px;text-transform:uppercase;margin-bottom:4px}
+.kcard.pin .pinttl{font-size:15px;font-weight:800;line-height:1.1}
+.kcard.pin .pinsub{font-size:10px;opacity:.85;margin-top:3px}
 .klbl{font-size:9px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px}
 .kval{font-size:26px;font-weight:800;color:var(--s);line-height:1;margin-bottom:2px}
 .ksub{font-size:10px;color:var(--mu)}
+.karr{position:absolute;top:10px;right:12px;font-size:11px;color:var(--mu);opacity:.4}
+.kcard:hover .karr{opacity:1;color:var(--g)}
+
+/* Efficient tracking cards */
+.effcard{background:var(--card);border-radius:var(--rl);padding:12px 14px;box-shadow:var(--sh);margin-bottom:10px;border-left:4px solid var(--amb)}
+.effcard.bad{border-left-color:var(--red)}
+.effcard .effhd{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.effcard .effttl{font-size:12px;font-weight:700;color:var(--s2)}
+.effcard .effsub{font-size:10px;color:var(--mu)}
+.effstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:8px}
+.effstats .es{padding:6px 9px;background:#f8fafc;border-radius:7px;border:1px solid var(--bd)}
+.effstats .esl{font-size:9px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.4px}
+.effstats .esv{font-size:13px;font-weight:700;color:var(--s);margin-top:1px}
+.effstats .esv.warn{color:var(--amb)}.effstats .esv.bad{color:var(--red)}.effstats .esv.ok{color:var(--g)}
+.effchart{position:relative;height:190px}
+
+/* Multi-select chip filter */
+.msf{display:flex;gap:14px;flex-wrap:wrap;padding:10px 14px;background:var(--card);border-radius:var(--rl);box-shadow:var(--sh);margin-bottom:13px;align-items:center}
+.msf .msg{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.msf .mslbl{font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.5px;margin-right:2px}
 
 .cg2{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-bottom:14px}
 .cc{background:var(--card);border-radius:var(--rl);padding:14px 16px;box-shadow:var(--sh)}
@@ -151,9 +180,9 @@ td{padding:9px 12px;vertical-align:middle}
 .empty{padding:40px 16px;text-align:center;color:var(--mu);font-size:12px}
 .empty .ei{font-size:36px;margin-bottom:8px;opacity:.5}
 
-@media(max-width:900px){.cg2{grid-template-columns:1fr}}
+@media(max-width:900px){.cg2{grid-template-columns:1fr}.krow,.krow.r1{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:768px){
-  .kgrid{grid-template-columns:1fr 1fr}
+  .krow,.krow.r1{grid-template-columns:1fr 1fr}
   .sidebar{position:fixed;top:0;left:0;bottom:0;width:250px;z-index:500;transform:translateX(-100%);transition:transform .25s;height:100vh;box-shadow:4px 0 24px rgba(0,0,0,.18)}
   .sidebar.open{transform:translateX(0)}
   .mob-overlay.show{display:block}
@@ -229,6 +258,9 @@ td{padding:9px 12px;vertical-align:middle}
       <div class="nitem" data-page="filter" onclick="nav('filter')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>Data thay lọc<span class="nbadge" id="nb-filter">0</span>
       </div>
+      <div class="nitem" data-page="efficiency" onclick="nav('efficiency')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l3-3 4 4 6-6"/></svg>Hiệu quả vận hành<span class="nbadge am" id="nb-eff">0</span>
+      </div>
 
       <div class="nsec">Danh mục</div>
       <div class="nitem" data-page="master" onclick="nav('master')">
@@ -250,6 +282,7 @@ td{padding:9px 12px;vertical-align:middle}
       <div id="pg-analysis" class="page"></div>
       <div id="pg-tracking" class="page"></div>
       <div id="pg-filter" class="page"></div>
+      <div id="pg-efficiency" class="page"></div>
       <div id="pg-master" class="page"></div>
       <div id="pg-spec" class="page"></div>
     </div>
@@ -270,11 +303,75 @@ const S = {
   tracking:{ headers:[], rows:[] },
   spec:{ headers:[], rows:[] },
   filter:{ headers:[], rows:[] },
+  efficiency:{ headers:[], rows:[] },   // Sheet 5 · Theo dõi hiệu quả vận hành
   dropdowns:{},
   alerts:{ alerts:[], towerStates:[], total:0 },
   user:{ name:'Admin' },
-  filters:{ master:'', tracking:'', filter:'', alerts:'all' }
+  filters:{
+    master:'',
+    masterStatus:'',   // '', 'active', 'stopped', 'notinstalled'
+    tracking:'',
+    filter:'',
+    alerts:'all',      // '', 'all', 'overdue', 'due-soon', 'oil-high'
+    alertsRegion:'',   // '', 'Miền Bắc', 'Miền Nam'
+    eff:{ region:new Set(), type:new Set() }  // multi-select
+  }
 };
+
+/* ============================================================
+ * Bản đồ Tỉnh → Miền (dùng khi cột 'Miền' chưa có trong sheet)
+ * ============================================================ */
+const NORTH_PROVINCES = new Set([
+  'Hà Nội','Hải Phòng','Bắc Ninh','Bắc Giang','Thái Nguyên','Phú Thọ','Tuyên Quang',
+  'Yên Bái','Lào Cai','Hà Giang','Cao Bằng','Lạng Sơn','Sơn La','Điện Biên','Lai Châu',
+  'Hòa Bình','Vĩnh Phúc','Hưng Yên','Hải Dương','Quảng Ninh','Thái Bình','Nam Định',
+  'Hà Nam','Ninh Bình','Thanh Hóa','Nghệ An','Hà Tĩnh','Quảng Bình','Bắc Kạn'
+]);
+function regionOf(r){
+  // Nếu sheet đã có cột "Miền" (đặt ở _byLetter.P hoặc _byLetter.Q), ưu tiên dùng
+  const explicit = r._byLetter && (r._byLetter.MIEN || r._byLetter.Region || r._byLetter.mien);
+  if (explicit && /bắc|nam/i.test(explicit)) return /bắc/i.test(explicit) ? 'Miền Bắc' : 'Miền Nam';
+  // Fallback theo cột H (Tỉnh thành)
+  const prov = String(r._byLetter?.H || '').trim();
+  if (!prov) return 'Chưa xác định';
+  return NORTH_PROVINCES.has(prov) ? 'Miền Bắc' : 'Miền Nam';
+}
+function statusKey(r){
+  const raw = String(r._byLetter?.I || r._byLetter?.H || '').toLowerCase();
+  if (/bình thường|hoạt/.test(raw)) return 'active';
+  if (/chưa/.test(raw)) return 'notinstalled';
+  if (/thu hồi|chờ/.test(raw)) return 'recall';
+  if (/không|dừng/.test(raw)) return 'stopped';
+  return 'other';
+}
+function statusLabelVi(k){
+  return ({active:'HĐ bình thường',stopped:'Không hoạt động',notinstalled:'Chưa lắp đặt',recall:'Chờ thu hồi',other:'Khác'})[k]||k;
+}
+function typeOf(r){
+  const t = String(r._byLetter?.C || '').toLowerCase();
+  if (/thuê/.test(t)) return 'Thuê';
+  if (/hợp tác|htkd/.test(t)) return 'Hợp tác';
+  if (/bán/.test(t)) return 'Bán';
+  if (/tồn|kho/.test(t)) return 'Tồn kho';
+  return String(r._byLetter?.C || 'Khác').trim() || 'Khác';
+}
+
+/* Điều hướng có bộ lọc kèm theo */
+function navMasterWith(status){
+  S.filters.masterStatus = status || '';
+  S.filters.master = '';
+  nav('master');
+}
+function navAlertsWith(type, region){
+  S.filters.alerts = type || 'all';
+  S.filters.alertsRegion = region || '';
+  nav('alerts');
+}
+function navEfficiencyWith(region){
+  S.filters.eff.region.clear();
+  if (region) S.filters.eff.region.add(region);
+  nav('efficiency');
+}
 
 async function apiGet(action){
   const url = new URL(API_URL); url.searchParams.set('action', action);
@@ -290,12 +387,18 @@ async function reloadAll(){
     if (API_URL.includes('PASTE_')) throw new Error('Chưa dán URL Apps Script vào biến API_URL');
     const d = await apiGet('bootstrap');
     if (!d.ok) throw new Error(d.error||'Lỗi bootstrap');
-    Object.assign(S, {master:d.master, tracking:d.tracking, spec:d.spec, filter:d.filter, dropdowns:d.dropdowns, alerts:d.alerts});
+    Object.assign(S, {
+      master:d.master, tracking:d.tracking, spec:d.spec, filter:d.filter,
+      efficiency: d.efficiency || { headers:[], rows:[] },
+      dropdowns:d.dropdowns, alerts:d.alerts
+    });
 
     $('nb-master').textContent = S.master.rows.length;
     $('nb-track').textContent = S.tracking.rows.length;
     $('nb-filter').textContent = S.filter.rows.length;
     $('nb-alerts').textContent = S.alerts.total;
+    const ineff = computeInefficient(S.master.rows);
+    const nbEff = $('nb-eff'); if (nbEff) nbEff.textContent = ineff.length;
     $('ftTime').textContent = new Date().toLocaleTimeString('vi-VN');
 
     setStatus(false, `Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
@@ -334,6 +437,7 @@ function renderPage(p){
     case 'analysis': el.innerHTML = viewAnalysis(); afterAnalysis(); break;
     case 'tracking': el.innerHTML = viewTracking(); break;
     case 'filter':   el.innerHTML = viewFilter(); break;
+    case 'efficiency': el.innerHTML = viewEfficiency(); afterEfficiency(); break;
     case 'master':   el.innerHTML = viewMaster(); break;
     case 'spec':     el.innerHTML = viewSpec(); break;
   }
@@ -341,28 +445,115 @@ function renderPage(p){
 
 function viewDash(){
   const m = S.master.rows;
-  const active = m.filter(r=>/bình thường/i.test(r._byLetter.H||'')).length;
-  const stopped = m.filter(r=>/không|dừng/i.test(r._byLetter.H||'')).length;
-  const notInstalled = m.filter(r=>/chưa/i.test(r._byLetter.H||'')).length;
-  const overdue = S.alerts.alerts.filter(a=>a.type==='overdue').length;
-  const dueSoon = S.alerts.alerts.filter(a=>a.type==='due-soon').length;
-  const oilHigh = S.alerts.alerts.filter(a=>a.type==='oil-high').length;
+  const total = m.length;
+  const active = m.filter(r => statusKey(r)==='active').length;
+  const stopped = m.filter(r => statusKey(r)==='stopped').length;
+  const notInstalled = m.filter(r => statusKey(r)==='notinstalled').length;
+
+  // Số cảnh báo tách theo miền
+  const alertsByRegion = (region, type) => {
+    const codesInRegion = new Set(m.filter(r=>regionOf(r)===region).map(r=>String(r._byLetter.B)));
+    return S.alerts.alerts.filter(a => a.type===type && codesInRegion.has(String(a.maCode))).length;
+  };
+  // Số máy kém hiệu quả theo miền
+  const ineff = computeInefficient(m);
+  const ineffByRegion = region => ineff.filter(x => regionOf(x.row)===region).length;
+
+  const bN = {
+    overdue: alertsByRegion('Miền Bắc','overdue'),
+    dueSoon: alertsByRegion('Miền Bắc','due-soon'),
+    oilHigh: alertsByRegion('Miền Bắc','oil-high'),
+    ineff:   ineffByRegion('Miền Bắc')
+  };
+  const bS = {
+    overdue: alertsByRegion('Miền Nam','overdue'),
+    dueSoon: alertsByRegion('Miền Nam','due-soon'),
+    oilHigh: alertsByRegion('Miền Nam','oil-high'),
+    ineff:   ineffByRegion('Miền Nam')
+  };
+
+  const kpiRegionRow = (region, cls, data) => `
+    <div class="kcard pin ${cls}">
+      <div class="pinlbl">Khu vực</div>
+      <div class="pinttl">${region}</div>
+      <div class="pinsub">${m.filter(r=>regionOf(r)===region).length} máy</div>
+    </div>
+    <div class="kcard rd" onclick="navAlertsWith('overdue','${region}')">
+      <div class="karr">↗</div>
+      <div class="klbl">Quá hạn BD</div>
+      <div class="kval">${data.overdue}</div>
+      <div class="ksub">cần xử lý ngay</div>
+    </div>
+    <div class="kcard am" onclick="navAlertsWith('due-soon','${region}')">
+      <div class="karr">↗</div>
+      <div class="klbl">Sắp đến hạn</div>
+      <div class="kval">${data.dueSoon}</div>
+      <div class="ksub">nhắc trước vận hành</div>
+    </div>
+    <div class="kcard bl" onclick="navAlertsWith('oil-high','${region}')">
+      <div class="karr">↗</div>
+      <div class="klbl">Hao nhớt cao</div>
+      <div class="kval">${data.oilHigh}</div>
+      <div class="ksub">vượt định mức l/h</div>
+    </div>
+    <div class="kcard tl" onclick="navEfficiencyWith('${region}')">
+      <div class="karr">↗</div>
+      <div class="klbl">Kém hiệu quả</div>
+      <div class="kval">${data.ineff}</div>
+      <div class="ksub">thấp hơn thiết kế</div>
+    </div>
+  `;
 
   return `
     <div class="ph"><h1>Tổng quan hệ thống</h1><p>Cập nhật: ${new Date().toLocaleString('vi-VN')}</p></div>
-    <div class="kgrid">
-      <div class="kcard"><div class="klbl">Tổng số máy</div><div class="kval">${m.length}</div><div class="ksub">đang quản lý</div></div>
-      <div class="kcard bl"><div class="klbl">Đang hoạt động</div><div class="kval">${active}</div><div class="ksub">${pct(active,m.length)}% tổng số</div></div>
-      <div class="kcard am"><div class="klbl">Không hoạt động</div><div class="kval">${stopped}</div><div class="ksub">${pct(stopped,m.length)}% tổng số</div></div>
-      <div class="kcard pu"><div class="klbl">Chưa lắp đặt</div><div class="kval">${notInstalled}</div><div class="ksub">${pct(notInstalled,m.length)}% tổng số</div></div>
-      <div class="kcard rd"><div class="klbl">Quá hạn BD</div><div class="kval">${overdue}</div><div class="ksub">cần xử lý ngay</div></div>
-      <div class="kcard am"><div class="klbl">Sắp đến hạn</div><div class="kval">${dueSoon}</div><div class="ksub">nhắc trước cho vận hành</div></div>
-      <div class="kcard rd"><div class="klbl">Hao nhớt cao</div><div class="kval">${oilHigh}</div><div class="ksub">vượt định mức l/h</div></div>
+
+    <div class="krow r1">
+      <div class="kcard" onclick="navMasterWith('')">
+        <div class="karr">↗</div>
+        <div class="klbl">Tổng số máy</div><div class="kval">${total}</div><div class="ksub">đang quản lý</div>
+      </div>
+      <div class="kcard bl" onclick="navMasterWith('active')">
+        <div class="karr">↗</div>
+        <div class="klbl">Đang hoạt động</div><div class="kval">${active}</div><div class="ksub">${pct(active,total)}% tổng số</div>
+      </div>
+      <div class="kcard am" onclick="navMasterWith('stopped')">
+        <div class="karr">↗</div>
+        <div class="klbl">Không hoạt động</div><div class="kval">${stopped}</div><div class="ksub">${pct(stopped,total)}% tổng số</div>
+      </div>
+      <div class="kcard pu" onclick="navMasterWith('notinstalled')">
+        <div class="karr">↗</div>
+        <div class="klbl">Chưa lắp đặt</div><div class="kval">${notInstalled}</div><div class="ksub">${pct(notInstalled,total)}% tổng số</div>
+      </div>
     </div>
+
+    <div class="krow">${kpiRegionRow('Miền Bắc','n', bN)}</div>
+    <div class="krow">${kpiRegionRow('Miền Nam','s', bS)}</div>
+
     <div class="cg2">
-      <div class="cc"><div class="ct">Phân bố theo khu vực</div><div class="cw"><canvas id="chRegion"></canvas></div></div>
-      <div class="cc"><div class="ct">Trạng thái hoạt động</div><div class="cw"><canvas id="chStatus"></canvas></div></div>
+      <div class="cc">
+        <div class="ct">Phân bố Miền Bắc · Loại hình × Trạng thái</div>
+        <div class="cw"><canvas id="chRegionN"></canvas></div>
+      </div>
+      <div class="cc">
+        <div class="ct">Phân bố Miền Nam · Loại hình × Trạng thái</div>
+        <div class="cw"><canvas id="chRegionS"></canvas></div>
+      </div>
     </div>
+
+    <div class="card">
+      <div class="ch">
+        <h3>Máy kém hiệu quả · Thiết kế vs. Thực tế</h3>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="b bmu">${ineff.length} máy</span>
+          <button class="btn bg-gr sm" onclick="nav('efficiency')">Xem tất cả →</button>
+        </div>
+      </div>
+      <div class="cb" id="ineffList">
+        ${ineff.length ? ineff.slice(0,4).map((x,i)=>ineffCardHtml(x, 'dash_ineff_'+i)).join('') :
+          '<div class="empty"><div class="ei">📈</div>Không có máy nào kém hiệu quả trong kỳ đang theo dõi.</div>'}
+      </div>
+    </div>
+
     <div class="card">
       <div class="ch"><h3>Cảnh báo mới nhất</h3><button class="btn bg-gr sm" onclick="nav('alerts')">Xem tất cả →</button></div>
       <div class="cb" style="padding:10px 14px">
@@ -372,31 +563,68 @@ function viewDash(){
     </div>
   `;
 }
+
 function afterDash(){
   const m = S.master.rows;
-  const grp = (k) => m.reduce((o,r)=>{const v=String(r._byLetter[k]||'—').trim()||'—';o[v]=(o[v]||0)+1;return o;},{});
-  chartDoughnut('chRegion', grp('G'));
-  chartDoughnut('chStatus', grp('H'));
+  // Nhóm: label = "Loại · Trạng thái", value = số máy
+  const groupRegion = region => {
+    const rows = m.filter(r => regionOf(r)===region);
+    const buckets = {};
+    rows.forEach(r=>{
+      const key = `${typeOf(r)} · ${statusLabelVi(statusKey(r))}`;
+      buckets[key] = (buckets[key]||0) + 1;
+    });
+    // sắp xếp cho biểu đồ đọc dễ
+    return Object.fromEntries(Object.entries(buckets).sort((a,b)=>b[1]-a[1]));
+  };
+  chartDoughnutColored('chRegionN', groupRegion('Miền Bắc'), 'north');
+  chartDoughnutColored('chRegionS', groupRegion('Miền Nam'), 'south');
+
+  // Render mini charts trong danh sách máy kém hiệu quả
+  const ineff = computeInefficient(m);
+  ineff.slice(0,4).forEach((x,i)=>drawEfficiencyChart('dash_ineff_'+i+'_chart', x));
 }
 
 function viewAlerts(){
   const all = S.alerts.alerts;
-  const f = S.filters.alerts;
-  const list = f==='all' ? all : all.filter(a=>a.type===f);
-  const c = { all: all.length, overdue: all.filter(a=>a.type==='overdue').length, 'due-soon': all.filter(a=>a.type==='due-soon').length, 'oil-high': all.filter(a=>a.type==='oil-high').length };
+  const f = S.filters.alerts || 'all';
+  const fr = S.filters.alertsRegion || '';
+
+  // Chỉ mục miền theo mã máy
+  const codeToRegion = new Map(S.master.rows.map(r => [String(r._byLetter.B), regionOf(r)]));
+  const inRegion = a => !fr || codeToRegion.get(String(a.maCode))===fr;
+  const inType = a => f==='all' || a.type===f;
+  const list = all.filter(a => inRegion(a) && inType(a));
+
+  const c = t => all.filter(a => inRegion(a) && (t==='all'||a.type===t)).length;
+  const rn = 'Miền Bắc', rs = 'Miền Nam';
 
   return `
-    <div class="ph"><h1>Cảnh báo bảo dưỡng</h1><p>Tổng ${all.length} cảnh báo · lọc: ${list.length}</p></div>
-    <div class="fbar">
-      <button class="fchip ${f==='all'?'on':''}" onclick="setAlertFilter('all')">Tất cả (${c.all})</button>
-      <button class="fchip ${f==='overdue'?'on':''}" onclick="setAlertFilter('overdue')">Quá hạn (${c.overdue})</button>
-      <button class="fchip ${f==='due-soon'?'on':''}" onclick="setAlertFilter('due-soon')">Sắp đến hạn (${c['due-soon']})</button>
-      <button class="fchip ${f==='oil-high'?'on':''}" onclick="setAlertFilter('oil-high')">Hao nhớt (${c['oil-high']})</button>
+    <div class="ph"><h1>Cảnh báo bảo dưỡng</h1>
+      <p>Tổng ${all.length} cảnh báo · lọc: ${list.length}${fr?` · khu vực: <b>${esc(fr)}</b>`:''}</p>
     </div>
+
+    <div class="fbar">
+      <span class="mslbl">Loại</span>
+      <button class="fchip ${f==='all'?'on':''}" onclick="setAlertFilter('all')">Tất cả (${c('all')})</button>
+      <button class="fchip ${f==='overdue'?'on':''}" onclick="setAlertFilter('overdue')">Quá hạn (${c('overdue')})</button>
+      <button class="fchip ${f==='due-soon'?'on':''}" onclick="setAlertFilter('due-soon')">Sắp đến hạn (${c('due-soon')})</button>
+      <button class="fchip ${f==='oil-high'?'on':''}" onclick="setAlertFilter('oil-high')">Hao nhớt (${c('oil-high')})</button>
+    </div>
+
+    <div class="fbar">
+      <span class="mslbl">Khu vực</span>
+      <button class="fchip ${!fr?'on':''}" onclick="setAlertRegion('')">Tất cả</button>
+      <button class="fchip ${fr===rn?'on':''}" onclick="setAlertRegion('${rn}')">${rn}</button>
+      <button class="fchip ${fr===rs?'on':''}" onclick="setAlertRegion('${rs}')">${rs}</button>
+    </div>
+
     ${list.length ? list.map(alertItem).join('') : '<div class="empty"><div class="ei">✅</div>Không có cảnh báo trong bộ lọc này.</div>'}
   `;
 }
 function setAlertFilter(f){ S.filters.alerts = f; renderPage('alerts'); }
+function setAlertRegion(r){ S.filters.alertsRegion = r; renderPage('alerts'); }
+function setMasterStatus(s){ S.filters.masterStatus = s; renderPage('master'); }
 
 function alertItem(a){
   const isHigh = a.severity==='high';
@@ -444,13 +672,29 @@ function afterAnalysis(){
 
 function viewMaster(){
   const q = (S.filters.master||'').toLowerCase();
-  const rows = q ? S.master.rows.filter(r => JSON.stringify(r._byLetter).toLowerCase().includes(q)) : S.master.rows;
+  const st = S.filters.masterStatus || '';
+  let rows = S.master.rows;
+  if (st) rows = rows.filter(r => statusKey(r)===st);
+  if (q)  rows = rows.filter(r => JSON.stringify(r._byLetter).toLowerCase().includes(q));
+
+  const chip = (val, label, count) => `<button class="fchip ${st===val?'on':''}" onclick="setMasterStatus('${val}')">${label} (${count})</button>`;
+  const cAct = S.master.rows.filter(r=>statusKey(r)==='active').length;
+  const cStp = S.master.rows.filter(r=>statusKey(r)==='stopped').length;
+  const cNi  = S.master.rows.filter(r=>statusKey(r)==='notinstalled').length;
+
   return `
-    <div class="ph"><h1>Danh sách máy phát</h1><p>${S.master.rows.length} máy · hiển thị ${rows.length}</p></div>
+    <div class="ph"><h1>Danh sách máy phát</h1><p>${S.master.rows.length} máy · hiển thị ${rows.length}${st?` · lọc trạng thái: <b>${esc(statusLabelVi(st))}</b>`:''}</p></div>
     <div class="fbar">
       <input class="si" placeholder="🔍 Tìm mã máy, trại, vận hành, khu vực…" value="${esc(q)}" oninput="S.filters.master=this.value;renderPage('master')">
       <button class="btn bg-g" onclick="openMasterEdit()">+ Thêm máy</button>
       <button class="btn bg-gr" onclick="exportCsv(S.master,'danh-sach-may')">⤓ CSV</button>
+    </div>
+    <div class="fbar">
+      <span class="mslbl">Trạng thái</span>
+      ${chip('', 'Tất cả', S.master.rows.length)}
+      ${chip('active', 'Đang hoạt động', cAct)}
+      ${chip('stopped', 'Không hoạt động', cStp)}
+      ${chip('notinstalled', 'Chưa lắp đặt', cNi)}
     </div>
     <div class="card"><div class="tw" style="max-height:70vh"><table>
       <thead><tr>
@@ -760,6 +1004,286 @@ async function saveFilter(rowId){
   } catch(e){ toast('Lỗi: '+e.message,'err'); }
 }
 
+/* ============================================================
+ *  TRANG HIỆU QUẢ VẬN HÀNH (Sheet 5)
+ *  Bộ lọc đa chọn: Khu vực (Bắc/Nam), Loại hình (Thuê/HT/Bán)
+ *  Mỗi máy hiển thị: card gồm chỉ số + biểu đồ đường
+ *  Cột đồng bộ 2 chiều với GG Sheet:
+ *   - Giờ bắt đầu / Giờ kết thúc  (nhập từ web)
+ *   - Khung giờ chạy chính        (dropdown: xuyên đêm/ca ngày/ca đêm)
+ * ============================================================ */
+const KHUNG_GIO_OPTIONS = ['Chạy xuyên đêm','Chạy ca ngày','Chạy ca đêm'];
+
+function viewEfficiency(){
+  const m = S.master.rows;
+  // Chỉ tính máy đủ điều kiện: HĐ bình thường, loại Thuê/Hợp tác/Bán
+  const base = m.filter(r => statusKey(r)==='active' && ['Thuê','Hợp tác','Bán'].includes(typeOf(r)));
+
+  // Áp dụng bộ lọc đa chọn
+  const rSet = S.filters.eff.region;
+  const tSet = S.filters.eff.type;
+  const filtered = base.filter(r => {
+    const okR = !rSet.size || rSet.has(regionOf(r));
+    const okT = !tSet.size || tSet.has(typeOf(r));
+    return okR && okT;
+  });
+
+  // Ghép với dữ liệu efficiency
+  const ineffAll = computeInefficient(filtered);
+  const allMachineCards = filtered.map(r => {
+    const found = ineffAll.find(x => x.code === String(r._byLetter.B||'').trim());
+    if (found) return found;
+    // Nếu không kém hiệu quả, vẫn dựng object rỗng để có thể hiển thị nếu người dùng yêu cầu
+    return null;
+  }).filter(Boolean);
+
+  const chip = (setName, value) => {
+    const set = S.filters.eff[setName];
+    const on = set.has(value);
+    return `<button class="fchip ${on?'on':''}" onclick="toggleEffFilter('${setName}','${esc(value)}')">${esc(value)}</button>`;
+  };
+
+  return `
+    <div class="ph">
+      <h1>Theo dõi hiệu quả vận hành</h1>
+      <p>${base.length} máy đủ điều kiện · ${filtered.length} máy sau lọc · ${allMachineCards.length} máy kém hiệu quả</p>
+    </div>
+
+    <div class="msf">
+      <div class="msg">
+        <span class="mslbl">Khu vực</span>
+        ${chip('region','Miền Bắc')}
+        ${chip('region','Miền Nam')}
+      </div>
+      <div class="msg">
+        <span class="mslbl">Loại hình</span>
+        ${chip('type','Thuê')}
+        ${chip('type','Hợp tác')}
+        ${chip('type','Bán')}
+      </div>
+      <div class="msg" style="margin-left:auto">
+        <button class="btn bg-gr sm" onclick="clearEffFilters()">↺ Bỏ lọc</button>
+      </div>
+    </div>
+
+    ${!S.efficiency.rows.length ? `
+      <div class="card" style="background:#fffbeb;border-left:4px solid var(--amb)">
+        <div style="padding:14px 16px;display:flex;gap:10px;align-items:flex-start">
+          <div style="font-size:22px">⚠️</div>
+          <div style="font-size:11px;color:#78350f;line-height:1.6">
+            Chưa có dữ liệu Sheet 5 <b>"Theo dõi hiệu quả vận hành"</b>. Vui lòng bổ sung sheet + expose từ Apps Script bootstrap (key <code>efficiency</code>).
+            Các cột cần: Mã máy, Tổng số giờ chạy/ngày (TK), Tổng số giờ chạy thực tế/ngày, Công suất TK (KW), Công suất thiết kế phát/ngày, Công suất thực tế phát/ngày, Giờ bắt đầu, Giờ kết thúc, Khung giờ chạy chính, và các cột theo ngày trong tháng.
+          </div>
+        </div>
+      </div>` : ''}
+
+    ${allMachineCards.length ? allMachineCards.map((x,i)=>ineffCardHtml(x,'eff_'+i)).join('') : `
+      <div class="empty"><div class="ei">📈</div>Không có máy kém hiệu quả trong bộ lọc hiện tại.</div>`}
+
+    ${S.efficiency.rows.length ? `
+      <div class="card">
+        <div class="ch"><h3>Bảng chi tiết Sheet 5 · Chỉnh sửa cột nhập tay</h3><span class="b bmu">${filtered.length} máy</span></div>
+        <div class="tw" style="max-height:60vh">${effEditableTable(filtered)}</div>
+      </div>` : ''}
+  `;
+}
+
+function toggleEffFilter(setName, val){
+  const set = S.filters.eff[setName];
+  if (set.has(val)) set.delete(val); else set.add(val);
+  renderPage('efficiency');
+}
+function clearEffFilters(){
+  S.filters.eff.region.clear();
+  S.filters.eff.type.clear();
+  renderPage('efficiency');
+}
+
+function effEditableTable(filteredMaster){
+  const H = S.efficiency.headers.filter(Boolean);
+  const hMa = findHeader(H, 'mã.?máy','ma may','^ma$');
+  const hStart = findHeader(H, 'giờ bắt đầu');
+  const hEnd   = findHeader(H, 'giờ kết thúc');
+  const hKhung = findHeader(H, 'khung giờ chạy chính');
+  const hHrTk  = findHeader(H, 'tổng.*giờ chạy/.?ngày','tổng.*giờ chạy.*ngày(?!.*thực)');
+  const hHrTt  = findHeader(H, 'giờ chạy thực tế');
+  const hKwTk  = findHeader(H, 'công suất thiết kế phát');
+  const hKwTt  = findHeader(H, 'công suất thực tế phát');
+  const hKwTK1 = findHeader(H, 'công suất tk','công suất thiết kế \\(kw');
+
+  const codesFilter = new Set(filteredMaster.map(r=>String(r._byLetter.B||'').trim()));
+  const rows = S.efficiency.rows.filter(er => codesFilter.has(String(er[hMa]||er._byLetter?.B||'').trim()));
+
+  return `<table>
+    <thead><tr>
+      <th>Mã máy</th>
+      <th>Khu vực</th>
+      <th>Loại</th>
+      <th>Giờ bắt đầu ✎</th>
+      <th>Giờ kết thúc ✎</th>
+      <th>Khung giờ chạy chính ✎</th>
+      <th style="text-align:right">Giờ TK/ngày</th>
+      <th style="text-align:right">Giờ thực tế</th>
+      <th style="text-align:right">CS TK (kW)</th>
+      <th style="text-align:right">CS TK/ngày</th>
+      <th style="text-align:right">CS thực tế</th>
+      <th></th>
+    </tr></thead>
+    <tbody>
+    ${rows.map(er => {
+      const code = String(er[hMa]||er._byLetter?.B||'').trim();
+      const mr = S.master.rows.find(r => String(r._byLetter.B||'').trim() === code);
+      const region = mr ? regionOf(mr) : '—';
+      const t = mr ? typeOf(mr) : '—';
+      const rowId = er._row;
+      return `<tr>
+        <td><span class="mm">${esc(code)}</span></td>
+        <td>${esc(region)}</td>
+        <td>${esc(t)}</td>
+        <td>${hStart ? `<input class="inp" style="min-width:90px" type="time" value="${esc(hhmm(er[hStart]))}" onchange="saveEffCell(${rowId},'${esc(hStart)}',this.value)">` : '—'}</td>
+        <td>${hEnd ? `<input class="inp" style="min-width:90px" type="time" value="${esc(hhmm(er[hEnd]))}" onchange="saveEffCell(${rowId},'${esc(hEnd)}',this.value)">` : '—'}</td>
+        <td>${hKhung ? `<select class="sel" style="min-width:150px" onchange="saveEffCell(${rowId},'${esc(hKhung)}',this.value)">
+          <option value="">— chọn —</option>
+          ${KHUNG_GIO_OPTIONS.map(o=>`<option ${String(er[hKhung]||'').trim()===o?'selected':''}>${esc(o)}</option>`).join('')}
+        </select>` : '—'}</td>
+        <td style="text-align:right;font-weight:600">${esc(er[hHrTk]??'—')}</td>
+        <td style="text-align:right;font-weight:600">${esc(er[hHrTt]??'—')}</td>
+        <td style="text-align:right">${esc(er[hKwTK1]??'—')}</td>
+        <td style="text-align:right;font-weight:600">${esc(er[hKwTk]??'—')}</td>
+        <td style="text-align:right;font-weight:600">${esc(er[hKwTt]??'—')}</td>
+        <td><button class="btn bg-b sm" onclick="openEfficiencyEdit(${rowId})">✎</button></td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="12"><div class="empty">Không có bản ghi khớp bộ lọc.</div></td></tr>'}
+    </tbody>
+  </table>`;
+}
+
+function hhmm(v){
+  if (!v) return '';
+  const s = String(v).trim();
+  // '9:30', '09:30:00', '9:30 SA', or ISO
+  const m = s.match(/(\d{1,2}):(\d{2})/);
+  if (m) return `${m[1].padStart(2,'0')}:${m[2]}`;
+  const d = new Date(s);
+  if (!isNaN(d)) return d.toTimeString().slice(0,5);
+  return '';
+}
+
+async function saveEffCell(rowId, header, value){
+  setStatus(true,'Đang lưu…');
+  try {
+    const res = await apiPost({action:'updateEfficiency', row:rowId, updates:{[header]:value}});
+    if (!res.ok) throw new Error(res.error||'Lỗi lưu');
+    // cập nhật state cục bộ
+    const r = S.efficiency.rows.find(x=>x._row===rowId);
+    if (r) r[header] = value;
+    setStatus(false,`Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
+    toast('✓ Đã đồng bộ vào Sheet','ok');
+  } catch(e){
+    toast('Lỗi lưu: '+e.message,'err');
+    setStatus(false,'❌ '+e.message,true);
+  }
+}
+
+function openEfficiencyEdit(rowId){
+  const row = S.efficiency.rows.find(r=>r._row===rowId);
+  if (!row){ toast('Không tìm thấy dòng','err'); return; }
+  const H = S.efficiency.headers.filter(Boolean);
+  const hMa = findHeader(H,'mã.?máy');
+  const isFormula = h => /thiết kế phát\/.?ngày|tk \(kw\)|tổng.*giờ chạy\/.?ngày/i.test(h);
+  const isTime = h => /giờ bắt đầu|giờ kết thúc/i.test(h);
+  const isKhung = h => /khung giờ chạy chính/i.test(h);
+  const isDay = h => /^(ngày\s*)?\d{1,2}(\/\d{1,2})?$/i.test(String(h||'').trim());
+
+  openOv(`
+    <div class="mh">
+      <div><h2>✎ Chỉnh sửa hiệu quả vận hành</h2><p>Mã máy <b>${esc(row[hMa]||row._byLetter?.B||'')}</b> · dòng ${rowId}</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button>
+    </div>
+    <div class="mb">
+      <div class="fsec">
+        <div class="fsh"><div class="fsn">1</div><div class="fst">Thông số điều chỉnh</div></div>
+        <div class="fgrid fg3">
+          ${H.filter(h=>isTime(h)||isKhung(h)).map(h=>`
+            <div class="iw"><div class="il">${esc(h)}</div>
+              ${isKhung(h)
+                ? `<select class="sel" id="eff_${esc(btoa(h))}">
+                    <option value="">— chọn —</option>
+                    ${KHUNG_GIO_OPTIONS.map(o=>`<option ${String(row[h]||'').trim()===o?'selected':''}>${esc(o)}</option>`).join('')}
+                  </select>`
+                : `<input class="inp" type="time" id="eff_${esc(btoa(h))}" value="${esc(hhmm(row[h]))}">`}
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <div class="fsec">
+        <div class="fsh" style="background:linear-gradient(90deg,#fef3c7,#fff)">
+          <div class="fsn" style="background:var(--amb)">!</div><div class="fst">Công thức · chỉ đọc</div>
+        </div>
+        <div class="fgrid fg3">
+          ${H.filter(isFormula).map(h=>`
+            <div class="iw"><div class="il">${esc(h)}</div>
+              <div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:600">${esc(row[h]??'—')}</div>
+            </div>`).join('')}
+        </div>
+      </div>
+
+      ${H.filter(isDay).length ? `
+      <div class="fsec">
+        <div class="fsh"><div class="fsn">2</div><div class="fst">Điểm dữ liệu theo ngày (tự động)</div></div>
+        <div class="fgrid fg3">
+          ${H.filter(isDay).map(h=>`
+            <div class="iw"><div class="il">${esc(h)}</div>
+              <div style="padding:6px 10px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:11px;font-family:var(--mono)">${esc(row[h]??'—')}</div>
+            </div>`).join('')}
+        </div>
+      </div>`:''}
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
+      <button class="btn bg-g" onclick="saveEfficiencyModal(${rowId})">💾 Lưu vào Google Sheet</button>
+    </div>
+  `);
+}
+
+async function saveEfficiencyModal(rowId){
+  const row = S.efficiency.rows.find(r=>r._row===rowId);
+  const H = S.efficiency.headers.filter(Boolean);
+  const editable = H.filter(h => /giờ bắt đầu|giờ kết thúc|khung giờ chạy chính/i.test(h));
+  const updates = {};
+  editable.forEach(h => {
+    const el = $('eff_'+btoa(h)); if (!el) return;
+    if (String(el.value) !== String(row[h]??'')) updates[h] = el.value;
+  });
+  if (!Object.keys(updates).length){ closeOv(); toast('Không có thay đổi','info'); return; }
+  setStatus(true,'Đang lưu…');
+  try {
+    const res = await apiPost({action:'updateEfficiency', row:rowId, updates});
+    if (!res.ok) throw new Error(res.error||'Lỗi lưu');
+    Object.assign(row, updates);
+    closeOv();
+    renderPage('efficiency');
+    toast(`✓ Đã cập nhật ${Object.keys(updates).length} trường`,'ok');
+    setStatus(false,`Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
+  } catch(e){
+    toast('Lỗi: '+e.message,'err');
+    setStatus(false,'❌ '+e.message,true);
+  }
+}
+
+function afterEfficiency(){
+  const m = S.master.rows;
+  const rSet = S.filters.eff.region;
+  const tSet = S.filters.eff.type;
+  const filtered = m.filter(r =>
+    statusKey(r)==='active' && ['Thuê','Hợp tác','Bán'].includes(typeOf(r)) &&
+    (!rSet.size || rSet.has(regionOf(r))) &&
+    (!tSet.size || tSet.has(typeOf(r)))
+  );
+  const ineff = computeInefficient(filtered);
+  ineff.forEach((x,i)=>drawEfficiencyChart('eff_'+i+'_chart', x));
+}
+
 function viewSpec(){
   const h = S.spec.headers.filter(x=>x);
   return `
@@ -805,6 +1329,178 @@ function attachAutocomplete(input){
 }
 
 const PAL = ['#0d6e3f','#16a05e','#2563eb','#d97706','#dc2626','#7c3aed','#0891b2','#f472b6','#facc15','#34d399','#60a5fa','#f97316'];
+
+/* ============================================================
+ *  HIỆU QUẢ VẬN HÀNH (Sheet 5)
+ *  Các cột tham chiếu (đọc theo tên header khớp mềm):
+ *   - Mã máy                         (_byLetter.B nếu có)
+ *   - Loại hình                      (_byLetter.C nếu có)
+ *   - Khu vực                        (regionOf theo tỉnh)
+ *   - "Tổng số giờ chạy/ ngày"       → thiết kế
+ *   - "Tổng số giờ chạy thực tế/ngày"→ thực tế
+ *   - "Công suất TK (KW)"
+ *   - "Công suất thiết kế phát/ngày" → thiết kế
+ *   - "Công suất thực tế phát/ngày"  → thực tế
+ *   - "Giờ bắt đầu", "Giờ kết thúc"  → nhập từ web, 2 chiều
+ *   - "Khung giờ chạy chính"         → chọn: Chạy xuyên đêm/ca ngày/ca đêm
+ *   - Các cột ngày (dd/mm hoặc số) là điểm dữ liệu thu thập theo ngày
+ * ============================================================ */
+
+function findHeader(headers, ...patterns){
+  return headers.find(h => patterns.some(p => new RegExp(p,'i').test(String(h||''))));
+}
+
+/**
+ * Tính danh sách máy kém hiệu quả từ S.efficiency (fallback từ S.master khi thiếu).
+ * Điều kiện: Công suất thực tế/ngày < Công suất thiết kế/ngày HOẶC giờ chạy thực tế < giờ chạy thiết kế.
+ * Lọc: chỉ tính máy Thuê/Hợp tác/Bán ở trạng thái HĐ bình thường.
+ */
+function computeInefficient(masterRows){
+  const eff = S.efficiency || {headers:[], rows:[]};
+  const H = eff.headers.filter(Boolean);
+  const hMa   = findHeader(H, 'mã.?máy','ma may','^ma$');
+  const hHrTk = findHeader(H, 'tổng.*giờ chạy/.?ngày','tổng.*giờ chạy.*ngày(?!.*thực)');
+  const hHrTt = findHeader(H, 'giờ chạy thực tế','thực tế.*ngày');
+  const hKwTk = findHeader(H, 'công suất thiết kế phát','thiết kế.*phát/.?ngày');
+  const hKwTt = findHeader(H, 'công suất thực tế phát','thực tế.*phát/.?ngày');
+
+  const eligibleRows = masterRows.filter(r => statusKey(r)==='active' && ['Thuê','Hợp tác','Bán'].includes(typeOf(r)));
+
+  return eligibleRows.map(r => {
+    const code = String(r._byLetter.B||'').trim();
+    const effRow = eff.rows.find(er => String(er[hMa]||er._byLetter?.B||'').trim() === code);
+    const num = v => { const n = Number(String(v??'').replace(/,/g,'.')); return isNaN(n)?null:n; };
+
+    const designHr = effRow ? num(effRow[hHrTk]) : null;
+    const actualHr = effRow ? num(effRow[hHrTt]) : null;
+    const designKw = effRow ? num(effRow[hKwTk]) : null;
+    const actualKw = effRow ? num(effRow[hKwTt]) : null;
+
+    // Điểm dữ liệu theo ngày: các cột header dạng ngày (số 1..31, "1/12", "01/12", "Ngày 1"...)
+    const dailyHeaders = H.filter(h => /^(ngày\s*)?\d{1,2}(\/\d{1,2})?$/i.test(String(h||'').trim()));
+    const points = effRow ? dailyHeaders.map(h => ({ label: String(h), val: num(effRow[h]) })).filter(p=>p.val!==null) : [];
+
+    const badHr = (designHr!=null && actualHr!=null) ? actualHr < designHr : false;
+    const badKw = (designKw!=null && actualKw!=null) ? actualKw < designKw : false;
+
+    return {
+      code, row:r, effRow, designHr, actualHr, designKw, actualKw, points, badHr, badKw,
+      isBad: badHr || badKw
+    };
+  }).filter(x => x.isBad);
+}
+
+function ineffCardHtml(x, uid){
+  const gap = (a,d) => (a!=null && d!=null && d>0) ? Math.round((a/d)*100) : null;
+  const pctHr = gap(x.actualHr, x.designHr);
+  const pctKw = gap(x.actualKw, x.designKw);
+  const clsPct = p => p==null?'':(p<70?'bad':(p<90?'warn':'ok'));
+  const badgeStat = (label, cur, des, unit, cls) => `
+    <div class="es">
+      <div class="esl">${esc(label)}</div>
+      <div class="esv ${cls}">${cur!=null?cur.toFixed(1):'—'}${unit} <span style="font-size:9px;color:var(--mu);font-weight:500">/ ${des!=null?des.toFixed(1):'—'}${unit}</span></div>
+    </div>`;
+  const r = x.row;
+  const region = regionOf(r);
+  const isBad = (pctHr!=null && pctHr<70) || (pctKw!=null && pctKw<70);
+  return `
+    <div class="effcard ${isBad?'bad':''}">
+      <div class="effhd">
+        <div>
+          <div class="effttl">
+            <span class="mm">${esc(x.code)}</span>
+            <span class="b bmu">${esc(typeOf(r))}</span>
+            <span class="b ${region==='Miền Bắc'?'bg':'bb'}">${esc(region)}</span>
+            ${x.badHr?'<span class="b ba">Giờ chạy thấp</span>':''}
+            ${x.badKw?'<span class="b br">Công suất thấp</span>':''}
+          </div>
+          <div class="effsub">${esc(r._byLetter.E||'')} · ${esc(r._byLetter.H||'')} · Vận hành: ${esc(r._byLetter.K||'—')}</div>
+        </div>
+      </div>
+      <div class="effstats">
+        ${badgeStat('Giờ chạy TT / TK', x.actualHr, x.designHr, 'h', clsPct(pctHr))}
+        ${badgeStat('Công suất TT / TK', x.actualKw, x.designKw, ' kW', clsPct(pctKw))}
+        <div class="es"><div class="esl">Đạt giờ chạy</div><div class="esv ${clsPct(pctHr)}">${pctHr!=null?pctHr+'%':'—'}</div></div>
+        <div class="es"><div class="esl">Đạt công suất</div><div class="esv ${clsPct(pctKw)}">${pctKw!=null?pctKw+'%':'—'}</div></div>
+      </div>
+      <div class="effchart"><canvas id="${uid}_chart"></canvas></div>
+    </div>
+  `;
+}
+
+function drawEfficiencyChart(canvasId, x){
+  const el = $(canvasId); if (!el) return;
+  if (el._chart) el._chart.destroy();
+  const labels = x.points.length ? x.points.map(p=>p.label) : ['—'];
+  const dataPts = x.points.length ? x.points.map(p=>p.val) : [null];
+  // Với biểu đồ mặc định lấy công suất; nếu chỉ có giờ, dùng giờ
+  const designVal = x.designKw ?? x.designHr;
+  const actualAvg = x.actualKw ?? x.actualHr;
+  el._chart = new Chart(el, {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        { label:'Thiết kế', data: labels.map(()=>designVal), borderColor:'#16a05e', borderWidth:2, borderDash:[6,4], pointRadius:0, tension:0 },
+        { label:'Thực tế TB', data: labels.map(()=>actualAvg), borderColor:'#d97706', borderWidth:2, borderDash:[2,3], pointRadius:0, tension:0 },
+        { label:'Điểm dữ liệu', data: dataPts, borderColor:'#2563eb', backgroundColor:'#2563eb', borderWidth:2, pointRadius:3, pointHoverRadius:5, tension:.25, fill:false }
+      ]
+    },
+    options:{
+      maintainAspectRatio:false,
+      plugins:{
+        legend:{ position:'bottom', labels:{ color:'#475569', font:{family:'Be Vietnam Pro',size:10}, boxWidth:12, padding:8 }},
+        tooltip:{ backgroundColor:'#083d24' }
+      },
+      scales:{
+        x:{ ticks:{color:'#64748b', font:{family:'Be Vietnam Pro',size:9}}, grid:{display:false} },
+        y:{ ticks:{color:'#64748b', font:{family:'Be Vietnam Pro',size:9}}, grid:{color:'#f1f5f9'}, beginAtZero:true }
+      }
+    }
+  });
+}
+
+/* Doughnut theo tone màu vùng miền */
+function chartDoughnutColored(id, data, tone){
+  const el = $(id); if (!el) return;
+  if (el._chart) el._chart.destroy();
+  const north = ['#083d24','#0d6e3f','#16a05e','#34d399','#a7f3d0','#6ee7b7','#059669','#065f46','#facc15','#f59e0b','#dc2626','#7c3aed'];
+  const south = ['#0e4d8a','#1e6bb8','#3b82f6','#60a5fa','#93c5fd','#0891b2','#06b6d4','#67e8f9','#f472b6','#f59e0b','#dc2626','#7c3aed'];
+  const colors = tone==='north' ? north : (tone==='south' ? south : PAL);
+  const labels = Object.keys(data);
+  const values = Object.values(data);
+  if (!labels.length){
+    // vẽ placeholder trống
+    el._chart = new Chart(el, {
+      type:'doughnut',
+      data:{ labels:['Không có dữ liệu'], datasets:[{ data:[1], backgroundColor:['#e2e8f0'], borderWidth:0 }]},
+      options:{ maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{enabled:false} }, cutout:'62%' }
+    });
+    return;
+  }
+  el._chart = new Chart(el, {
+    type:'doughnut',
+    data:{ labels, datasets:[{ data:values, backgroundColor:labels.map((_,i)=>colors[i%colors.length]), borderWidth:2, borderColor:'#fff' }]},
+    options:{
+      maintainAspectRatio:false,
+      plugins:{
+        legend:{ position:'bottom', labels:{ color:'#475569', font:{family:'Be Vietnam Pro',size:10}, boxWidth:11, padding:8 }},
+        tooltip:{
+          backgroundColor:'#083d24',
+          callbacks:{
+            label: (ctx) => {
+              const total = ctx.dataset.data.reduce((s,v)=>s+v,0);
+              const p = total? Math.round(ctx.parsed/total*100) : 0;
+              return `${ctx.label}: ${ctx.parsed} máy (${p}%)`;
+            }
+          }
+        }
+      },
+      cutout:'58%'
+    }
+  });
+}
+
 function chartDoughnut(id, data){
   const el = $(id); if (!el) return;
   if (el._chart) el._chart.destroy();
