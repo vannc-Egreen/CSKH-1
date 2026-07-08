@@ -93,7 +93,7 @@ body{background:var(--bg);color:var(--s);min-height:100vh;font-size:14px;overflo
 .effstats .esl{font-size:9px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.4px}
 .effstats .esv{font-size:13px;font-weight:700;color:var(--s);margin-top:1px}
 .effstats .esv.warn{color:var(--amb)}.effstats .esv.bad{color:var(--red)}.effstats .esv.ok{color:var(--g)}
-.effchart{position:relative;height:190px}
+.effchart{position:relative;height:280px}
 
 /* Multi-select chip filter */
 .msf{display:flex;gap:14px;flex-wrap:wrap;padding:10px 14px;background:var(--card);border-radius:var(--rl);box-shadow:var(--sh);margin-bottom:13px;align-items:center}
@@ -373,6 +373,103 @@ function powerKw(r){ const n = Number(r._byLetter?.[COL.KW]); return isNaN(n)?0:
 /* 7 lựa chọn dropdown Tháp lọc số 1 / số 2 (Sheet 2 cột H, I) */
 const THAP_LOC_OPTIONS = ['Chạy lần 1','Chạy lần 2','Chờ hoàn nguyên','Chờ thay thế','Đã hoàn nguyên','Đã thay thế','Chờ sửa chữa'];
 
+/* ============================================================
+ *  TÍNH CẢNH BÁO PHÍA CLIENT · TỪ SHEET 2
+ *  - Duyệt mọi cột "Theo dõi/cảnh báo..." → số giờ còn lại
+ *      ≤ 0    → cảnh báo "overdue" (severity=high)
+ *      ≤ 500  → cảnh báo "due-soon" (severity=med)
+ *  - Duyệt cột "Hao nhớt" (AE) → so với Sheet 4 cột K (định mức hao nhớt/20h)
+ *      > định mức → "oil-high"
+ *  Trả về mảng phẳng, thay thế S.alerts.alerts đã có (thường server trả 0).
+ * ============================================================ */
+function computeClientAlerts(){
+  const alerts = [];
+  const hdrs = S.tracking.headers.filter(Boolean);
+  const warnHeaders = hdrs.filter(h => /theo dõi[\s\/]*cảnh báo/i.test(h));
+  const oilHeader   = hdrs.find(h => /hao nhớt/i.test(h));
+
+  // Xây map Mã máy → thông tin master (đơn vị, trại, khu vực, vận hành, SĐT)
+  const mByCode = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA]||'').trim(), m]));
+
+  // Định mức hao nhớt/20h — lấy từ Sheet 4 (cột K) nếu có, mặc định 0.5 l/20h
+  const oilLimit = (() => {
+    if (!S.filter?.rows?.length) return 0.5;
+    const H = S.filter.headers.filter(Boolean);
+    const kIdx = 10; // K = index 10
+    const kHeader = H[kIdx];
+    if (!kHeader) return 0.5;
+    // lấy trung bình hoặc phần tử đầu tiên có giá trị
+    for (const row of S.filter.rows){
+      const v = Number(String(row[kHeader]||row._byLetter?.K||'').replace(/,/g,'.'));
+      if (!isNaN(v) && v > 0) return v;
+    }
+    return 0.5;
+  })();
+
+  S.tracking.rows.forEach(r => {
+    const code = String(r._byLetter?.[COL.MA]||'').trim();
+    const m = mByCode.get(code);
+    // Bỏ qua máy chưa lắp đặt / chờ thu hồi / không hoạt động — không cảnh báo bảo dưỡng
+    if (m && statusKey(m) !== 'active') return;
+
+    const site  = m ? `${m._byLetter[COL.DONVI]||''} · ${m._byLetter[COL.TRAI]||''}`.replace(/^\s*·\s*/,'').trim() : '';
+    const region= m ? regionOf(m) : '';
+    const oper  = m ? String(m._byLetter[COL.VH]||'').trim() : '';
+    const phone = m ? String(m._byLetter[COL.SDT]||'').trim() : '';
+
+    // Cảnh báo giờ bảo dưỡng
+    warnHeaders.forEach(h => {
+      const raw = r[h] ?? r._byLetter?.[String.fromCharCode(65 + hdrs.indexOf(h))];
+      const n = Number(String(raw||'').replace(/,/g,'.'));
+      if (isNaN(n)) return;
+      let type = null;
+      if (n <= 0) type = 'overdue';
+      else if (n <= 500) type = 'due-soon';
+      if (!type) return;
+      const field = h.replace(/theo dõi[\s\/]*cảnh báo\s*[-·:]?\s*/i,'').trim() || h;
+      alerts.push({
+        type, maCode: code, region, site, operator: oper, phone,
+        field,
+        message: n<=0 ? `Đã quá ${Math.abs(Math.round(n))} h so với định mức` : `Còn ${Math.round(n)} h trước đến hạn`,
+        severity: n<=0 ? 'high' : 'med',
+        row: r._row,
+        remain: n
+      });
+    });
+
+    // Cảnh báo hao nhớt
+    if (oilHeader){
+      const oil = Number(String(r[oilHeader]||'').replace(/,/g,'.'));
+      if (!isNaN(oil) && oil > oilLimit){
+        alerts.push({
+          type:'oil-high', maCode:code, region, site, operator:oper, phone,
+          field:'Hao nhớt',
+          message:`${oil} l/20h · vượt định mức ${oilLimit} l/20h`,
+          severity: oil > oilLimit*1.5 ? 'high' : 'med',
+          row: r._row,
+          remain: oil
+        });
+      }
+    }
+  });
+
+  // Sắp xếp: overdue trước, sau đó theo giờ còn lại tăng dần
+  const rank = a => a.type==='overdue'?0:(a.type==='oil-high'?1:2);
+  alerts.sort((a,b)=> rank(a)-rank(b) || (a.remain||0)-(b.remain||0));
+  return alerts;
+}
+
+/* Gán vào S.alerts — luôn overwrite bằng dữ liệu client tính */
+function refreshAlerts(){
+  const alerts = computeClientAlerts();
+  S.alerts = {
+    alerts,
+    total: alerts.length,
+    towerStates: THAP_LOC_OPTIONS,
+    _oilLimit: 0.5
+  };
+}
+
 /* Điều hướng có bộ lọc kèm theo */
 function navMasterWith(status){
   S.filters.masterStatus = status || '';
@@ -409,6 +506,7 @@ async function reloadAll(){
       efficiency: d.efficiency || { headers:[], rows:[] },
       dropdowns:d.dropdowns, alerts:d.alerts
     });
+    refreshAlerts();     // luôn tính lại cảnh báo phía client từ Sheet 2
 
     $('nb-master').textContent = S.master.rows.length;
     $('nb-track').textContent = S.tracking.rows.length;
@@ -474,6 +572,7 @@ async function silentReload(){
       efficiency: d.efficiency || S.efficiency,
       dropdowns:d.dropdowns, alerts:d.alerts
     });
+    refreshAlerts();     // tính lại cảnh báo phía client
 
     // Cập nhật badge + tem thời gian (không đụng nội dung trang)
     updateSidebarBadges();
@@ -1177,7 +1276,7 @@ function viewFilter(){
         <th>Tên Trang Trại / Đơn Vị</th>
         <th>Tình Trạng</th>
         <th style="text-align:right">Theo dõi/cảnh báo<br><span style="font-weight:400;text-transform:none">hoàn nguyên hạt lọc hoặc thay (h)</span></th>
-        <th>Thời điểm hoàn nguyên<br><span style="font-weight:400;text-transform:none">hạt lọc hoặc thay ✎</span></th>
+        <th>Thời điểm hoàn nguyên<br><span style="font-weight:400;text-transform:none">hạt lọc hoặc thay ✎ (số giờ)</span></th>
         <th>Tháp lọc số 1 ✎</th>
         <th>Tháp lọc số 2 ✎</th>
       </tr></thead>
@@ -1186,9 +1285,16 @@ function viewFilter(){
         const rowId = x.t?._row;
         const thap1 = x.t ? (x.t._byLetter.H || '') : '';
         const thap2 = x.t ? (x.t._byLetter.I || '') : '';
-        const dateVal = x.t ? (x.t._byLetter.K || '') : '';
+        const kVal  = x.t ? (x.t._byLetter.K || '') : '';
         const canEdit = !!rowId;
-        const dropCls = canEdit ? 'sel' : 'sel';
+        // Chuẩn hóa số cho ô "Thời điểm hoàn nguyên" — dạng giờ máy chạy, không phải ngày
+        const kNum = (()=>{
+          if (kVal === '' || kVal === null || kVal === undefined) return '';
+          // Nếu dữ liệu cũ lỡ lưu dạng chuỗi ngày → coi như trống để KTV nhập lại
+          if (typeof kVal === 'string' && /^\d{4}-\d{2}-\d{2}/.test(kVal)) return '';
+          const n = Number(String(kVal).replace(/,/g,'.'));
+          return isNaN(n) ? '' : n;
+        })();
         return `<tr>
           <td><span class="mm">${esc(x.code)}</span></td>
           <td>${esc(x.m._byLetter[COL.DONVI]||'')}</td>
@@ -1196,16 +1302,16 @@ function viewFilter(){
           <td>${condBadge(x.cond)}</td>
           <td style="text-align:right;font-family:var(--mono);font-weight:600">${isNaN(x.remain)?'—':x.remain+' h'}</td>
           <td>${canEdit
-              ? `<input class="inp" style="min-width:140px" type="date" value="${esc(dvDate(dateVal))}" onchange="saveFilterCell(${rowId},'K',this.value)">`
+              ? `<input class="inp" style="min-width:120px;text-align:right;font-family:var(--mono)" type="number" step="any" value="${esc(kNum)}" placeholder="Số giờ" onchange="saveFilterCell(${rowId},'K',this.value)"> h`
               : '<span class="b bmu">—</span>'}</td>
           <td>${canEdit
-              ? `<select class="${dropCls}" style="min-width:150px" onchange="saveFilterCell(${rowId},'H',this.value)">
+              ? `<select class="sel" style="min-width:150px" onchange="saveFilterCell(${rowId},'H',this.value)">
                   <option value="">— chọn —</option>
                   ${THAP_LOC_OPTIONS.map(o=>`<option ${String(thap1).trim().toLowerCase()===o.toLowerCase()?'selected':''}>${esc(o)}</option>`).join('')}
                 </select>`
               : '<span class="b bmu">—</span>'}</td>
           <td>${canEdit
-              ? `<select class="${dropCls}" style="min-width:150px" onchange="saveFilterCell(${rowId},'I',this.value)">
+              ? `<select class="sel" style="min-width:150px" onchange="saveFilterCell(${rowId},'I',this.value)">
                   <option value="">— chọn —</option>
                   ${THAP_LOC_OPTIONS.map(o=>`<option ${String(thap2).trim().toLowerCase()===o.toLowerCase()?'selected':''}>${esc(o)}</option>`).join('')}
                 </select>`
@@ -1705,34 +1811,171 @@ function ineffCardHtml(x, uid){
   `;
 }
 
+/* ============================================================
+ *  BIỂU ĐỒ HIỆU QUẢ VẬN HÀNH · dạng đối chiếu độ dao động
+ *   Trục X: các mốc đo (theo ngày trong tháng)
+ *   Trục Y trái (xanh lá): Công suất phát (kW)
+ *   Trục Y phải (đỏ): Giờ chạy thực tế (h) — thay cho nhiệt độ nếu không có
+ *
+ *   Mỗi trục có 3 series:
+ *    1. Chấm nhạt          — đo thực tế theo từng ngày
+ *    2. Đường đậm liền     — trung bình trượt (window 3)
+ *    3. Đường đứt          — trung bình tổng (mean của toàn kỳ)
+ *   + 1 đường đứt nét xanh — mức thiết kế (target)
+ * ============================================================ */
+function movingAvg(arr, win=3){
+  return arr.map((_,i)=>{
+    const s = Math.max(0, i - Math.floor(win/2));
+    const e = Math.min(arr.length, i + Math.ceil(win/2));
+    const slice = arr.slice(s, e).filter(v => typeof v === 'number' && !isNaN(v));
+    if (!slice.length) return null;
+    return slice.reduce((a,v)=>a+v,0) / slice.length;
+  });
+}
+
 function drawEfficiencyChart(canvasId, x){
   const el = $(canvasId); if (!el) return;
   if (el._chart) el._chart.destroy();
-  const labels = x.points.length ? x.points.map(p=>p.label) : ['—'];
-  const dataPts = x.points.length ? x.points.map(p=>p.val) : [null];
-  // Với biểu đồ mặc định lấy công suất; nếu chỉ có giờ, dùng giờ
-  const designVal = x.designKw ?? x.designHr;
-  const actualAvg = x.actualKw ?? x.actualHr;
-  el._chart = new Chart(el, {
-    type:'line',
-    data:{
-      labels,
-      datasets:[
-        { label:'Thiết kế', data: labels.map(()=>designVal), borderColor:'#16a05e', borderWidth:2, borderDash:[6,4], pointRadius:0, tension:0 },
-        { label:'Thực tế TB', data: labels.map(()=>actualAvg), borderColor:'#d97706', borderWidth:2, borderDash:[2,3], pointRadius:0, tension:0 },
-        { label:'Điểm dữ liệu', data: dataPts, borderColor:'#2563eb', backgroundColor:'#2563eb', borderWidth:2, pointRadius:3, pointHoverRadius:5, tension:.25, fill:false }
-      ]
+
+  // Điểm dữ liệu công suất theo ngày (đã tính trong computeInefficient)
+  const powerLabels = x.points.map(p => p.label);
+  const powerVals   = x.points.map(p => Number(p.val));
+
+  // Nếu có Sheet 5, thử lấy thêm giờ chạy theo ngày (cùng label)
+  // Nếu không có, đường phải Y2 sẽ mờ đi
+  const hoursVals = powerVals.map(() => null);  // placeholder
+  // (Có thể mở rộng nếu Sheet 5 có cột "giờ chạy theo ngày")
+
+  const meanPower = powerVals.filter(v=>!isNaN(v)).reduce((a,b)=>a+b,0) / Math.max(1, powerVals.filter(v=>!isNaN(v)).length) || (x.actualKw||0);
+  const powerAvg = movingAvg(powerVals, 3);
+
+  const designPower = x.designKw ?? null;
+
+  const datasets = [
+    // 1) Chấm nhạt — Đo thực tế Công suất
+    {
+      label: 'Đo thực tế (Công suất)',
+      type: 'scatter',
+      data: powerLabels.map((lbl,i) => ({ x:lbl, y:powerVals[i] })),
+      backgroundColor: 'rgba(134, 239, 172, 0.55)',
+      borderColor: 'rgba(134, 239, 172, 0.85)',
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      yAxisID: 'y',
+      order: 3
     },
-    options:{
-      maintainAspectRatio:false,
-      plugins:{
-        legend:{ position:'bottom', labels:{ color:'#475569', font:{family:'Be Vietnam Pro',size:10}, boxWidth:12, padding:8 }},
-        tooltip:{ backgroundColor:'#083d24' }
+    // 2) Đường trung bình trượt
+    {
+      label: 'Đường trung bình (Công suất)',
+      type: 'line',
+      data: powerAvg,
+      borderColor: '#166534',
+      backgroundColor: 'transparent',
+      borderWidth: 2.5,
+      pointRadius: 0,
+      tension: 0.35,
+      yAxisID: 'y',
+      order: 2,
+      spanGaps: true
+    },
+    // 3) Đường đứt trung bình tổng
+    {
+      label: `Trung bình tổng (${meanPower.toFixed(1)} kW)`,
+      type: 'line',
+      data: powerLabels.map(()=>meanPower),
+      borderColor: '#166534',
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      borderDash: [6, 4],
+      pointRadius: 0,
+      yAxisID: 'y',
+      order: 4
+    }
+  ];
+  if (designPower != null && !isNaN(designPower)){
+    datasets.push({
+      label: `Thiết kế (${designPower.toFixed(1)} kW)`,
+      type: 'line',
+      data: powerLabels.map(()=>designPower),
+      borderColor: '#0d6e3f',
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      borderDash: [2, 3],
+      pointRadius: 0,
+      yAxisID: 'y',
+      order: 5
+    });
+  }
+
+  // Nếu có giờ chạy — thêm dataset đỏ
+  if (hoursVals.some(v => v!=null && !isNaN(v))){
+    const hoursAvg = movingAvg(hoursVals, 3);
+    const meanHours = hoursVals.filter(v=>!isNaN(v)&&v!=null).reduce((a,b)=>a+b,0) / Math.max(1, hoursVals.filter(v=>!isNaN(v)&&v!=null).length);
+    datasets.push(
+      { label:'Đo thực tế (Giờ chạy)', type:'scatter', data: powerLabels.map((l,i)=>({x:l,y:hoursVals[i]})), backgroundColor:'rgba(252, 165, 165, 0.55)', borderColor:'rgba(252, 165, 165, 0.85)', pointRadius:4, pointHoverRadius:6, yAxisID:'y2', order:3 },
+      { label:'Đường trung bình (Giờ chạy)', type:'line', data:hoursAvg, borderColor:'#991b1b', backgroundColor:'transparent', borderWidth:2.5, pointRadius:0, tension:0.35, yAxisID:'y2', order:2, spanGaps:true },
+      { label:`Trung bình tổng (${meanHours.toFixed(1)} h)`, type:'line', data:powerLabels.map(()=>meanHours), borderColor:'#991b1b', backgroundColor:'transparent', borderWidth:1.5, borderDash:[6,4], pointRadius:0, yAxisID:'y2', order:4 }
+    );
+  }
+
+  const scales = {
+    x: {
+      type: 'category',
+      labels: powerLabels,
+      ticks: { color:'#64748b', font:{family:'Be Vietnam Pro',size:9}, maxRotation:35, minRotation:0 },
+      grid: { color:'#f1f5f9' },
+      title: { display:true, text:'Thời gian (ngày trong tháng)', color:'#64748b', font:{family:'Be Vietnam Pro',size:10} }
+    },
+    y: {
+      position: 'left',
+      ticks: { color:'#166534', font:{family:'Be Vietnam Pro',size:9} },
+      grid: { color:'#f1f5f9' },
+      title: { display:true, text:'Công suất phát (kW)', color:'#166534', font:{family:'Be Vietnam Pro',size:10,weight:'600'} },
+      beginAtZero: true
+    }
+  };
+  if (hoursVals.some(v => v!=null && !isNaN(v))){
+    scales.y2 = {
+      position: 'right',
+      ticks: { color:'#991b1b', font:{family:'Be Vietnam Pro',size:9} },
+      grid: { drawOnChartArea:false },
+      title: { display:true, text:'Giờ chạy (h)', color:'#991b1b', font:{family:'Be Vietnam Pro',size:10,weight:'600'} },
+      beginAtZero: true
+    };
+  }
+
+  el._chart = new Chart(el, {
+    data: { labels: powerLabels, datasets },
+    options: {
+      maintainAspectRatio: false,
+      responsive: true,
+      interaction: { intersect:false, mode:'index' },
+      plugins: {
+        title: {
+          display: true,
+          text: `${x.code} · Đối chiếu độ dao động: Điểm đo thực tế và Đường trung bình theo thời gian`,
+          color: '#0d6e3f',
+          font: { family:'Be Vietnam Pro', size:11, weight:'700' },
+          padding: { top:4, bottom:8 }
+        },
+        legend: {
+          position: 'top',
+          align: 'start',
+          labels: {
+            color:'#334155',
+            font:{family:'Be Vietnam Pro', size:9.5},
+            boxWidth: 24,
+            padding: 6,
+            usePointStyle: false
+          }
+        },
+        tooltip: {
+          backgroundColor: '#083d24',
+          titleFont: { family:'Be Vietnam Pro', size:11, weight:'700' },
+          bodyFont:  { family:'Be Vietnam Pro', size:11 }
+        }
       },
-      scales:{
-        x:{ ticks:{color:'#64748b', font:{family:'Be Vietnam Pro',size:9}}, grid:{display:false} },
-        y:{ ticks:{color:'#64748b', font:{family:'Be Vietnam Pro',size:9}}, grid:{color:'#f1f5f9'}, beginAtZero:true }
-      }
+      scales
     }
   });
 }
