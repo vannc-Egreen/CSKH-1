@@ -439,6 +439,72 @@ function setStatus(loading, msg, err){
   $('sLbl').textContent = msg;
 }
 
+/* ============================================================
+ *  AUTO-REFRESH 20s · KHÔNG GIÁN ĐOẠN THAO TÁC
+ *  Nguyên tắc:
+ *   - Modal đang mở  → bỏ qua nhịp (không fetch, không rerender)
+ *   - Đang gõ input  → chỉ cập nhật state ngầm + badge, KHÔNG rerender DOM
+ *   - Trang view-only (Tổng quan / Cảnh báo / Phân tích) → rerender được
+ *   - Trang có nhiều tương tác (Danh sách máy / Theo dõi / Data lọc / Hiệu quả)
+ *     → chỉ cập nhật badge + tem thời gian, KHÔNG rerender
+ * ============================================================ */
+let _autoTimer = null;
+let _autoRunning = false;
+const VIEW_ONLY_PAGES = new Set(['dash','alerts','analysis']);
+
+function startAutoRefresh(){
+  clearInterval(_autoTimer);
+  _autoTimer = setInterval(silentReload, 20000);
+}
+function stopAutoRefresh(){
+  clearInterval(_autoTimer);
+  _autoTimer = null;
+}
+async function silentReload(){
+  if (_autoRunning) return;                                   // tránh chồng nhịp
+  if ($('ov')?.classList.contains('show')) return;            // modal đang mở → bỏ qua
+  if (API_URL.includes('PASTE_')) return;                     // chưa cấu hình API
+
+  _autoRunning = true;
+  try {
+    const d = await apiGet('bootstrap');
+    if (!d.ok) return;
+    Object.assign(S, {
+      master:d.master, tracking:d.tracking, spec:d.spec, filter:d.filter,
+      efficiency: d.efficiency || S.efficiency,
+      dropdowns:d.dropdowns, alerts:d.alerts
+    });
+
+    // Cập nhật badge + tem thời gian (không đụng nội dung trang)
+    updateSidebarBadges();
+    $('ftTime').textContent = new Date().toLocaleTimeString('vi-VN');
+    const totalAlerts = S.alerts.total;
+    $('sLbl').textContent = `Đã đồng bộ · ${S.master.rows.length} máy · ${totalAlerts} cảnh báo`;
+
+    // Chỉ rerender khi đang ở trang view-only và không có ô nhập nào đang focus
+    const curEl = document.querySelector('.page.on');
+    const curPage = curEl ? curEl.id.replace('pg-','') : '';
+    const focused = document.activeElement;
+    const typing = focused && ['INPUT','SELECT','TEXTAREA'].includes(focused.tagName);
+    if (VIEW_ONLY_PAGES.has(curPage) && !typing) {
+      renderCurrent();
+    }
+  } catch(e){ /* nuốt lỗi cho lặng lẽ */ }
+  finally { _autoRunning = false; }
+}
+function updateSidebarBadges(){
+  const master$ = $('nb-master'); if (master$) master$.textContent = S.master.rows.length;
+  const track$  = $('nb-track');  if (track$)  track$.textContent  = S.tracking.rows.length;
+  const alerts$ = $('nb-alerts'); if (alerts$) alerts$.textContent = S.alerts.total;
+  const filterWarn = S.tracking.rows.reduce((s,r)=>{
+    const n = Number(r._byLetter?.L);
+    return s + ((!isNaN(n) && n<=500) ? 1 : 0);
+  },0);
+  const filter$ = $('nb-filter'); if (filter$) filter$.textContent = filterWarn;
+  const nbEff = $('nb-eff');
+  if (nbEff) nbEff.textContent = computeInefficient(S.master.rows).length;
+}
+
 function nav(page){
   document.querySelectorAll('.nitem').forEach(n => n.classList.toggle('on', n.dataset.page===page));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
@@ -809,7 +875,7 @@ async function saveMaster(isNew){
   if (!data.B){ toast('Thiếu mã máy','err'); return; }
   setStatus(true,'Đang lưu…');
   try {
-    const res = isNew ? await apiPost({action:'addMachine', data}) : await apiPost({action:'updateMaster', maCode:data.B, updates:data});
+    const res = isNew ? await apiPost({action:'addMachine', data, user:S.user.name}) : await apiPost({action:'updateMaster', maCode:data.B, updates:data, user:S.user.name});
     if (!res.ok) throw new Error(res.error);
     closeOv();
     await reloadAll();
@@ -827,7 +893,7 @@ async function saveMaster(isNew){
 function viewTracking(){
   const q = (S.filters.tracking||'').toLowerCase();
   const headers = S.tracking.headers.filter(x=>x);
-  const warnHeaders = headers.filter(h=>/theo dõi cảnh báo/i.test(h));
+  const warnHeaders = headers.filter(h=>/theo dõi[\s\/]*cảnh báo/i.test(h));
   const oilHeader = headers.find(h=>/hao nhớt/i.test(h));
 
   const mByCode = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA]||'').trim(), m]));
@@ -862,7 +928,7 @@ function viewTracking(){
         <th>Mã máy</th>
         <th>Đơn vị · Trại</th>
         <th>Khu vực</th>
-        ${warnHeaders.slice(0,4).map(h=>`<th style="text-align:right">${esc(h.replace(/theo dõi cảnh báo/i,'').trim())}</th>`).join('')}
+        ${warnHeaders.slice(0,4).map(h=>`<th style="text-align:right">${esc(h.replace(/theo dõi[\s\/]*cảnh báo/i,'').trim())}</th>`).join('')}
         ${oilHeader?`<th style="text-align:right">${esc(oilHeader)}</th>`:''}
         <th></th>
       </tr></thead>
@@ -892,40 +958,63 @@ function openTrackingEdit(rowId){
   const row = S.tracking.rows.find(r=>r._row===rowId);
   if (!row){ toast('Không tìm thấy dòng '+rowId,'err'); return; }
   const headers = S.tracking.headers.filter(x=>x);
-  // Bỏ qua các cột: STT (A), Mã máy (B, tra cứu), Cột E (auto từ code khác)
+  // Bỏ qua: STT (A), Mã máy (B)
   const isSkip = h => h==='STT' || h==='Mã Máy' || h==='Mã máy';
-  const isFormula = h => /theo dõi cảnh báo/i.test(h);
-  const isAutoFilled = h => {
-    // Cột E của Sheet 2 tự động điền — cần đoán tên header (thường là "Số giờ đang chạy" hoặc header thứ 5)
-    const idx = headers.indexOf(h);
-    return idx === 4;  // cột E (0-indexed = 4)
-  };
-  const timeHeaders = headers.filter(h => /thời điểm/i.test(h) && !isSkip(h) && !isFormula(h) && !isAutoFilled(h));
+  const isFormula = h => /theo dõi[\s\/]*cảnh báo/i.test(h);
+  // Cột E (index 4) = "Số giờ máy chạy" — hiển thị trong Section 1 nhưng vẫn đánh dấu là auto-sync từ code khác
+  const hE = headers[4] || 'Số giờ máy chạy';
+
+  const timeHeaders = headers.filter(h => /thời điểm/i.test(h) && !isSkip(h) && !isFormula(h));
   const oilHeader = headers.find(h=>/hao nhớt/i.test(h));
   const warnHeaders = headers.filter(h => isFormula(h));
-  const towerHeaders = headers.filter(h => /tháp lọc/i.test(h));   // H, I
+  const towerHeaders = headers.filter(h => /tháp lọc/i.test(h));
 
-  // "Còn lại" là mọi cột nhập tay chưa lọc
-  const other = headers.filter(h => !isSkip(h) && !isFormula(h) && !isAutoFilled(h) && !timeHeaders.includes(h) && h!==oilHeader && !towerHeaders.includes(h));
+  // "Thông tin khác" = mọi cột nhập tay chưa được nhóm — chỉ đọc, làm tròn 2 chữ số
+  const other = headers.filter(h => !isSkip(h) && !isFormula(h) && h !== hE
+    && !timeHeaders.includes(h) && h !== oilHeader && !towerHeaders.includes(h));
   const key = h => 'th_'+btoa(unescape(encodeURIComponent(h))).replace(/[^A-Za-z0-9]/g,'');
+
+  // Chuẩn hóa hiển thị số (đầu vào có thể là chuỗi, số, hoặc date)
+  const numVal = v => {
+    if (v === '' || v === null || v === undefined) return '';
+    // Nếu là chuỗi ngày → chuyển thành 0 (đây là bug data, để trống cho ktv nhập lại)
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) return '';
+    const n = Number(String(v).replace(/,/g,'.'));
+    return isNaN(n) ? '' : n;
+  };
+  // Chỉ đọc: làm tròn 2 chữ số nếu là số, ngược lại giữ nguyên
+  const round2 = v => {
+    if (v === '' || v === null || v === undefined) return '—';
+    const n = Number(String(v).replace(/,/g,'.'));
+    if (isNaN(n)) return esc(String(v));
+    return (Math.round(n*100)/100).toString();
+  };
 
   openOv(`
     <div class="mh">
       <div>
         <h2>✎ Cập nhật theo dõi bảo dưỡng</h2>
-        <p>Máy <b>${esc(row._byLetter[COL.MA]||'')}</b> · dòng ${rowId} · Cột E do hệ thống tự điền · các cột công thức chỉ đọc</p>
+        <p>Máy <b>${esc(row._byLetter[COL.MA]||'')}</b> · dòng ${rowId} · các cột "Thời điểm..." lưu dưới dạng số giờ máy chạy</p>
       </div>
       <button class="mcl" onclick="closeOv()">✕</button>
     </div>
     <div class="mb">
 
-      ${timeHeaders.length? `
       <div class="fsec">
-        <div class="fsh"><div class="fsn">1</div><div class="fst">Thời điểm thực hiện · nhập theo thực tế</div></div>
+        <div class="fsh"><div class="fsn">1</div><div class="fst">Thời điểm thực hiện · nhập theo thực tế (số giờ máy chạy)</div></div>
         <div class="fgrid fg2">
-          ${timeHeaders.map(h=>`<div class="iw"><div class="il">${esc(h)}</div><input class="inp" id="${key(h)}" type="date" value="${dateVal(row[h])}"></div>`).join('')}
+          <div class="iw">
+            <div class="il">${esc(hE)} <span style="color:var(--amb);font-weight:400">· tự đồng bộ Smartgen</span></div>
+            <input class="inp" id="${key(hE)}" type="number" step="any" value="${esc(numVal(row[hE]))}" placeholder="Số giờ đang chạy">
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Giá trị này còn được cập nhật tự động từ Smartgen; nhập tay để chỉnh sửa khi cần</div>
+          </div>
+          ${timeHeaders.map(h=>`
+            <div class="iw">
+              <div class="il">${esc(h)}</div>
+              <input class="inp" id="${key(h)}" type="number" step="any" value="${esc(numVal(row[h]))}" placeholder="Số giờ máy chạy khi thực hiện">
+            </div>`).join('')}
         </div>
-      </div>`:''}
+      </div>
 
       ${towerHeaders.length? `
       <div class="fsec">
@@ -954,9 +1043,15 @@ function openTrackingEdit(rowId){
 
       ${other.length? `
       <div class="fsec">
-        <div class="fsh"><div class="fsn">4</div><div class="fst">Thông tin khác</div></div>
+        <div class="fsh" style="background:linear-gradient(90deg,#f0f9ff,#fff)">
+          <div class="fsn" style="background:var(--bl)">4</div>
+          <div class="fst">Thông tin khác · chỉ đọc từ Sheet</div>
+        </div>
         <div class="fgrid fg2">
-          ${other.map(h=>`<div class="iw"><div class="il">${esc(h)}</div><input class="inp" id="${key(h)}" value="${esc(row[h]||'')}"></div>`).join('')}
+          ${other.map(h=>`<div class="iw">
+            <div class="il">${esc(h)}</div>
+            <div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:600;color:var(--s2);font-family:var(--mono)">${round2(row[h])}</div>
+          </div>`).join('')}
         </div>
       </div>`:''}
 
@@ -965,11 +1060,11 @@ function openTrackingEdit(rowId){
         <div class="fsh" style="background:linear-gradient(90deg,#fef3c7,#fff)"><div class="fsn" style="background:var(--amb)">!</div><div class="fst">Theo dõi cảnh báo · công thức Sheet 2 (chỉ đọc)</div></div>
         <div class="fgrid fg3">
           ${warnHeaders.map(h=>{
-            const val = Number(row[h]);
+            const val = Number(String(row[h]||'').replace(/,/g,'.'));
             const cls = !isNaN(val) && val<=0 ? 'br' : (!isNaN(val) && val<=500 ? 'ba' : 'bg');
             return `<div class="iw"><div class="il">${esc(h)}</div>
               <div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:600">
-                ${!isNaN(val) ? `<span class="b ${cls}">${val} h</span>` : esc(row[h])}
+                ${!isNaN(val) ? `<span class="b ${cls}">${(Math.round(val*100)/100)} h</span>` : esc(row[h])}
               </div></div>`;
           }).join('')}
         </div>
@@ -980,26 +1075,28 @@ function openTrackingEdit(rowId){
       <button class="btn bg-g" onclick="saveTracking(${rowId})">💾 Lưu vào Google Sheet</button>
     </div>
   `);
-  window._trackingKeys = { timeHeaders, oilHeader, otherHeaders:other, towerHeaders, key };
+  window._trackingKeys = { hE, timeHeaders, oilHeader, towerHeaders, key };
 }
 
 async function saveTracking(rowId){
   const row = S.tracking.rows.find(r=>r._row===rowId);
-  const { timeHeaders, oilHeader, otherHeaders, towerHeaders, key } = window._trackingKeys || {};
+  const { hE, timeHeaders, oilHeader, towerHeaders, key } = window._trackingKeys || {};
   const updates = {};
   const push = h => {
     const el = $(key(h)); if (!el) return;
-    if (String(el.value) !== String(row[h]??'')) updates[h] = el.value;
+    const cur = String(row[h]??'').trim();
+    const val = String(el.value??'').trim();
+    if (val !== cur) updates[h] = el.value;
   };
+  if (hE) push(hE);
   (timeHeaders||[]).forEach(push);
   (towerHeaders||[]).forEach(push);
   if (oilHeader) push(oilHeader);
-  (otherHeaders||[]).forEach(push);
 
   if (!Object.keys(updates).length){ closeOv(); toast('Không có thay đổi','info'); return; }
   setStatus(true,'Đang lưu…');
   try {
-    const res = await apiPost({action:'updateTracking', row:rowId, updates});
+    const res = await apiPost({action:'updateTracking', row:rowId, updates, user:S.user.name});
     if (!res.ok) throw new Error(res.error);
     closeOv();
     await reloadAll();
@@ -1136,7 +1233,7 @@ async function saveFilterCell(rowId, colLetter, value){
   const headerName = headers[idx] || colLetter;
   setStatus(true,'Đang lưu…');
   try {
-    const res = await apiPost({action:'updateTracking', row:rowId, updates:{[headerName]:value}});
+    const res = await apiPost({action:'updateTracking', row:rowId, updates:{[headerName]:value}, user:S.user.name});
     if (!res.ok) throw new Error(res.error||'Lỗi lưu');
     // cập nhật state cục bộ
     row._byLetter[colLetter] = value;
@@ -1352,7 +1449,7 @@ function hhmm(v){
 async function saveEffCell(rowId, header, value){
   setStatus(true,'Đang lưu…');
   try {
-    const res = await apiPost({action:'updateEfficiency', row:rowId, updates:{[header]:value}});
+    const res = await apiPost({action:'updateEfficiency', row:rowId, updates:{[header]:value}, user:S.user.name});
     if (!res.ok) throw new Error(res.error||'Lỗi lưu');
     // cập nhật state cục bộ
     const r = S.efficiency.rows.find(x=>x._row===rowId);
@@ -1438,7 +1535,7 @@ async function saveEfficiencyModal(rowId){
   if (!Object.keys(updates).length){ closeOv(); toast('Không có thay đổi','info'); return; }
   setStatus(true,'Đang lưu…');
   try {
-    const res = await apiPost({action:'updateEfficiency', row:rowId, updates});
+    const res = await apiPost({action:'updateEfficiency', row:rowId, updates, user:S.user.name});
     if (!res.ok) throw new Error(res.error||'Lỗi lưu');
     Object.assign(row, updates);
     closeOv();
@@ -1755,8 +1852,10 @@ function doLogin(){
   $('authWrap').style.display = 'none';
   $('app').style.display = 'flex';
   reloadAll();
+  startAutoRefresh();          // 20s tự đồng bộ ngầm
 }
 function doLogout(){
+  stopAutoRefresh();
   $('app').style.display = 'none';
   $('authWrap').style.display = 'flex';
 }
