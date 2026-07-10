@@ -233,7 +233,7 @@ td{padding:9px 12px;vertical-align:middle}
         <div class="uav" id="tAv">A</div>
         <div class="uname" id="tName">Admin</div>
       </div>
-      <button class="tbtn" onclick="reloadAll()">↻ Tải lại</button>
+      <button class="tbtn" onclick="reloadAll()" title="Đồng bộ 2 chiều thủ công với Google Sheet">↻ Đồng bộ</button>
       <button class="tbtn" onclick="doLogout()">Đăng xuất</button>
     </div>
   </div>
@@ -315,6 +315,7 @@ const S = {
     filterStatus:'',   // '', 'overdue', 'duesoon', 'ok'
     alerts:'all',      // '', 'all', 'overdue', 'due-soon', 'oil-high'
     alertsRegion:'',   // '', 'Miền Bắc', 'Miền Nam'
+    alertsFields:new Set(),  // multi-select hạng mục theo dõi ('Đại tu','Nhớt','Lọc gió',...)
     eff:{ region:new Set(), type:new Set() }  // multi-select
   }
 };
@@ -538,59 +539,18 @@ function setStatus(loading, msg, err){
 }
 
 /* ============================================================
- *  AUTO-REFRESH 20s · KHÔNG GIÁN ĐOẠN THAO TÁC
- *  Nguyên tắc:
- *   - Modal đang mở  → bỏ qua nhịp (không fetch, không rerender)
- *   - Đang gõ input  → chỉ cập nhật state ngầm + badge, KHÔNG rerender DOM
- *   - Trang view-only (Tổng quan / Cảnh báo / Phân tích) → rerender được
- *   - Trang có nhiều tương tác (Danh sách máy / Theo dõi / Data lọc / Hiệu quả)
- *     → chỉ cập nhật badge + tem thời gian, KHÔNG rerender
+ *  AUTO-REFRESH ĐÃ TẮT · CHỈ ĐỒNG BỘ THEO SỰ KIỆN
+ *   - Auto-upload khi đăng nhập  (doLogin → reloadAll)
+ *   - Auto-upload khi tải lại    (nút "↻ Tải lại" → reloadAll)
+ *   - Auto-upload khi lưu form   (saveMaster / saveTracking / saveEfficiencyModal → reloadAll)
+ *   - Auto-save bộ nhớ khi ấn ra ngoài form chưa lưu  (captureDraft)
+ *  Giữ các hàm cũ ở dạng no-op để không vỡ code cũ.
  * ============================================================ */
 let _autoTimer = null;
 let _autoRunning = false;
-const VIEW_ONLY_PAGES = new Set(['dash','alerts','analysis']);
-
-function startAutoRefresh(){
-  clearInterval(_autoTimer);
-  _autoTimer = setInterval(silentReload, 20000);
-}
-function stopAutoRefresh(){
-  clearInterval(_autoTimer);
-  _autoTimer = null;
-}
-async function silentReload(){
-  if (_autoRunning) return;                                   // tránh chồng nhịp
-  if ($('ov')?.classList.contains('show')) return;            // modal đang mở → bỏ qua
-  if (API_URL.includes('PASTE_')) return;                     // chưa cấu hình API
-
-  _autoRunning = true;
-  try {
-    const d = await apiGet('bootstrap');
-    if (!d.ok) return;
-    Object.assign(S, {
-      master:d.master, tracking:d.tracking, spec:d.spec, filter:d.filter,
-      efficiency: d.efficiency || S.efficiency,
-      dropdowns:d.dropdowns, alerts:d.alerts
-    });
-    refreshAlerts();     // tính lại cảnh báo phía client
-
-    // Cập nhật badge + tem thời gian (không đụng nội dung trang)
-    updateSidebarBadges();
-    $('ftTime').textContent = new Date().toLocaleTimeString('vi-VN');
-    const totalAlerts = S.alerts.total;
-    $('sLbl').textContent = `Đã đồng bộ · ${S.master.rows.length} máy · ${totalAlerts} cảnh báo`;
-
-    // Chỉ rerender khi đang ở trang view-only và không có ô nhập nào đang focus
-    const curEl = document.querySelector('.page.on');
-    const curPage = curEl ? curEl.id.replace('pg-','') : '';
-    const focused = document.activeElement;
-    const typing = focused && ['INPUT','SELECT','TEXTAREA'].includes(focused.tagName);
-    if (VIEW_ONLY_PAGES.has(curPage) && !typing) {
-      renderCurrent();
-    }
-  } catch(e){ /* nuốt lỗi cho lặng lẽ */ }
-  finally { _autoRunning = false; }
-}
+function startAutoRefresh(){ /* noop — tự đồng bộ theo sự kiện, không tick 20s nữa */ }
+function stopAutoRefresh(){ clearInterval(_autoTimer); _autoTimer = null; }
+async function silentReload(){ /* noop */ }
 function updateSidebarBadges(){
   const master$ = $('nb-master'); if (master$) master$.textContent = S.master.rows.length;
   const track$  = $('nb-track');  if (track$)  track$.textContent  = S.tracking.rows.length;
@@ -776,19 +736,51 @@ function viewAlerts(){
   const all = S.alerts.alerts;
   const f = S.filters.alerts || 'all';
   const fr = S.filters.alertsRegion || '';
+  const ff = S.filters.alertsFields;  // Set
 
   // Chỉ mục miền theo mã máy
   const codeToRegion = new Map(S.master.rows.map(r => [String(r._byLetter.B), regionOf(r)]));
   const inRegion = a => !fr || codeToRegion.get(String(a.maCode))===fr;
-  const inType = a => f==='all' || a.type===f;
-  const list = all.filter(a => inRegion(a) && inType(a));
+  const inType   = a => f==='all' || a.type===f;
+  const inField  = a => !ff.size || ff.has(normField(a.field));
 
+  const list = all.filter(a => inRegion(a) && inType(a) && inField(a));
+
+  // Đếm nhanh
   const c = t => all.filter(a => inRegion(a) && (t==='all'||a.type===t)).length;
   const rn = 'Miền Bắc', rs = 'Miền Nam';
 
+  // Đếm cảnh báo theo hạng mục (áp dụng bộ lọc Loại + Khu vực để đếm sát ngữ cảnh)
+  const byField = new Map();
+  all.filter(a => inRegion(a) && inType(a)).forEach(a => {
+    const k = normField(a.field);
+    byField.set(k, (byField.get(k)||0) + 1);
+  });
+  const fieldOrder = [...byField.entries()].sort((a,b)=>b[1]-a[1]);
+
+  // Gộp theo mã máy
+  const byMachine = new Map();  // maCode → { info, items:[] }
+  list.forEach(a => {
+    const key = String(a.maCode);
+    if (!byMachine.has(key)) byMachine.set(key, { info:a, items:[] });
+    byMachine.get(key).items.push(a);
+  });
+  // Sắp xếp máy: máy có severity high trước, rồi theo số vấn đề giảm dần
+  const machineList = [...byMachine.values()].sort((a,b)=>{
+    const ah = a.items.some(i=>i.severity==='high') ? 0 : 1;
+    const bh = b.items.some(i=>i.severity==='high') ? 0 : 1;
+    if (ah !== bh) return ah - bh;
+    return b.items.length - a.items.length;
+  });
+
+  const fieldChip = (name, count) => {
+    const on = ff.has(name);
+    return `<button class="fchip ${on?'on':''}" onclick="toggleAlertField('${esc(name)}')">${esc(name)} (${count})</button>`;
+  };
+
   return `
     <div class="ph"><h1>Cảnh báo bảo dưỡng</h1>
-      <p>Tổng ${all.length} cảnh báo · lọc: ${list.length}${fr?` · khu vực: <b>${esc(fr)}</b>`:''}</p>
+      <p>Tổng ${all.length} cảnh báo · lọc: ${list.length} · <b>${machineList.length}</b> máy${fr?` · khu vực: <b>${esc(fr)}</b>`:''}${ff.size?` · hạng mục: <b>${[...ff].join(', ')}</b>`:''}</p>
     </div>
 
     <div class="fbar">
@@ -806,13 +798,75 @@ function viewAlerts(){
       <button class="fchip ${fr===rs?'on':''}" onclick="setAlertRegion('${rs}')">${rs}</button>
     </div>
 
-    ${list.length ? list.map(alertItem).join('') : '<div class="empty"><div class="ei">✅</div>Không có cảnh báo trong bộ lọc này.</div>'}
+    <div class="fbar">
+      <span class="mslbl">Hạng mục</span>
+      <button class="fchip ${!ff.size?'on':''}" onclick="clearAlertFields()">Tất cả</button>
+      ${fieldOrder.map(([name,cnt])=>fieldChip(name,cnt)).join('')}
+    </div>
+
+    ${machineList.length ? machineList.map(machineAlertCard).join('') : '<div class="empty"><div class="ei">✅</div>Không có cảnh báo trong bộ lọc này.</div>'}
   `;
 }
 function setAlertFilter(f){ S.filters.alerts = f; renderPage('alerts'); }
 function setAlertRegion(r){ S.filters.alertsRegion = r; renderPage('alerts'); }
+function toggleAlertField(name){
+  const s = S.filters.alertsFields;
+  if (s.has(name)) s.delete(name); else s.add(name);
+  renderPage('alerts');
+}
+function clearAlertFields(){ S.filters.alertsFields.clear(); renderPage('alerts'); }
 function setMasterStatus(s){ S.filters.masterStatus = s; renderPage('master'); }
 
+/* Chuẩn hóa tên hạng mục về nhóm ngắn gọn — để chip filter đọc được và gộp trùng */
+function normField(raw){
+  const s = String(raw||'').toLowerCase().trim();
+  if (/đại tu/.test(s)) return 'Đại tu';
+  if (/lọc nhớt/.test(s)) return 'Lọc nhớt';
+  if (/lọc gió/.test(s)) return 'Lọc gió';
+  if (/bugi/.test(s)) return 'Bugi';
+  if (/turbo/.test(s)) return 'Turbo';
+  if (/hao nhớt/.test(s)) return 'Hao nhớt';
+  if (/ổ bi|o bi|bơm điện/.test(s)) return 'Ổ bi / Bơm điện';
+  if (/hoàn nguyên|hạt lọc/.test(s)) return 'Hoàn nguyên hạt lọc';
+  if (/nhớt/.test(s)) return 'Nhớt';
+  if (/ắc quy|axit/.test(s)) return 'Axit ắc quy';
+  if (/két nước|vệ sinh két/.test(s)) return 'Vệ sinh két nước';
+  return raw ? String(raw).trim() : '—';
+}
+
+function machineAlertCard(group){
+  const a = group.info;
+  const items = group.items;
+  const hasHigh = items.some(i=>i.severity==='high');
+  const region = a.region || '';
+  return `
+    <div class="alist ${hasHigh?'high':''}" style="align-items:stretch">
+      <div class="aico">${hasHigh?'⚠️':'⏰'}</div>
+      <div class="abd">
+        <div class="amc" style="margin-bottom:4px">
+          ${esc(a.maCode)}
+          <span class="b ${hasHigh?'br':'ba'}">${items.length} hạng mục</span>
+          ${a.site?`<span class="b bmu">${esc(a.site)}</span>`:''}
+          ${region?`<span class="b ${region==='Miền Bắc'?'bg':'bb'}">${esc(region)}</span>`:''}
+        </div>
+        ${a.operator?`<div class="amsg" style="margin-bottom:6px;font-weight:600;color:var(--s3)">Vận hành: ${esc(a.operator)}${a.phone?' · '+esc(a.phone):''}</div>`:''}
+        <div style="display:flex;flex-direction:column;gap:3px;padding-left:2px;border-left:2px solid ${hasHigh?'#fee2e2':'#fef3c7'};padding-left:8px">
+          ${items.map(it => {
+            const tag = it.type==='overdue'?'<span class="b br">Quá hạn</span>'
+                     : it.type==='oil-high'?'<span class="b bb">Hao nhớt</span>'
+                     : '<span class="b ba">Sắp đến hạn</span>';
+            return `<div class="amsg" style="line-height:1.5">
+              ${tag} <b>${esc(normField(it.field))}</b> — ${esc(it.message)}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="aact" style="align-self:center"><button class="btn bg-g sm" onclick="openTrackingEdit(${a.row})">Xử lý</button></div>
+    </div>
+  `;
+}
+
+// Giữ hàm alertItem cho legacy (Tổng quan) — giờ dùng gộp theo máy khi cần
 function alertItem(a){
   const isHigh = a.severity==='high';
   const icon = a.type==='oil-high' ? '💧' : (a.type==='overdue' ? '⚠️' : '⏰');
@@ -822,7 +876,7 @@ function alertItem(a){
       <div class="aico">${icon}</div>
       <div class="abd">
         <div class="amc">${esc(a.maCode)} <span class="mm">${esc(label)}</span> ${a.site?`<span class="b bmu">${esc(a.site)}</span>`:''}</div>
-        <div class="amsg"><b>${esc(a.field)}</b> — ${esc(a.message)}${a.operator?` · vận hành: ${esc(a.operator)}${a.phone?' ('+esc(a.phone)+')':''}`:''}</div>
+        <div class="amsg"><b>${esc(normField(a.field))}</b> — ${esc(a.message)}${a.operator?` · vận hành: ${esc(a.operator)}${a.phone?' ('+esc(a.phone)+')':''}`:''}</div>
       </div>
       <div class="aact"><button class="btn bg-g sm" onclick="openTrackingEdit(${a.row})">Xử lý</button></div>
     </div>
@@ -965,6 +1019,9 @@ function openMasterEdit(maCode){
     </div>
   `);
   setTimeout(()=>['fC','fD','fF','fG','fH'].forEach(id=>{ const el=$(id); if (el) attachAutocomplete(el); }), 10);
+  // Bật draft persistence — key riêng cho từng máy (hoặc "new" khi thêm mới)
+  const dk = 'master:'+(maCode||'new');
+  setDraftContext(dk, ['fB','fC','fD','fE','fF','fG','fH','fI','fJ','fK','fL','fM','fN','fO']);
 }
 
 async function saveMaster(isNew){
@@ -976,6 +1033,8 @@ async function saveMaster(isNew){
   try {
     const res = isNew ? await apiPost({action:'addMachine', data, user:S.user.name}) : await apiPost({action:'updateMaster', maCode:data.B, updates:data, user:S.user.name});
     if (!res.ok) throw new Error(res.error);
+    clearDraft('master:'+(isNew?'new':data.B));
+    clearDraftContext();
     closeOv();
     await reloadAll();
     toast('✓ Đã lưu vào Google Sheet','ok');
@@ -1175,6 +1234,14 @@ function openTrackingEdit(rowId){
     </div>
   `);
   window._trackingKeys = { hE, timeHeaders, oilHeader, towerHeaders, key };
+  // Draft persistence
+  const dk = 'tracking:'+rowId;
+  const allFields = [];
+  if (hE) allFields.push(key(hE));
+  (timeHeaders||[]).forEach(h => allFields.push(key(h)));
+  (towerHeaders||[]).forEach(h => allFields.push(key(h)));
+  if (oilHeader) allFields.push(key(oilHeader));
+  setDraftContext(dk, allFields);
 }
 
 async function saveTracking(rowId){
@@ -1197,6 +1264,8 @@ async function saveTracking(rowId){
   try {
     const res = await apiPost({action:'updateTracking', row:rowId, updates, user:S.user.name});
     if (!res.ok) throw new Error(res.error);
+    clearDraft('tracking:'+rowId);
+    clearDraftContext();
     closeOv();
     await reloadAll();
     toast(`✓ Đã cập nhật ${Object.keys(updates).length} trường`,'ok');
@@ -1627,6 +1696,10 @@ function openEfficiencyEdit(rowId){
       <button class="btn bg-g" onclick="saveEfficiencyModal(${rowId})">💾 Lưu vào Google Sheet</button>
     </div>
   `);
+  // Draft persistence
+  const dk = 'efficiency:'+rowId;
+  const fieldIds = H.filter(h => /giờ bắt đầu|giờ kết thúc|khung giờ chạy chính/i.test(h)).map(h=>'eff_'+btoa(h));
+  setDraftContext(dk, fieldIds);
 }
 
 async function saveEfficiencyModal(rowId){
@@ -1644,6 +1717,8 @@ async function saveEfficiencyModal(rowId){
     const res = await apiPost({action:'updateEfficiency', row:rowId, updates, user:S.user.name});
     if (!res.ok) throw new Error(res.error||'Lỗi lưu');
     Object.assign(row, updates);
+    clearDraft('efficiency:'+rowId);
+    clearDraftContext();
     closeOv();
     renderPage('efficiency');
     toast(`✓ Đã cập nhật ${Object.keys(updates).length} trường`,'ok');
@@ -1734,9 +1809,15 @@ function findHeader(headers, ...patterns){
 }
 
 /**
- * Tính danh sách máy kém hiệu quả từ S.efficiency (fallback từ S.master khi thiếu).
+ * Tính danh sách máy kém hiệu quả từ S.efficiency.
  * Điều kiện: Công suất thực tế/ngày < Công suất thiết kế/ngày HOẶC giờ chạy thực tế < giờ chạy thiết kế.
  * Lọc: chỉ tính máy Thuê/Hợp tác/Bán ở trạng thái HĐ bình thường.
+ *
+ * QUAN TRỌNG · Đọc dữ liệu theo ngày:
+ *   Sheet 5 bố trí 2 khối liên tiếp trong dải cột I → BR (index 8 → 69, tổng 62 cột):
+ *     - Khối 1 (I..AM, 31 cột): Công suất phát thực tế theo từng ngày trong tháng
+ *     - Khối 2 (AN..BR, 31 cột): Tổng số giờ chạy thực tế theo từng ngày trong tháng
+ *   Nếu tổng số cột lẻ, chia đôi tự động. Bỏ qua ô rỗng khi vẽ (spanGaps).
  */
 function computeInefficient(masterRows){
   const eff = S.efficiency || {headers:[], rows:[]};
@@ -1746,6 +1827,17 @@ function computeInefficient(masterRows){
   const hHrTt = findHeader(H, 'giờ chạy thực tế','thực tế.*ngày');
   const hKwTk = findHeader(H, 'công suất thiết kế phát','thiết kế.*phát/.?ngày');
   const hKwTt = findHeader(H, 'công suất thực tế phát','thực tế.*phát/.?ngày');
+
+  // Xác định dải cột I..BR theo vị trí (không dựa vào tên header)
+  const START_IDX = 8;   // cột I
+  const END_IDX   = 69;  // cột BR
+  const dailyCols = [];
+  for (let i = START_IDX; i <= Math.min(END_IDX, H.length - 1); i++){
+    dailyCols.push({ header: H[i], idx: i });
+  }
+  const half = Math.ceil(dailyCols.length / 2);
+  const powerCols = dailyCols.slice(0, half);        // Khối 1: công suất/ngày
+  const hoursCols = dailyCols.slice(half);           // Khối 2: giờ chạy/ngày
 
   const eligibleRows = masterRows.filter(r => statusKey(r)==='active' && ['Thuê','Hợp tác','Bán'].includes(typeOf(r)));
 
@@ -1759,15 +1851,22 @@ function computeInefficient(masterRows){
     const designKw = effRow ? num(effRow[hKwTk]) : null;
     const actualKw = effRow ? num(effRow[hKwTt]) : null;
 
-    // Điểm dữ liệu theo ngày: các cột header dạng ngày (số 1..31, "1/12", "01/12", "Ngày 1"...)
-    const dailyHeaders = H.filter(h => /^(ngày\s*)?\d{1,2}(\/\d{1,2})?$/i.test(String(h||'').trim()));
-    const points = effRow ? dailyHeaders.map(h => ({ label: String(h), val: num(effRow[h]) })).filter(p=>p.val!==null) : [];
+    // Đọc điểm dữ liệu theo ngày theo VỊ TRÍ CỘT (không dựa vào tên header)
+    const daily = { power: [], hours: [] };
+    if (effRow){
+      powerCols.forEach((c,i) => daily.power.push({ day: i+1, val: num(effRow[c.header]) }));
+      hoursCols.forEach((c,i) => daily.hours.push({ day: i+1, val: num(effRow[c.header]) }));
+    }
+
+    // Backward compat: points cho code cũ (chỉ dùng khối power)
+    const points = daily.power.filter(p=>p.val!==null).map(p=>({ label:String(p.day), val:p.val }));
 
     const badHr = (designHr!=null && actualHr!=null) ? actualHr < designHr : false;
     const badKw = (designKw!=null && actualKw!=null) ? actualKw < designKw : false;
 
     return {
-      code, row:r, effRow, designHr, actualHr, designKw, actualKw, points, badHr, badKw,
+      code, row:r, effRow, designHr, actualHr, designKw, actualKw,
+      daily, points, badHr, badKw,
       isBad: badHr || badKw
     };
   }).filter(x => x.isBad);
@@ -1823,6 +1922,18 @@ function ineffCardHtml(x, uid){
  *    3. Đường đứt          — trung bình tổng (mean của toàn kỳ)
  *   + 1 đường đứt nét xanh — mức thiết kế (target)
  * ============================================================ */
+/* ============================================================
+ *  BIỂU ĐỒ HIỆU QUẢ VẬN HÀNH · so sánh Thiết kế vs Thực tế
+ *   Trục X : ngày trong tháng (1..N, lấy từ số cột thực tế)
+ *   Trục Y trái (xanh lá) : Công suất phát (kW)
+ *   Trục Y phải (đỏ)      : Số giờ chạy (h)
+ *
+ *   4 series bắt buộc:
+ *     1. Công suất thiết kế phát/ngày   — ĐƯỜNG NGANG (kW, y trái, dashed đậm)
+ *     2. Công suất thực tế phát/ngày    — ĐƯỜNG DỮ LIỆU theo ngày (kW, y trái, liền, có điểm)
+ *     3. Tổng số giờ chạy/ngày (TK)     — ĐƯỜNG NGANG (h, y phải, dashed đậm)
+ *     4. Tổng số giờ chạy thực tế/ngày  — ĐƯỜNG DỮ LIỆU theo ngày (h, y phải, liền, có điểm)
+ * ============================================================ */
 function movingAvg(arr, win=3){
   return arr.map((_,i)=>{
     const s = Math.max(0, i - Math.floor(win/2));
@@ -1837,115 +1948,131 @@ function drawEfficiencyChart(canvasId, x){
   const el = $(canvasId); if (!el) return;
   if (el._chart) el._chart.destroy();
 
-  // Điểm dữ liệu công suất theo ngày (đã tính trong computeInefficient)
-  const powerLabels = x.points.map(p => p.label);
-  const powerVals   = x.points.map(p => Number(p.val));
+  // Chuẩn hóa 2 khối dữ liệu theo ngày (đã lấy bằng vị trí cột trong computeInefficient)
+  const powerDaily = (x.daily && x.daily.power) ? x.daily.power : [];
+  const hoursDaily = (x.daily && x.daily.hours) ? x.daily.hours : [];
 
-  // Nếu có Sheet 5, thử lấy thêm giờ chạy theo ngày (cùng label)
-  // Nếu không có, đường phải Y2 sẽ mờ đi
-  const hoursVals = powerVals.map(() => null);  // placeholder
-  // (Có thể mở rộng nếu Sheet 5 có cột "giờ chạy theo ngày")
+  // Số ngày làm trục X — lấy độ dài dài hơn giữa 2 khối, tối đa 31
+  const nDays = Math.min(31, Math.max(powerDaily.length, hoursDaily.length, 0));
+  const labels = Array.from({length:nDays}, (_,i)=>String(i+1));
 
-  const meanPower = powerVals.filter(v=>!isNaN(v)).reduce((a,b)=>a+b,0) / Math.max(1, powerVals.filter(v=>!isNaN(v)).length) || (x.actualKw||0);
-  const powerAvg = movingAvg(powerVals, 3);
+  const powerVals = labels.map((_,i)=> powerDaily[i]?.val ?? null);
+  const hoursVals = labels.map((_,i)=> hoursDaily[i]?.val ?? null);
 
-  const designPower = x.designKw ?? null;
+  const designKw = (x.designKw!=null && !isNaN(x.designKw)) ? x.designKw : null;
+  const designHr = (x.designHr!=null && !isNaN(x.designHr)) ? x.designHr : null;
 
-  const datasets = [
-    // 1) Chấm nhạt — Đo thực tế Công suất
-    {
-      label: 'Đo thực tế (Công suất)',
-      type: 'scatter',
-      data: powerLabels.map((lbl,i) => ({ x:lbl, y:powerVals[i] })),
-      backgroundColor: 'rgba(134, 239, 172, 0.55)',
-      borderColor: 'rgba(134, 239, 172, 0.85)',
-      pointRadius: 4,
-      pointHoverRadius: 6,
-      yAxisID: 'y',
-      order: 3
-    },
-    // 2) Đường trung bình trượt
-    {
-      label: 'Đường trung bình (Công suất)',
-      type: 'line',
-      data: powerAvg,
-      borderColor: '#166534',
-      backgroundColor: 'transparent',
-      borderWidth: 2.5,
-      pointRadius: 0,
-      tension: 0.35,
-      yAxisID: 'y',
-      order: 2,
-      spanGaps: true
-    },
-    // 3) Đường đứt trung bình tổng
-    {
-      label: `Trung bình tổng (${meanPower.toFixed(1)} kW)`,
-      type: 'line',
-      data: powerLabels.map(()=>meanPower),
-      borderColor: '#166534',
-      backgroundColor: 'transparent',
-      borderWidth: 1.5,
-      borderDash: [6, 4],
-      pointRadius: 0,
-      yAxisID: 'y',
-      order: 4
-    }
-  ];
-  if (designPower != null && !isNaN(designPower)){
+  const hasPower = powerVals.some(v => v!=null);
+  const hasHours = hoursVals.some(v => v!=null);
+
+  const datasets = [];
+
+  // (1) Công suất thiết kế — đường ngang
+  if (designKw != null){
     datasets.push({
-      label: `Thiết kế (${designPower.toFixed(1)} kW)`,
+      label: `Công suất thiết kế phát/ngày (${designKw.toFixed(1)} kW)`,
       type: 'line',
-      data: powerLabels.map(()=>designPower),
+      data: labels.map(()=>designKw),
       borderColor: '#0d6e3f',
       backgroundColor: 'transparent',
       borderWidth: 2,
-      borderDash: [2, 3],
+      borderDash: [8, 4],
       pointRadius: 0,
       yAxisID: 'y',
-      order: 5
+      order: 4
+    });
+  }
+  // (2) Công suất thực tế — đường dữ liệu theo ngày
+  if (hasPower){
+    datasets.push({
+      label: 'Công suất thực tế phát/ngày (kW)',
+      type: 'line',
+      data: powerVals,
+      borderColor: '#16a05e',
+      backgroundColor: 'rgba(22,160,94,0.12)',
+      borderWidth: 2.5,
+      pointRadius: 3,
+      pointHoverRadius: 6,
+      pointBackgroundColor: '#16a05e',
+      tension: 0.3,
+      yAxisID: 'y',
+      spanGaps: true,
+      fill: false,
+      order: 2
+    });
+  }
+  // (3) Giờ chạy thiết kế — đường ngang
+  if (designHr != null){
+    datasets.push({
+      label: `Tổng số giờ chạy/ngày (TK) (${designHr.toFixed(1)} h)`,
+      type: 'line',
+      data: labels.map(()=>designHr),
+      borderColor: '#991b1b',
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      borderDash: [8, 4],
+      pointRadius: 0,
+      yAxisID: 'y2',
+      order: 3
+    });
+  }
+  // (4) Giờ chạy thực tế — đường dữ liệu theo ngày
+  if (hasHours){
+    datasets.push({
+      label: 'Tổng số giờ chạy thực tế/ngày (h)',
+      type: 'line',
+      data: hoursVals,
+      borderColor: '#dc2626',
+      backgroundColor: 'rgba(220,38,38,0.12)',
+      borderWidth: 2.5,
+      pointRadius: 3,
+      pointHoverRadius: 6,
+      pointBackgroundColor: '#dc2626',
+      tension: 0.3,
+      yAxisID: 'y2',
+      spanGaps: true,
+      fill: false,
+      order: 1
     });
   }
 
-  // Nếu có giờ chạy — thêm dataset đỏ
-  if (hoursVals.some(v => v!=null && !isNaN(v))){
-    const hoursAvg = movingAvg(hoursVals, 3);
-    const meanHours = hoursVals.filter(v=>!isNaN(v)&&v!=null).reduce((a,b)=>a+b,0) / Math.max(1, hoursVals.filter(v=>!isNaN(v)&&v!=null).length);
-    datasets.push(
-      { label:'Đo thực tế (Giờ chạy)', type:'scatter', data: powerLabels.map((l,i)=>({x:l,y:hoursVals[i]})), backgroundColor:'rgba(252, 165, 165, 0.55)', borderColor:'rgba(252, 165, 165, 0.85)', pointRadius:4, pointHoverRadius:6, yAxisID:'y2', order:3 },
-      { label:'Đường trung bình (Giờ chạy)', type:'line', data:hoursAvg, borderColor:'#991b1b', backgroundColor:'transparent', borderWidth:2.5, pointRadius:0, tension:0.35, yAxisID:'y2', order:2, spanGaps:true },
-      { label:`Trung bình tổng (${meanHours.toFixed(1)} h)`, type:'line', data:powerLabels.map(()=>meanHours), borderColor:'#991b1b', backgroundColor:'transparent', borderWidth:1.5, borderDash:[6,4], pointRadius:0, yAxisID:'y2', order:4 }
-    );
+  // Nếu không có dữ liệu nào — vẽ khung trống báo hiệu
+  if (!datasets.length){
+    el._chart = new Chart(el, {
+      type:'line',
+      data:{ labels:['Không có dữ liệu'], datasets:[{ data:[0], borderColor:'#e2e8f0' }]},
+      options:{ maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{enabled:false}, title:{display:true, text:`${x.code} · Chưa có dữ liệu theo ngày (Sheet 5 cột I..BR)`, color:'#64748b'} }, scales:{x:{display:false}, y:{display:false}} }
+    });
+    return;
   }
 
   const scales = {
     x: {
       type: 'category',
-      labels: powerLabels,
-      ticks: { color:'#64748b', font:{family:'Be Vietnam Pro',size:9}, maxRotation:35, minRotation:0 },
+      ticks: { color:'#64748b', font:{family:'Be Vietnam Pro',size:9}, autoSkip:false },
       grid: { color:'#f1f5f9' },
-      title: { display:true, text:'Thời gian (ngày trong tháng)', color:'#64748b', font:{family:'Be Vietnam Pro',size:10} }
+      title: { display:true, text:'Ngày trong tháng', color:'#64748b', font:{family:'Be Vietnam Pro',size:10} }
     },
     y: {
       position: 'left',
+      display: hasPower || designKw!=null,
       ticks: { color:'#166534', font:{family:'Be Vietnam Pro',size:9} },
       grid: { color:'#f1f5f9' },
       title: { display:true, text:'Công suất phát (kW)', color:'#166534', font:{family:'Be Vietnam Pro',size:10,weight:'600'} },
       beginAtZero: true
-    }
-  };
-  if (hoursVals.some(v => v!=null && !isNaN(v))){
-    scales.y2 = {
+    },
+    y2: {
       position: 'right',
+      display: hasHours || designHr!=null,
       ticks: { color:'#991b1b', font:{family:'Be Vietnam Pro',size:9} },
       grid: { drawOnChartArea:false },
-      title: { display:true, text:'Giờ chạy (h)', color:'#991b1b', font:{family:'Be Vietnam Pro',size:10,weight:'600'} },
+      title: { display:true, text:'Số giờ chạy (h)', color:'#991b1b', font:{family:'Be Vietnam Pro',size:10,weight:'600'} },
       beginAtZero: true
-    };
-  }
+    }
+  };
 
   el._chart = new Chart(el, {
-    data: { labels: powerLabels, datasets },
+    data: { labels, datasets },
     options: {
       maintainAspectRatio: false,
       responsive: true,
@@ -1953,7 +2080,7 @@ function drawEfficiencyChart(canvasId, x){
       plugins: {
         title: {
           display: true,
-          text: `${x.code} · Đối chiếu độ dao động: Điểm đo thực tế và Đường trung bình theo thời gian`,
+          text: `${x.code} · Thiết kế vs Thực tế theo từng ngày trong tháng`,
           color: '#0d6e3f',
           font: { family:'Be Vietnam Pro', size:11, weight:'700' },
           padding: { top:4, bottom:8 }
@@ -1963,16 +2090,19 @@ function drawEfficiencyChart(canvasId, x){
           align: 'start',
           labels: {
             color:'#334155',
-            font:{family:'Be Vietnam Pro', size:9.5},
-            boxWidth: 24,
-            padding: 6,
+            font:{family:'Be Vietnam Pro', size:10},
+            boxWidth: 20,
+            padding: 8,
             usePointStyle: false
           }
         },
         tooltip: {
           backgroundColor: '#083d24',
           titleFont: { family:'Be Vietnam Pro', size:11, weight:'700' },
-          bodyFont:  { family:'Be Vietnam Pro', size:11 }
+          bodyFont:  { family:'Be Vietnam Pro', size:11 },
+          callbacks: {
+            title: (items) => `Ngày ${items[0]?.label ?? '—'}`,
+          }
         }
       },
       scales
@@ -2057,9 +2187,17 @@ function statusBadge(s){
 }
 
 function openOv(html){ $('mdl').innerHTML = html; $('ov').classList.add('show'); document.body.style.overflow='hidden'; }
-function closeOv(){ $('ov').classList.remove('show'); document.body.style.overflow=''; }
+function closeOv(){
+  captureDraft();               // lưu bộ nhớ nếu chưa kịp nhấn "Lưu"
+  clearDraftContext();
+  $('ov').classList.remove('show');
+  document.body.style.overflow='';
+}
 document.addEventListener('DOMContentLoaded', ()=>{
   $('ov').addEventListener('click', e => { if (e.target.id==='ov') closeOv(); });
+  // Chặn F5/reload không mất draft — capture ngay trước khi trang unload
+  window.addEventListener('beforeunload', ()=>{ captureDraft(); });
+  document.addEventListener('keydown', e => { if (e.key==='Escape' && $('ov').classList.contains('show')) closeOv(); });
 });
 
 function toggleSB(){ $('mainSidebar').classList.toggle('open'); $('mobOverlay').classList.toggle('show'); }
@@ -2094,14 +2232,67 @@ function doLogin(){
   $('tAv').textContent = u.charAt(0).toUpperCase();
   $('authWrap').style.display = 'none';
   $('app').style.display = 'flex';
-  reloadAll();
-  startAutoRefresh();          // 20s tự đồng bộ ngầm
+  loadDrafts();                 // khôi phục bản nháp chưa lưu (nếu có)
+  reloadAll();                  // auto-upload 2 chiều khi đăng nhập
 }
 function doLogout(){
-  stopAutoRefresh();
   $('app').style.display = 'none';
   $('authWrap').style.display = 'flex';
 }
+
+/* ============================================================
+ *  DRAFT PERSISTENCE — LƯU BỘ NHỚ KHI RỜI FORM CHƯA KỊP LƯU
+ *  - Mỗi modal (master/tracking/efficiency) có 1 draft key riêng
+ *  - Khi mở modal: khôi phục giá trị đã nhập dở
+ *  - Khi đóng modal (✕/click ngoài/Esc) mà chưa lưu: capture toàn bộ input → localStorage
+ *  - Khi lưu thành công: xóa draft
+ *  - Đăng nhập lại vẫn còn draft
+ * ============================================================ */
+const DRAFT_KEY = 'egreen_drafts_v1';
+let _currentDraftKey = null;   // key của modal đang mở
+let _currentDraftFields = [];  // danh sách id input trong modal đang mở
+
+function loadDrafts(){
+  try { S.drafts = JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}'); }
+  catch(e){ S.drafts = {}; }
+}
+function saveDrafts(){
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(S.drafts||{})); } catch(e){}
+}
+function setDraftContext(key, fieldIds){
+  _currentDraftKey = key;
+  _currentDraftFields = fieldIds || [];
+  // Khôi phục nếu có
+  if (!S.drafts) loadDrafts();
+  const d = S.drafts[key];
+  if (d){
+    setTimeout(()=>{
+      let restored = 0;
+      Object.entries(d).forEach(([id,v])=>{
+        const el = document.getElementById(id);
+        if (el && el.value !== v){ el.value = v; restored++; }
+      });
+      if (restored) toast(`↺ Đã khôi phục ${restored} trường chưa lưu`, 'info');
+    }, 30);
+  }
+}
+function captureDraft(){
+  if (!_currentDraftKey || !_currentDraftFields.length) return;
+  const data = {};
+  let hasVal = false;
+  _currentDraftFields.forEach(id => {
+    const el = document.getElementById(id);
+    if (el && (el.value||'').toString().trim() !== ''){ data[id] = el.value; hasVal = true; }
+  });
+  if (!S.drafts) S.drafts = {};
+  if (hasVal){ S.drafts[_currentDraftKey] = data; saveDrafts(); }
+  else if (S.drafts[_currentDraftKey]){ delete S.drafts[_currentDraftKey]; saveDrafts(); }
+}
+function clearDraft(key){
+  if (!S.drafts) return;
+  if (S.drafts[key]){ delete S.drafts[key]; saveDrafts(); }
+}
+function clearDraftContext(){ _currentDraftKey = null; _currentDraftFields = []; }
 </script>
 </body>
 </html>
