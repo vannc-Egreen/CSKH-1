@@ -38,6 +38,12 @@ body{background:var(--bg);color:var(--s);min-height:100vh;font-size:14px;overflo
 .uname{font-size:11px;font-weight:600}
 .tbtn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;padding:5px 11px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--font)}
 .tbtn:hover{background:rgba(255,255,255,.22)}
+.tbtn:disabled{opacity:.55;cursor:default}
+.sgddown{position:relative;display:inline-block}
+.sgddown-menu{position:absolute;top:calc(100% + 6px);right:0;background:#fff;border-radius:10px;box-shadow:var(--shl);min-width:230px;overflow:hidden;z-index:300}
+.sgddown-menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:9px 12px;background:none;border:none;font-size:12px;font-weight:600;color:var(--s2);cursor:pointer;font-family:var(--font)}
+.sgddown-menu button:hover{background:var(--gp);color:var(--g)}
+.sgddown-menu button:disabled{opacity:.5;cursor:default}
 .sdot{width:7px;height:7px;border-radius:50%;flex-shrink:0}.sdot.on{background:#4ade80}.sdot.off{background:#f87171}
 .sspin{display:none;width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0}
 .sspin.on{display:inline-block}
@@ -233,6 +239,7 @@ td{padding:9px 12px;vertical-align:middle}
         <div class="uav" id="tAv">A</div>
         <div class="uname" id="tName">Admin</div>
       </div>
+      <span id="smartgenMenu"></span>
       <button class="tbtn" onclick="reloadAll()" title="Đồng bộ 2 chiều thủ công với Google Sheet">↻ Đồng bộ</button>
       <button class="tbtn" onclick="doLogout()">Đăng xuất</button>
     </div>
@@ -536,6 +543,93 @@ function setStatus(loading, msg, err){
   dot.classList.remove('on','off');
   dot.classList.add(err?'off':(loading?'off':'on'));
   $('sLbl').textContent = msg;
+}
+
+/* ============================================================
+ *  TÍCH HỢP SMARTGEN — bấm nút trên web để Apps Script tự lấy dữ
+ *  liệu từ smartgencloud.com, khỏi phải vào Apps Script bấm Run tay.
+ *
+ *  KIẾN TRÚC:
+ *   Web (nút bấm) → apiPost({action:'smartgenRun', task:<id>})
+ *     → Apps Script doPost dispatcher → handleSmartGenAction_(task)
+ *     → chạy đúng hàm sync tương ứng trong SmartGenSync.gs → trả JSON
+ *
+ *  MỞ RỘNG SAU NÀY (thêm nguồn dữ liệu Smartgen mới / tính năng phân tích):
+ *   1. Thêm 1 phần tử vào SMARTGEN_TASKS bên dưới — id phải khớp với
+ *      1 case mới trong hàm handleSmartGenAction_() ở SmartGenSync.gs.
+ *   2. Viết hàm xử lý mới trong SmartGenSync.gs (theo mẫu syncSmartGenDaily).
+ *   3. Không cần sửa HTML/CSS — nút hoặc menu thả xuống tự sinh theo
+ *      danh sách SMARTGEN_TASKS (1 task → nút đơn, ≥2 task → dropdown).
+ *   4. Nếu task mới cần tham số riêng (VD chọn khoảng ngày), truyền qua
+ *      runSmartGenTask(id, extraParams) — extraParams sẽ được gộp vào
+ *      payload gửi lên Apps Script.
+ * ============================================================ */
+const SMARTGEN_TASKS = [
+  { id: 'syncSmartGenDaily', label: 'Đồng bộ Smartgen', icon: '⚡',
+    hint: 'Lấy Số giờ máy chạy (Sheet 2) + điện phát ra/giờ chạy theo ngày (Sheet 5) từ Smartgen Cloud' },
+  // Thêm task mới ở đây khi phát triển tiếp, ví dụ:
+  // { id: 'syncSmartGenAlarms', label: 'Đồng bộ cảnh báo máy', icon: '🚨',
+  //   hint: 'Lấy danh sách cảnh báo/lỗi từ Smartgen Cloud' },
+];
+
+let _smartgenRunning = false;
+
+function renderSmartGenMenu(){
+  const el = $('smartgenMenu');
+  if (!el || !SMARTGEN_TASKS.length) return;
+
+  if (SMARTGEN_TASKS.length === 1){
+    const t = SMARTGEN_TASKS[0];
+    el.innerHTML = `<button class="tbtn" id="btnSmartGen" ${_smartgenRunning?'disabled':''}
+      onclick="runSmartGenTask('${t.id}')" title="${esc(t.hint)}">
+      ${_smartgenRunning ? '⏳ Đang lấy dữ liệu…' : `${t.icon} ${esc(t.label)}`}</button>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="sgddown">
+      <button class="tbtn" ${_smartgenRunning?'disabled':''} onclick="toggleSmartGenDropdown()">
+        ${_smartgenRunning ? '⏳ Đang lấy dữ liệu…' : '⚡ Smartgen ▾'}</button>
+      <div class="sgddown-menu" id="sgddownMenu" style="display:none">
+        ${SMARTGEN_TASKS.map(t => `<button ${_smartgenRunning?'disabled':''}
+          onclick="runSmartGenTask('${t.id}')" title="${esc(t.hint)}">${t.icon} ${esc(t.label)}</button>`).join('')}
+      </div>
+    </div>`;
+}
+function toggleSmartGenDropdown(){
+  const m = $('sgddownMenu');
+  if (m) m.style.display = (m.style.display === 'none') ? 'block' : 'none';
+}
+document.addEventListener('click', (e) => {
+  const dd = document.querySelector('.sgddown');
+  const menu = $('sgddownMenu');
+  if (dd && menu && !dd.contains(e.target)) menu.style.display = 'none';
+});
+
+async function runSmartGenTask(taskId, extraParams){
+  if (_smartgenRunning){ toast('Đang có 1 tác vụ Smartgen chạy dở, đợi xong đã', 'err'); return; }
+  const task = SMARTGEN_TASKS.find(t => t.id === taskId);
+
+  _smartgenRunning = true;
+  renderSmartGenMenu();
+  setStatus(true, `Đang đồng bộ ${task ? task.label : taskId} từ Smartgen… có thể mất 1-2 phút`);
+
+  try {
+    const res = await apiPost(Object.assign({ action: 'smartgenRun', task: taskId }, extraParams || {}));
+    if (!res.ok) throw new Error(res.error || 'Lỗi không xác định từ Apps Script');
+    const r = res.result || {};
+    const nOk = Array.isArray(r.ok) ? r.ok.length : (r.ok ?? '—');
+    const nWritten = Array.isArray(r.writtenSheet2) ? r.writtenSheet2.length : '—';
+    const nErr = Array.isArray(r.errors) ? r.errors.length : 0;
+    toast(`✓ Smartgen xong · ${nOk} máy · ghi Sheet2: ${nWritten} · lỗi: ${nErr}`, nErr ? 'err' : 'ok');
+    await reloadAll();  // tải lại Sheet để web hiện ngay số liệu mới
+  } catch(e){
+    toast('Lỗi đồng bộ Smartgen: ' + e.message, 'err');
+    setStatus(false, '❌ ' + e.message, true);
+  } finally {
+    _smartgenRunning = false;
+    renderSmartGenMenu();
+  }
 }
 
 /* ============================================================
@@ -2233,6 +2327,7 @@ function doLogin(){
   $('authWrap').style.display = 'none';
   $('app').style.display = 'flex';
   loadDrafts();                 // khôi phục bản nháp chưa lưu (nếu có)
+  renderSmartGenMenu();          // sinh nút/menu Smartgen ở topbar
   reloadAll();                  // auto-upload 2 chiều khi đăng nhập
 }
 function doLogout(){
