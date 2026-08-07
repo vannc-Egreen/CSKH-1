@@ -70,7 +70,7 @@ body{background:var(--bg);color:var(--s);min-height:100vh;font-size:14px;overflo
 .ch h3{font-size:12px;font-weight:700;color:var(--s2)}
 .cb{padding:14px 16px}
 
-.krow{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;margin-bottom:11px}
+.krow{display:grid;grid-template-columns:repeat(6,1fr);gap:11px;margin-bottom:11px}
 .krow.r1{grid-template-columns:repeat(4,1fr)}
 .kcard{background:var(--card);border-radius:var(--rl);padding:14px 16px;box-shadow:var(--sh);border-left:4px solid var(--g);cursor:pointer;transition:transform .12s ease, box-shadow .12s ease;position:relative}
 .kcard:hover{transform:translateY(-2px);box-shadow:var(--shl)}
@@ -186,7 +186,7 @@ td{padding:9px 12px;vertical-align:middle}
 .empty{padding:40px 16px;text-align:center;color:var(--mu);font-size:12px}
 .empty .ei{font-size:36px;margin-bottom:8px;opacity:.5}
 
-@media(max-width:900px){.cg2{grid-template-columns:1fr}.krow,.krow.r1{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:900px){.cg2{grid-template-columns:1fr}.krow,.krow.r1{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:768px){
   .krow,.krow.r1{grid-template-columns:1fr 1fr}
   .sidebar{position:fixed;top:0;left:0;bottom:0;width:250px;z-index:500;transform:translateX(-100%);transition:transform .25s;height:100vh;box-shadow:4px 0 24px rgba(0,0,0,.18)}
@@ -699,21 +699,24 @@ function viewDash(){
     const codesInRegion = new Set(m.filter(r=>regionOf(r)===region).map(r=>String(r._byLetter.B)));
     return S.alerts.alerts.filter(a => a.type===type && codesInRegion.has(String(a.maCode))).length;
   };
-  // Số máy kém hiệu quả theo miền
+  // Số máy kém hiệu quả / không hiệu quả theo miền (2 nhóm loại trừ nhau — xem computeInefficient)
   const ineff = computeInefficient(m);
-  const ineffByRegion = region => ineff.filter(x => regionOf(x.row)===region).length;
+  const badByRegion = region => ineff.filter(x => regionOf(x.row)===region && x.isBad).length;
+  const worstByRegion = region => ineff.filter(x => regionOf(x.row)===region && x.isIneffective).length;
 
   const bN = {
     overdue: alertsByRegion('Miền Bắc','overdue'),
     dueSoon: alertsByRegion('Miền Bắc','due-soon'),
     oilHigh: alertsByRegion('Miền Bắc','oil-high'),
-    ineff:   ineffByRegion('Miền Bắc')
+    worst:   worstByRegion('Miền Bắc'),
+    bad:     badByRegion('Miền Bắc')
   };
   const bS = {
     overdue: alertsByRegion('Miền Nam','overdue'),
     dueSoon: alertsByRegion('Miền Nam','due-soon'),
     oilHigh: alertsByRegion('Miền Nam','oil-high'),
-    ineff:   ineffByRegion('Miền Nam')
+    worst:   worstByRegion('Miền Nam'),
+    bad:     badByRegion('Miền Nam')
   };
 
   const kpiRegionRow = (region, cls, data) => `
@@ -740,11 +743,17 @@ function viewDash(){
       <div class="kval">${data.oilHigh}</div>
       <div class="ksub">vượt định mức l/h</div>
     </div>
+    <div class="kcard rd" onclick="navEfficiencyWith('${region}')">
+      <div class="karr">↗</div>
+      <div class="klbl">Không hiệu quả</div>
+      <div class="kval">${data.worst}</div>
+      <div class="ksub">dưới ${INEFFECTIVE_THRESHOLD_PCT}% thiết kế</div>
+    </div>
     <div class="kcard tl" onclick="navEfficiencyWith('${region}')">
       <div class="karr">↗</div>
       <div class="klbl">Kém hiệu quả</div>
-      <div class="kval">${data.ineff}</div>
-      <div class="ksub">thấp hơn thiết kế</div>
+      <div class="kval">${data.bad}</div>
+      <div class="ksub">dưới ${BAD_THRESHOLD_PCT}% thiết kế</div>
     </div>
   `;
 
@@ -1248,7 +1257,7 @@ function chartBarClickable(id, labels, values, color, onDayClick, opts){
     options:{
       maintainAspectRatio:false,
       plugins:{
-        legend:{ display: mean>0 || design>0, position:'bottom', labels:{ color:'#475569', font:{family:'Be Vietnam Pro', size:9}, boxWidth:14 } },
+        legend:{ display: mean>0 || design>0, position:'bottom', labels:{ color:'#475569', font:{family:'Be Vietnam Pro', size:9}, boxWidth:14 }, ...legendHoverIsolate_() },
         tooltip:{ backgroundColor:'#083d24' }
       },
       scales:{
@@ -2339,6 +2348,49 @@ function findHeader(headers, ...patterns){
   return headers.find(h => patterns.some(p => new RegExp(p,'i').test(String(h||''))));
 }
 
+/* Làm nhạt 1 màu (hex hoặc rgba) về alpha cho trước — dùng để làm mờ các đường KHÔNG được
+ * rê chuột vào chú thích (legend), giúp tách đường đang cần xem ra khỏi các đường bị đè lên nhau
+ * khi 2 chỉ số biến động giống hệt nhau (VD giờ chạy và công suất cùng tăng/giảm theo ngày). */
+function dimColor_(color, alpha){
+  if (!color || typeof color !== 'string') return color;
+  if (color === 'transparent') return color;
+  if (color[0] === '#'){
+    let hex = color.slice(1);
+    if (hex.length === 3) hex = hex.split('').map(c=>c+c).join('');
+    const r = parseInt(hex.substr(0,2),16), g = parseInt(hex.substr(2,2),16), b = parseInt(hex.substr(4,2),16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  if (color.startsWith('rgba(')) return color.replace(/[\d.]+\)$/, alpha+')');
+  if (color.startsWith('rgb(')) return color.replace('rgb(','rgba(').replace(')', `,${alpha})`);
+  return color;
+}
+/* Gắn hiệu ứng rê chuột vào chú thích → làm mờ các đường/cột khác, làm nổi bật đường đang xem.
+ * Rời chuột ra → trả lại màu gốc. Gọi trong khối `plugins.legend` của config Chart.js. Giải quyết
+ * vấn đề 2 đường biểu đồ đi trùng nhau (đè lên nhau) khiến khó bấm/xem đường bị che phía dưới. */
+function legendHoverIsolate_(){
+  return {
+    onHover(evt, item, legend){
+      const chart = legend.chart;
+      chart.data.datasets.forEach((ds, i) => {
+        if (ds._origBorder === undefined) ds._origBorder = ds.borderColor;
+        if (ds._origBg === undefined) ds._origBg = ds.backgroundColor;
+        const dim = i !== item.datasetIndex;
+        ds.borderColor = dim ? dimColor_(ds._origBorder, 0.12) : ds._origBorder;
+        ds.backgroundColor = dim ? dimColor_(ds._origBg, 0.12) : ds._origBg;
+      });
+      chart.update('none');
+    },
+    onLeave(evt, item, legend){
+      const chart = legend.chart;
+      chart.data.datasets.forEach(ds => {
+        if (ds._origBorder !== undefined) ds.borderColor = ds._origBorder;
+        if (ds._origBg !== undefined) ds.backgroundColor = ds._origBg;
+      });
+      chart.update('none');
+    }
+  };
+}
+
 /**
  * Sheet 5 bố trí 2 khối liên tiếp trong dải cột I → BR (index 8 → 69, tổng 62 cột):
  *   - Khối 1 (I..AM, 31 cột): Công suất phát thực tế theo từng ngày trong tháng
@@ -2360,7 +2412,10 @@ function getDailyColSplit_(headers){
   };
 }
 function numOrNull_(v){
-  const n = Number(String(v ?? '').replace(/,/g, '.'));
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (s === '') return null;   // ô trống = CHƯA CÓ dữ liệu, không phải 0 (Number('')===0 nên phải chặn riêng)
+  const n = Number(s.replace(/,/g, '.'));
   return isNaN(n) ? null : n;
 }
 
@@ -2379,25 +2434,23 @@ function getDailyColSplitForMonth_(headers, daysInMonth){
   return { powerCols: powerCols.slice(0, daysInMonth), hoursCols: hoursCols.slice(0, daysInMonth) };
 }
 
-/* Trung bình N điểm dữ liệu GẦN NHẤT có giá trị (bỏ qua ô trống), tính từ cuối mảng lùi lại.
- * Trả {avg, n} — n = số điểm thực sự dùng được (có thể < N nếu thiếu dữ liệu). */
-function recentAvg_(arr, n){
-  const vals = [];
-  for (let i = arr.length - 1; i >= 0 && vals.length < n; i--){
-    if (arr[i] != null) vals.push(arr[i]);
-  }
-  if (!vals.length) return { avg: null, n: 0 };
-  return { avg: vals.reduce((a,b)=>a+b,0) / vals.length, n: vals.length };
-}
-/* N điểm dữ liệu GẦN NHẤT có giá trị (không gộp trung bình, giữ riêng từng ngày để đánh giá
- * theo TỪNG ngày — dùng cho tiêu chí "chỉ cần 1 trong N ngày dưới ngưỡng"). Trả về theo thứ
- * tự thời gian tăng dần (ngày cũ → ngày mới). */
-function recentDays_(arr, n){
+/* CỬA SỔ CỐ ĐỊNH neo theo ngày hiện tại thực (không dò lùi từ cuối mảng) — tránh dính dữ liệu
+ * tháng trước còn sót lại ở các cột chưa dùng (đặc biệt khi tháng hiện tại cũng đủ 31 ngày).
+ * Trả về các điểm {day, val} trong khoảng [ngày hiện tại - n + 1 .. ngày hiện tại] (cắt ở ngày 1),
+ * CHỈ lấy đúng các ngày đó — ô nào trống thì bỏ qua, không lùi thêm để bù. */
+function recentWindowDays_(arr, anchorDay, n){
+  const startDay = Math.max(1, anchorDay - n + 1);
   const out = [];
-  for (let i = arr.length - 1; i >= 0 && out.length < n; i--){
-    if (arr[i] != null) out.push({ day: i+1, val: arr[i] });
+  for (let day = startDay; day <= anchorDay; day++){
+    const v = arr[day-1];
+    if (v != null) out.push({ day, val: v });
   }
-  return out.reverse();
+  return out;
+}
+function recentWindowAvg_(arr, anchorDay, n){
+  const days = recentWindowDays_(arr, anchorDay, n);
+  if (!days.length) return { avg: null, n: 0 };
+  return { avg: days.reduce((a,d)=>a+d.val,0) / days.length, n: days.length };
 }
 const RECENT_DAYS_FOR_EVAL = 3;     // đánh giá hiệu quả chỉ dựa vào N ngày gần nhất, không phải cả tháng
 const BAD_THRESHOLD_PCT = 80;       // 1 trong N ngày đạt < 80% thiết kế → "kém hiệu quả"
@@ -2441,26 +2494,32 @@ function computeInefficient(masterRows){
     const monthActualKw = effRow ? num(effRow[hKwTt]) : null;
 
     // Đọc điểm dữ liệu theo ngày theo VỊ TRÍ CỘT, đã cắt đúng số ngày thực tế của tháng
+    // (kèm tên cột header + rowId + có sửa trực tiếp được không, để biểu đồ cho phép bấm-sửa từng điểm)
+    const uniqueHeader = h => H.indexOf(h) === H.lastIndexOf(h);
     const daily = { power: [], hours: [] };
     const powerArr = [], hoursArr = [];
     if (effRow){
-      powerCols.forEach((c,i) => { const v = num(effRow[c.header]); daily.power.push({ day: i+1, val: v }); powerArr.push(v); });
-      hoursCols.forEach((c,i) => { const v = num(effRow[c.header]); daily.hours.push({ day: i+1, val: v }); hoursArr.push(v); });
+      powerCols.forEach((c,i) => { const v = num(effRow[c.header]); daily.power.push({ day: i+1, val: v, header: c.header, rowId: effRow._row, editable: uniqueHeader(c.header) }); powerArr.push(v); });
+      hoursCols.forEach((c,i) => { const v = num(effRow[c.header]); daily.hours.push({ day: i+1, val: v, header: c.header, rowId: effRow._row, editable: uniqueHeader(c.header) }); hoursArr.push(v); });
     }
 
     // Backward compat: points cho code cũ (chỉ dùng khối power)
     const points = daily.power.filter(p=>p.val!==null).map(p=>({ label:String(p.day), val:p.val }));
 
-    // TB {RECENT_DAYS_FOR_EVAL} ngày gần nhất — vẫn hiển thị trên card để tham khảo
-    const recentKw = recentAvg_(powerArr, RECENT_DAYS_FOR_EVAL);
-    const recentHr = recentAvg_(hoursArr, RECENT_DAYS_FOR_EVAL);
+    // TB {RECENT_DAYS_FOR_EVAL} ngày gần nhất = {RECENT_DAYS_FOR_EVAL} ngày liền TRƯỚC hôm nay
+    // (không tính hôm nay vì dữ liệu hôm nay thường chưa chốt xong) — VD hôm nay 7/8 → lấy ngày 4,5,6.
+    // Cửa sổ cố định neo theo ngày thực tế, KHÔNG dò lùi từ cuối mảng — tránh dính dữ liệu tháng
+    // trước còn sót ở các cột ngày 29/30/31 chưa dùng tới trong tháng này.
+    const anchorDay = Math.max(1, Math.min(new Date().getDate() - 1, daysInMonth));
+    const recentKw = recentWindowAvg_(powerArr, anchorDay, RECENT_DAYS_FOR_EVAL);
+    const recentHr = recentWindowAvg_(hoursArr, anchorDay, RECENT_DAYS_FOR_EVAL);
     const actualHr = recentHr.avg;
     const actualKw = recentKw.avg;
 
     // ĐÁNH GIÁ THEO TỪNG NGÀY — chỉ cần 1 ngày dưới ngưỡng là bị liệt vào danh sách
     const pctOf = (val, design) => (val!=null && design!=null && design>0) ? (val/design*100) : null;
-    const recentHrDays = recentDays_(hoursArr, RECENT_DAYS_FOR_EVAL).map(d => ({ ...d, pct: pctOf(d.val, designHr) }));
-    const recentKwDays = recentDays_(powerArr, RECENT_DAYS_FOR_EVAL).map(d => ({ ...d, pct: pctOf(d.val, designKw) }));
+    const recentHrDays = recentWindowDays_(hoursArr, anchorDay, RECENT_DAYS_FOR_EVAL).map(d => ({ ...d, pct: pctOf(d.val, designHr) }));
+    const recentKwDays = recentWindowDays_(powerArr, anchorDay, RECENT_DAYS_FOR_EVAL).map(d => ({ ...d, pct: pctOf(d.val, designKw) }));
     const allDayPcts = recentHrDays.concat(recentKwDays).filter(d => d.pct != null);
 
     const worstDays = allDayPcts.filter(d => d.pct < INEFFECTIVE_THRESHOLD_PCT);
@@ -2682,7 +2741,6 @@ function ineffCardHtml(x, uid){
   const region = regionOf(r);
   const nDays = Math.max(x.recentDaysHr||0, x.recentDaysKw||0) || RECENT_DAYS_FOR_EVAL;
   const anomalies = (S.alerts.alerts||[]).filter(a => a.type==='data-anomaly' && a.maCode===x.code);
-  const worstDayList = (x.worstDays||[]).concat(x.isIneffective?[]:(x.badDays||[]));
   return `
     <div class="effcard ${x.isIneffective?'bad':(x.isBad?'bad':'')}">
       <div class="effhd">
@@ -2705,23 +2763,8 @@ function ineffCardHtml(x, uid){
         <div class="es"><div class="esl">Đạt giờ chạy</div><div class="esv ${clsPct(pctHr)}">${pctHr!=null?pctHr+'%':'—'}</div></div>
         <div class="es"><div class="esl">Đạt công suất</div><div class="esv ${clsPct(pctKw)}">${pctKw!=null?pctKw+'%':'—'}</div></div>
       </div>
-      ${worstDayList.length ? `
-      <div style="margin:0 16px 10px;padding:8px 10px;background:${x.isIneffective?'#fef2f2':'#fffbeb'};border:1px solid ${x.isIneffective?'#fecaca':'#fde68a'};border-radius:8px">
-        <div style="font-size:10px;font-weight:700;color:${x.isIneffective?'#991b1b':'#78350f'};margin-bottom:4px">
-          ${x.isIneffective?'⛔ Không hiệu quả vì':'⚠ Kém hiệu quả vì'} có ngày dưới ${x.isIneffective?INEFFECTIVE_THRESHOLD_PCT:BAD_THRESHOLD_PCT}% thiết kế:
-        </div>
-        ${(x.recentHrDays||[]).filter(d=>d.pct!=null && d.pct<BAD_THRESHOLD_PCT).map(d=>
-          `<div style="font-size:10px;color:${x.isIneffective?'#7f1d1d':'#78350f'}">• Ngày ${d.day}: giờ chạy ${d.val}h = ${Math.round(d.pct)}% thiết kế</div>`).join('')}
-        ${(x.recentKwDays||[]).filter(d=>d.pct!=null && d.pct<BAD_THRESHOLD_PCT).map(d=>
-          `<div style="font-size:10px;color:${x.isIneffective?'#7f1d1d':'#78350f'}">• Ngày ${d.day}: điện phát ${d.val}kWh = ${Math.round(d.pct)}% thiết kế</div>`).join('')}
-      </div>` : ''}
       ${anomalies.length ? `
-      <div style="margin:0 16px 10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px">
-        <div style="font-size:10px;font-weight:700;color:#991b1b;margin-bottom:4px">⚠ Dữ liệu bất thường — kiểm tra/sửa trực tiếp:</div>
-        ${anomalies.slice(0,4).map(a=>`<div style="font-size:10px;color:#7f1d1d;line-height:1.6">• ${esc(a.message)}</div>`).join('')}
-        ${anomalies.length>4?`<div style="font-size:10px;color:#7f1d1d">…và ${anomalies.length-4} cảnh báo khác</div>`:''}
-        <button class="btn bg-b sm" style="margin-top:6px" onclick="openEfficiencyEditByCode('${esc(x.code)}')">✎ Sửa dữ liệu ngày</button>
-      </div>` : ''}
+      <div style="margin:0 16px 6px;font-size:10px;color:#991b1b">⚠ Có dữ liệu bất thường — điểm cam to trên biểu đồ, bấm vào điểm đó để xem/sửa.</div>` : ''}
       <div class="effchart"><canvas id="${uid}_chart"></canvas></div>
     </div>
   `;
@@ -2823,7 +2866,8 @@ function drawEfficiencyChart(canvasId, x){
       yAxisID: 'y',
       spanGaps: true,
       fill: false,
-      order: 2
+      order: 2,
+      _metric: 'power'
     });
   }
   // (3) Giờ chạy thiết kế — đường ngang
@@ -2857,7 +2901,8 @@ function drawEfficiencyChart(canvasId, x){
       yAxisID: 'y2',
       spanGaps: true,
       fill: false,
-      order: 1
+      order: 1,
+      _metric: 'hours'
     });
   }
 
@@ -2902,6 +2947,17 @@ function drawEfficiencyChart(canvasId, x){
       maintainAspectRatio: false,
       responsive: true,
       interaction: { intersect:false, mode:'index' },
+      onHover: (evt, elements) => {
+        const active = elements.some(el2 => datasets[el2.datasetIndex] && datasets[el2.datasetIndex]._metric);
+        evt.native.target.style.cursor = active ? 'pointer' : 'default';
+      },
+      onClick: (evt, elements, chart) => {
+        const hit = elements.find(el2 => datasets[el2.datasetIndex] && datasets[el2.datasetIndex]._metric);
+        if (!hit) return;
+        const metric = datasets[hit.datasetIndex]._metric;
+        const day = hit.index + 1;
+        openChartPointEditor(x, metric, day);
+      },
       plugins: {
         title: {
           display: true,
@@ -2919,7 +2975,8 @@ function drawEfficiencyChart(canvasId, x){
             boxWidth: 20,
             padding: 8,
             usePointStyle: false
-          }
+          },
+          ...legendHoverIsolate_()
         },
         tooltip: {
           backgroundColor: '#083d24',
@@ -2933,6 +2990,48 @@ function drawEfficiencyChart(canvasId, x){
       scales
     }
   });
+}
+
+/* Bấm trực tiếp vào 1 điểm dữ liệu trên biểu đồ hiệu quả vận hành (đặc biệt điểm cam to =
+ * dữ liệu bất thường) → hiện popup nhỏ để KTV xem/sửa ngay giá trị ngày đó, lưu 2 chiều
+ * vào Google Sheet qua saveEffCell() có sẵn (không cần mở cả bảng sửa dữ liệu đầy đủ). */
+function openChartPointEditor(x, metric, day){
+  const list = metric === 'power' ? (x.daily?.power||[]) : (x.daily?.hours||[]);
+  const pt = list.find(d => d.day === day);
+  if (!pt || !pt.rowId){ toast('Không tìm thấy dữ liệu ngày này','err'); return; }
+  const unit = metric === 'power' ? 'kWh' : 'h';
+  const label = metric === 'power' ? 'Công suất phát' : 'Giờ chạy';
+  const anomaly = (S.alerts.alerts||[]).find(a => a.type==='data-anomaly' && a.maCode===x.code && a.metric===metric && a.day===day);
+  if (!pt.editable){
+    openOv(`
+      <div class="mh"><div><h2>Ngày ${day} · ${esc(x.code)}</h2><p>${esc(label)}</p></div><button class="mcl" onclick="closeOv()">✕</button></div>
+      <div class="mb"><div style="padding:10px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px">
+        Tên cột trùng lặp trong Sheet — không thể sửa an toàn qua web. Giá trị hiện tại: <b>${pt.val!=null?pt.val:'—'} ${unit}</b>. Sửa trực tiếp trên Google Sheet.
+      </div></div>`);
+    return;
+  }
+  openOv(`
+    <div class="mh">
+      <div><h2>✎ Ngày ${day} · ${esc(x.code)}</h2><p>${esc(label)}${anomaly?' · ⚠ dữ liệu bất thường':''}</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button>
+    </div>
+    <div class="mb">
+      ${anomaly ? `<div style="margin-bottom:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:11px;color:#991b1b">⚠ ${esc(anomaly.message)}</div>` : ''}
+      <div class="iw">
+        <div class="il">${esc(label)} (${unit})</div>
+        <input class="inp" id="chartPointVal" type="number" step="any" value="${esc(pt.val??'')}" style="${anomaly?'border-color:var(--red);background:#fef2f2':''}">
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
+      <button class="btn bg-g" onclick="saveChartPointEdit(${pt.rowId},'${esc(pt.header)}')">💾 Lưu vào Google Sheet</button>
+    </div>
+  `);
+}
+async function saveChartPointEdit(rowId, header){
+  const el = $('chartPointVal'); if (!el) return;
+  await saveEffCell(rowId, header, el.value);
+  closeOv();
 }
 
 /* Doughnut theo tone màu vùng miền */
