@@ -2816,14 +2816,18 @@ function drawEfficiencyChart(canvasId, x){
   const nDays = Math.min(31, Math.max(powerDaily.length, hoursDaily.length, 0));
   const labels = Array.from({length:nDays}, (_,i)=>String(i+1));
 
-  const powerVals = labels.map((_,i)=> powerDaily[i]?.val ?? null);
-  const hoursVals = labels.map((_,i)=> hoursDaily[i]?.val ?? null);
+  // hasPower/hasHours phải xét TRƯỚC khi mặc định về 0 (nếu không thì luôn = true dù máy
+  // chưa có dữ liệu ngày nào). Ngày chưa có dữ liệu mặc định vẽ = 0 để đường biểu đồ chạy
+  // liền mạch hết cả tháng (không bị đứt đoạn/nhảy quãng như khi để trống).
+  const powerValsRaw = labels.map((_,i)=> powerDaily[i]?.val ?? null);
+  const hoursValsRaw = labels.map((_,i)=> hoursDaily[i]?.val ?? null);
+  const hasPower = powerValsRaw.some(v => v!=null);
+  const hasHours = hoursValsRaw.some(v => v!=null);
+  const powerVals = powerValsRaw.map(v => v ?? 0);
+  const hoursVals = hoursValsRaw.map(v => v ?? 0);
 
   const designKw = (x.designKw!=null && !isNaN(x.designKw)) ? x.designKw : null;
   const designHr = (x.designHr!=null && !isNaN(x.designHr)) ? x.designHr : null;
-
-  const hasPower = powerVals.some(v => v!=null);
-  const hasHours = hoursVals.some(v => v!=null);
 
   // Đánh dấu điểm bất thường trên biểu đồ (chấm đỏ to hơn) để KTV thấy ngay ngày nào cần kiểm tra
   const machineAnomalies = (S.alerts.alerts||[]).filter(a => a.type==='data-anomaly' && a.maCode===x.code);
