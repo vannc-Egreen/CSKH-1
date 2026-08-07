@@ -1948,6 +1948,19 @@ async function saveFilter(){ /* legacy */ }
  * ============================================================ */
 const KHUNG_GIO_OPTIONS = ['Chạy xuyên đêm','Chạy ca ngày','Chạy ca đêm'];
 
+/* QUAN TRỌNG: viewEfficiency() (dựng HTML thẻ máy, id "eff_<i>") và afterEfficiency()
+ * (vẽ biểu đồ vào canvas "eff_<i>_chart", chạy SAU khi HTML đã gắn vào DOM) PHẢI dùng
+ * chung đúng 1 danh sách theo đúng 1 thứ tự — nếu mỗi bên tự gọi computeInefficient() +
+ * sắp xếp riêng, thứ tự có thể lệch nhau (VD 1 bên sort, 1 bên quên sort) khiến canvas
+ * thứ i hiển thị biểu đồ của SAI máy so với tiêu đề thẻ ở trên. Gộp về 1 hàm dùng chung
+ * để không bao giờ bị lệch nữa. */
+function computeEfficiencyPageList_(filteredMasterRows){
+  const ineffAll = computeInefficient(filteredMasterRows);
+  return filteredMasterRows.map(r => ineffAll.find(x => x.code === String(r._byLetter.B||'').trim()) || null)
+    .filter(Boolean)
+    .sort((a,b) => (b.isIneffective - a.isIneffective) || (b.isBad - a.isBad)); // "không hiệu quả" lên đầu
+}
+
 function viewEfficiency(){
   const m = S.master.rows;
   // Chỉ tính máy đủ điều kiện: HĐ bình thường, loại Thuê/Hợp tác/Bán
@@ -1962,15 +1975,7 @@ function viewEfficiency(){
     return okR && okT;
   });
 
-  // Ghép với dữ liệu efficiency
-  const ineffAll = computeInefficient(filtered);
-  const allMachineCards = filtered.map(r => {
-    const found = ineffAll.find(x => x.code === String(r._byLetter.B||'').trim());
-    if (found) return found;
-    // Nếu không kém hiệu quả, vẫn dựng object rỗng để có thể hiển thị nếu người dùng yêu cầu
-    return null;
-  }).filter(Boolean)
-    .sort((a,b) => (b.isIneffective - a.isIneffective) || (b.isBad - a.isBad)); // "không hiệu quả" lên đầu
+  const allMachineCards = computeEfficiencyPageList_(filtered);
 
   const nIneffective = allMachineCards.filter(x=>x.isIneffective).length;
   const nBad = allMachineCards.filter(x=>x.isBad).length;
@@ -2278,8 +2283,10 @@ function afterEfficiency(){
     (!rSet.size || rSet.has(regionOf(r))) &&
     (!tSet.size || tSet.has(typeOf(r)))
   );
-  const ineff = computeInefficient(filtered);
-  ineff.forEach((x,i)=>drawEfficiencyChart('eff_'+i+'_chart', x));
+  // PHẢI dùng đúng computeEfficiencyPageList_() — cùng hàm, cùng thứ tự với viewEfficiency()
+  // dựng thẻ HTML, nếu không canvas thứ i sẽ vẽ nhầm biểu đồ của máy khác (xem ghi chú ở hàm đó).
+  const list = computeEfficiencyPageList_(filtered);
+  list.forEach((x,i)=>drawEfficiencyChart('eff_'+i+'_chart', x));
 }
 
 function viewSpec(){
