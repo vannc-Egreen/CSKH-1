@@ -257,6 +257,9 @@ td{padding:9px 12px;vertical-align:middle}
       <div class="nitem" data-page="analysis" onclick="nav('analysis')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>Phân tích
       </div>
+      <div class="nitem" data-page="monthly" onclick="nav('monthly')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 15l2.5 2.5L16 12"/></svg>Tổng kết tháng<span class="nbadge rd" id="nb-monthly">0</span>
+      </div>
 
       <div class="nsec">Vận hành</div>
       <div class="nitem" data-page="tracking" onclick="nav('tracking')">
@@ -287,6 +290,7 @@ td{padding:9px 12px;vertical-align:middle}
       <div id="pg-dash" class="page on"></div>
       <div id="pg-alerts" class="page"></div>
       <div id="pg-analysis" class="page"></div>
+      <div id="pg-monthly" class="page"></div>
       <div id="pg-tracking" class="page"></div>
       <div id="pg-filter" class="page"></div>
       <div id="pg-efficiency" class="page"></div>
@@ -311,6 +315,7 @@ const S = {
   spec:{ headers:[], rows:[] },
   filter:{ headers:[], rows:[] },
   efficiency:{ headers:[], rows:[] },   // Sheet 5 · Theo dõi hiệu quả vận hành
+  monthly:{ headers:[], rows:[] },      // Sheet 9 · Tổng kết hiệu quả tháng
   dropdowns:{},
   alerts:{ alerts:[], towerStates:[], total:0 },
   user:{ name:'Admin' },
@@ -324,7 +329,8 @@ const S = {
     alertsRegion:'',   // '', 'Miền Bắc', 'Miền Nam'
     alertsFields:new Set(),  // multi-select hạng mục theo dõi ('Đại tu','Nhớt','Lọc gió',...)
     eff:{ region:new Set(), type:new Set() },  // multi-select
-    analysis:{ machine:new Set(), region:new Set(), type:new Set(), unit:new Set() }  // multi-select · trang Phân tích
+    analysis:{ machine:new Set(), region:new Set(), type:new Set(), unit:new Set() },  // multi-select · trang Phân tích
+    monthly:{ q:'', month:'', region:new Set(), type:new Set(), unit:new Set() }       // trang Tổng kết tháng (Sheet 9)
   }
 };
 
@@ -428,7 +434,7 @@ function computeClientAlerts(){
 
     // Cảnh báo giờ bảo dưỡng
     warnHeaders.forEach(h => {
-      const raw = r[h] ?? r._byLetter?.[String.fromCharCode(65 + hdrs.indexOf(h))];
+      const raw = r[h] ?? r._byLetter?.[colLetter_(hdrs.indexOf(h))];
       const n = Number(String(raw||'').replace(/,/g,'.'));
       if (isNaN(n)) return;
       let type = null;
@@ -439,7 +445,7 @@ function computeClientAlerts(){
       alerts.push({
         type, maCode: code, region, site, operator: oper, phone,
         field,
-        message: n<=0 ? `Đã quá ${Math.abs(Math.round(n))} h so với định mức` : `Còn ${Math.round(n)} h trước đến hạn`,
+        message: n<=0 ? `Đã quá ${fmt2_(Math.abs(n))} h so với định mức` : `Còn ${fmt2_(n)} h trước đến hạn`,
         severity: n<=0 ? 'high' : 'med',
         row: r._row,
         remain: n
@@ -453,7 +459,7 @@ function computeClientAlerts(){
         alerts.push({
           type:'oil-high', maCode:code, region, site, operator:oper, phone,
           field:'Hao nhớt',
-          message:`${oil} l/20h · vượt định mức ${oilLimit} l/20h`,
+          message:`${fmt2_(oil)} l/20h · vượt định mức ${fmt2_(oilLimit)} l/20h`,
           severity: oil > oilLimit*1.5 ? 'high' : 'med',
           row: r._row,
           remain: oil
@@ -515,6 +521,7 @@ async function reloadAll(){
     Object.assign(S, {
       master:d.master, tracking:d.tracking, spec:d.spec, filter:d.filter,
       efficiency: d.efficiency || { headers:[], rows:[] },
+      monthly: d.monthly || { headers:[], rows:[] },
       dropdowns:d.dropdowns, alerts:d.alerts
     });
     refreshAlerts();     // luôn tính lại cảnh báo phía client từ Sheet 2
@@ -530,6 +537,7 @@ async function reloadAll(){
     $('nb-alerts').textContent = S.alerts.total;
     const ineff = computeInefficient(S.master.rows);
     const nbEff = $('nb-eff'); if (nbEff) nbEff.textContent = ineff.length;
+    const nbMon = $('nb-monthly'); if (nbMon) nbMon.textContent = computeMeterMismatch_().length;
     $('ftTime').textContent = new Date().toLocaleTimeString('vi-VN');
 
     setStatus(false, `Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
@@ -659,6 +667,8 @@ function updateSidebarBadges(){
   const filter$ = $('nb-filter'); if (filter$) filter$.textContent = filterWarn;
   const nbEff = $('nb-eff');
   if (nbEff) nbEff.textContent = computeInefficient(S.master.rows).length;
+  const nbMon = $('nb-monthly');
+  if (nbMon) nbMon.textContent = computeMeterMismatch_().length;
 }
 
 function nav(page){
@@ -679,6 +689,7 @@ function renderPage(p){
     case 'dash':     el.innerHTML = viewDash(); afterDash(); break;
     case 'alerts':   el.innerHTML = viewAlerts(); break;
     case 'analysis': el.innerHTML = viewAnalysis(); afterAnalysis(); break;
+    case 'monthly':  el.innerHTML = viewMonthly(); afterMonthly(); break;
     case 'tracking': el.innerHTML = viewTracking(); break;
     case 'filter':   el.innerHTML = viewFilter(); break;
     case 'efficiency': el.innerHTML = viewEfficiency(); afterEfficiency(); break;
@@ -1262,10 +1273,11 @@ function chartBarClickable(id, labels, values, color, onDayClick, opts){
       },
       scales:{
         x:{ ticks:{color:'#64748b', font:{family:'Be Vietnam Pro', size:9}}, grid:{display:false},
-            title:{display:true, text:'Ngày trong tháng', color:'#64748b', font:{family:'Be Vietnam Pro', size:10}} },
+            title:{display:true, text:(opts && opts.xTitle) || 'Ngày trong tháng', color:'#64748b', font:{family:'Be Vietnam Pro', size:10}} },
         y:{ ticks:{color:'#64748b', font:{family:'Be Vietnam Pro', size:10}}, grid:{color:'#f1f5f9'}, beginAtZero:true }
       },
       onClick: (evt, elements) => {
+        if (typeof onDayClick !== 'function') return;
         const barEl = elements.find(e => e.datasetIndex === 0) || elements[0];
         if (barEl) onDayClick(barEl.index);
       }
@@ -1561,7 +1573,7 @@ function viewTracking(){
     </div>
     <div class="fbar">
       <input class="si" placeholder="🔍 Tìm mã máy, đơn vị, trại…" value="${esc(q)}" oninput="S.filters.tracking=this.value;renderPage('tracking')">
-      <button class="btn bg-gr" onclick="exportCsv(S.tracking,'theo-doi-bao-duong')">⤓ CSV</button>
+      <button class="btn bg-gr" onclick="exportCsv(roundedSheet_(S.tracking),'theo-doi-bao-duong')">⤓ CSV</button>
     </div>
     <div class="card"><div class="tw" style="max-height:70vh"><table>
       <thead><tr>
@@ -1575,9 +1587,10 @@ function viewTracking(){
       <tbody>${rows.map(r=>{
         const code = String(r._byLetter[COL.MA]||'').trim();
         const m = mByCode.get(code);
+        // Số đọc từ Google Sheet luôn hiển thị làm tròn 2 chữ số sau dấu phẩy (num2_)
         const cells = warnHeaders.slice(0,4).map(h=>{
-          const n = Number(r[h]);
-          if (isNaN(n)) return `<td style="text-align:right">${esc(r[h])}</td>`;
+          const n = num2_(r[h]);
+          if (n === null) return `<td style="text-align:right">${esc(r[h])}</td>`;
           const cls = n<=0 ? 'br' : (n<=500 ? 'ba' : 'bg');
           return `<td style="text-align:right"><span class="b ${cls}">${n} h</span></td>`;
         }).join('');
@@ -1586,7 +1599,7 @@ function viewTracking(){
           <td>${esc(m?(m._byLetter[COL.DONVI]||''):'')} · ${esc(m?(m._byLetter[COL.TRAI]||''):'')}</td>
           <td>${esc(m?(m._byLetter[COL.KHU]||''):'')}</td>
           ${cells}
-          ${oilHeader?`<td style="text-align:right">${esc(r[oilHeader]??'—')}</td>`:''}
+          ${oilHeader?`<td style="text-align:right">${fmt2_(r[oilHeader])}</td>`:''}
           <td><button class="btn bg-b sm" onclick="openTrackingEdit(${r._row})">✎ Cập nhật</button></td>
         </tr>`;
       }).join('') || '<tr><td colspan="99"><div class="empty">Không có bản ghi.</div></td></tr>'}</tbody>
@@ -1843,15 +1856,15 @@ function viewFilter(){
           if (kVal === '' || kVal === null || kVal === undefined) return '';
           // Nếu dữ liệu cũ lỡ lưu dạng chuỗi ngày → coi như trống để KTV nhập lại
           if (typeof kVal === 'string' && /^\d{4}-\d{2}-\d{2}/.test(kVal)) return '';
-          const n = Number(String(kVal).replace(/,/g,'.'));
-          return isNaN(n) ? '' : n;
+          const n = num2_(kVal);   // làm tròn 2 chữ số sau dấu phẩy
+          return n === null ? '' : n;
         })();
         return `<tr>
           <td><span class="mm">${esc(x.code)}</span></td>
           <td>${esc(x.m._byLetter[COL.DONVI]||'')}</td>
           <td>${esc(x.m._byLetter[COL.TRAI]||'')}</td>
           <td>${condBadge(x.cond)}</td>
-          <td style="text-align:right;font-family:var(--mono);font-weight:600">${isNaN(x.remain)?'—':x.remain+' h'}</td>
+          <td style="text-align:right;font-family:var(--mono);font-weight:600">${isNaN(x.remain)?'—':num2_(x.remain)+' h'}</td>
           <td>${canEdit
               ? `<input class="inp" style="min-width:120px;text-align:right;font-family:var(--mono)" type="number" step="any" value="${esc(kNum)}" placeholder="Số giờ" onchange="saveFilterCell(${rowId},'K',this.value)"> h`
               : '<span class="b bmu">—</span>'}</td>
@@ -1925,8 +1938,8 @@ function exportFilterCsv(){
       'Đơn vị hợp tác': m._byLetter[COL.DONVI]||'',
       'Tên Trang Trại / Đơn Vị': m._byLetter[COL.TRAI]||'',
       'Tình Trạng': cond,
-      'Theo dõi/cảnh báo hoàn nguyên hạt lọc hoặc thay (h)': isNaN(remain)?'':remain,
-      'Thời điểm hoàn nguyên hạt lọc hoặc thay': t? (t._byLetter.K||'') : '',
+      'Theo dõi/cảnh báo hoàn nguyên hạt lọc hoặc thay (h)': isNaN(remain)?'':(num2_(remain) ?? ''),
+      'Thời điểm hoàn nguyên hạt lọc hoặc thay': t? (num2_(t._byLetter.K) ?? (t._byLetter.K||'')) : '',
       'Tháp lọc số 1': t? (t._byLetter.H||'') : '',
       'Tháp lọc số 2': t? (t._byLetter.I||'') : ''
     };
@@ -2639,6 +2652,592 @@ function monthlyReportCardHtml(report){
 }
 
 /* ============================================================
+ *  TỔNG KẾT HIỆU QUẢ THÁNG (Sheet 9 · "9. Tổng kết hiệu quả tháng")
+ * ------------------------------------------------------------
+ *  CẤU TRÚC SHEET 9 (đọc mềm theo tên header, không phụ thuộc vị trí tuyệt đối):
+ *    A STT · B Mã máy · C Tổng số giờ chạy/tháng · D Công suất thiết kế phát/tháng
+ *    Từ cột E: mỗi tháng đúng 3 cột liền nhau, header 2 dòng "MM/yyyy⏎<nội dung>":
+ *      "Tổng công suất"  (tự động cộng từ Sheet 5)
+ *      "Chỉ số công tơ"  (KTV nhập tay ngay trên bảng ở trang này)
+ *      "Tổng số giờ"     (tự động cộng từ Sheet 5)
+ *
+ *  3 NỘI DUNG PHÂN TÍCH TRÊN TRANG NÀY:
+ *    1. Công suất phát trung bình = Tổng công suất ÷ Tổng số giờ, tính riêng từng
+ *       tháng (số của tháng nào chia cho tháng đó) → biểu đồ so sánh giữa các tháng.
+ *    2. Đối chiếu Tổng công suất ↔ Chỉ số công tơ. Lệch quá ±15% → vào danh sách
+ *       cảnh báo yêu cầu kiểm tra lại số liệu.
+ *    3. Tháng nào có tổng công suất lệch khỏi đường trung bình → tách thêm
+ *       TOP 5 máy hiệu quả cao / TOP 5 máy không hiệu quả, xếp theo mức tăng-giảm
+ *       tổng công suất của chính máy đó so với THÁNG LIỀN TRƯỚC.
+ * ============================================================ */
+
+const METER_TOLERANCE_PCT = 15;        // lệch Tổng công suất ↔ Chỉ số công tơ quá ±15% → cảnh báo
+const MONTHLY_TREND_PCT   = 10;        // tháng lệch quá ±10% so với đường trung bình → tách top 5 tăng/giảm
+const MONTHLY_TOP_N       = 5;         // số máy trong mỗi nhóm "hiệu quả cao" / "không hiệu quả"
+
+/* Bóc {label:'08/2026', key:'power'|'meter'|'hours'} từ 1 ô header khối tháng.
+ * Chịu được nhiều cách gõ: "8/2026", "08-2026", có/không xuống dòng, thừa khoảng trắng.
+ * PHẢI khớp đúng logic parseMonthlyHeader_() bên Code.gs — sửa 1 bên thì sửa cả 2. */
+function monthlyHeaderInfo_(h){
+  const s = String(h||'').trim();
+  if (!s) return null;
+  const m = s.match(/(\d{1,2})\s*[\/\-.]\s*(\d{4})/);
+  if (!m) return null;
+  const rest = s.replace(m[0], ' ');
+  let key = null;
+  if (/công\s*tơ/i.test(rest)) key = 'meter';        // "công tơ" xét TRƯỚC "công suất"
+  else if (/giờ/i.test(rest))  key = 'hours';
+  else if (/công\s*suất/i.test(rest)) key = 'power';
+  if (!key) return null;
+  return {
+    label: ('0'+Number(m[1])).slice(-2) + '/' + m[2],
+    key,
+    sortKey: Number(m[2])*100 + Number(m[1]),
+  };
+}
+
+/* Làm tròn 2 chữ số sau dấu phẩy — dùng chung cho mọi số hiển thị đọc từ Google Sheet. */
+function num2_(v){
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (s === '') return null;
+  const n = Number(s.replace(/,/g,'.'));
+  return isNaN(n) ? null : Math.round(n*100)/100;
+}
+/* Hiển thị số đã làm tròn 2 chữ số; không phải số thì trả nguyên văn (đã escape). */
+function fmt2_(v, dash){
+  const n = num2_(v);
+  if (n === null){
+    const s = (v===null||v===undefined) ? '' : String(v).trim();
+    return s === '' ? (dash===undefined?'—':dash) : esc(s);
+  }
+  return String(n);
+}
+
+/**
+ * Dựng mô hình dữ liệu Sheet 9: danh sách tháng (đã sắp xếp theo thời gian) + từng máy.
+ * Trả về { months, machines, hasData } — mọi hàm khác trên trang đều dùng lại kết quả này.
+ */
+function buildMonthlyModel_(){
+  const H = (S.monthly.headers||[]).filter(Boolean);
+  if (!H.length) return { months:[], machines:[], hasData:false };
+
+  const hMa = findHeader(H, 'mã.?máy','ma may','^ma$');
+  // Cột C/D — bắt buộc có chữ "tháng" để không nhầm với cột khối tháng "MM/yyyy Tổng số giờ"
+  const hHrTk = H.find(h => /giờ\s*chạy/i.test(h) && /tháng/i.test(h) && !monthlyHeaderInfo_(h));
+  const hKwTk = H.find(h => /công\s*suất\s*thiết\s*kế/i.test(h) && !monthlyHeaderInfo_(h));
+
+  const mMap = {};
+  H.forEach(h => {
+    const info = monthlyHeaderInfo_(h);
+    if (!info) return;
+    if (!mMap[info.label]) mMap[info.label] = { label: info.label, sortKey: info.sortKey };
+    mMap[info.label][info.key] = h;
+  });
+  const months = Object.keys(mMap).map(k=>mMap[k]).sort((a,b)=>a.sortKey-b.sortKey);
+
+  const masterByCode = new Map(S.master.rows.map(r => [String(r._byLetter.B||'').trim(), r]));
+
+  const machines = (S.monthly.rows||[]).map(row => {
+    const code = String((hMa ? row[hMa] : '') || row._byLetter?.B || '').trim();
+    if (!code) return null;
+    const mr = masterByCode.get(code);
+    const byMonth = {};
+    months.forEach(mo => {
+      const power = mo.power ? num2_(row[mo.power]) : null;
+      const meter = mo.meter ? num2_(row[mo.meter]) : null;
+      const hours = mo.hours ? num2_(row[mo.hours]) : null;
+      const avgKw = (power!=null && hours!=null && hours>0) ? Math.round(power/hours*100)/100 : null;
+      // Độ lệch lấy Chỉ số công tơ làm mốc so sánh (đây là số đo thực tế tại hiện trường)
+      const devPct = (power!=null && meter!=null && meter>0)
+        ? Math.round((power-meter)/meter*10000)/100 : null;
+      byMonth[mo.label] = { power, meter, hours, avgKw, devPct,
+        mismatch: devPct!=null && Math.abs(devPct) > METER_TOLERANCE_PCT };
+    });
+    return {
+      code, row, master: mr,
+      region: mr ? regionOf(mr) : '—',
+      type:   mr ? typeOf(mr)   : '—',
+      unit:   mr ? String(mr._byLetter[COL.DONVI]||'').trim() : '',
+      farm:   mr ? String(mr._byLetter[COL.TRAI]||'').trim()  : '',
+      designHr: hHrTk ? num2_(row[hHrTk]) : null,
+      designKw: hKwTk ? num2_(row[hKwTk]) : null,
+      byMonth,
+    };
+  }).filter(Boolean);
+
+  return { months, machines, hasData: months.length>0 && machines.length>0, hHrTk, hKwTk };
+}
+
+/* Áp bộ lọc của trang lên danh sách máy */
+function applyMonthlyFilters_(machines){
+  const f = S.filters.monthly;
+  const q = (f.q||'').trim().toLowerCase();
+  return machines.filter(x => {
+    if (f.region.size && !f.region.has(x.region)) return false;
+    if (f.type.size   && !f.type.has(x.type))     return false;
+    if (f.unit.size   && !f.unit.has(x.unit))     return false;
+    if (q && !`${x.code} ${x.unit} ${x.farm}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+/* Tổng hợp theo tháng cho đúng bộ máy đang lọc */
+function monthlyTotals_(months, machines){
+  return months.map(mo => {
+    let power = 0, meter = 0, hours = 0, nPower = 0, nMeter = 0;
+    machines.forEach(x => {
+      const d = x.byMonth[mo.label] || {};
+      if (d.power != null){ power += d.power; nPower++; }
+      if (d.meter != null){ meter += d.meter; nMeter++; }
+      if (d.hours != null){ hours += d.hours; }
+    });
+    return {
+      label: mo.label, sortKey: mo.sortKey,
+      power: Math.round(power*100)/100,
+      meter: Math.round(meter*100)/100,
+      hours: Math.round(hours*100)/100,
+      // NỘI DUNG 1: công suất phát trung bình của CHÍNH tháng đó
+      avgKw: hours>0 ? Math.round(power/hours*100)/100 : null,
+      nPower, nMeter, hasData: nPower>0,
+    };
+  });
+}
+
+/* NỘI DUNG 2 — danh sách cảnh báo lệch Tổng công suất ↔ Chỉ số công tơ quá ±15%.
+ * Dùng cả cho badge trên sidebar nên phải tự dựng model, gọi được ở mọi thời điểm. */
+function computeMeterMismatch_(){
+  const { months, machines } = buildMonthlyModel_();
+  const out = [];
+  machines.forEach(x => {
+    months.forEach(mo => {
+      const d = x.byMonth[mo.label];
+      if (d && d.mismatch) out.push({ code:x.code, unit:x.unit, farm:x.farm, region:x.region,
+        month:mo.label, power:d.power, meter:d.meter, devPct:d.devPct });
+    });
+  });
+  // Lệch nặng nhất lên đầu
+  return out.sort((a,b) => Math.abs(b.devPct) - Math.abs(a.devPct));
+}
+
+/* NỘI DUNG 3 — tháng nào lệch khỏi đường trung bình thì tách top tăng / top giảm.
+ * So sánh tổng công suất của từng máy giữa tháng đó và THÁNG LIỀN TRƯỚC trong bảng. */
+function computeMonthlyTrend_(months, machines, totals){
+  const withData = totals.filter(t => t.hasData);
+  if (withData.length < 2) return { mean:null, flagged:[] };
+  const mean = withData.reduce((a,t)=>a+t.power,0) / withData.length;
+
+  const flagged = [];
+  totals.forEach((t, i) => {
+    if (!t.hasData || mean <= 0) return;
+    const devPct = Math.round((t.power-mean)/mean*10000)/100;
+    if (Math.abs(devPct) <= MONTHLY_TREND_PCT) return;
+
+    // Tháng liền trước CÓ dữ liệu (bỏ qua các tháng rỗng ở giữa)
+    let prev = null;
+    for (let j=i-1; j>=0; j--){ if (totals[j].hasData){ prev = totals[j]; break; } }
+    if (!prev) return;   // tháng đầu tiên — chưa có gì để so sánh
+
+    const deltas = machines.map(x => {
+      const cur  = (x.byMonth[t.label]||{}).power;
+      const prv  = (x.byMonth[prev.label]||{}).power;
+      if (cur == null || prv == null) return null;
+      const delta = Math.round((cur-prv)*100)/100;
+      return {
+        code:x.code, unit:x.unit, farm:x.farm, region:x.region, type:x.type,
+        cur, prev:prv, delta,
+        deltaPct: prv>0 ? Math.round((cur-prv)/prv*10000)/100 : null,
+      };
+    }).filter(Boolean);
+
+    const sorted = deltas.slice().sort((a,b)=>b.delta-a.delta);
+    flagged.push({
+      label: t.label, prevLabel: prev.label, power: t.power, mean, devPct,
+      direction: devPct > 0 ? 'up' : 'down',
+      top:    sorted.slice(0, MONTHLY_TOP_N),
+      bottom: sorted.slice(-MONTHLY_TOP_N).reverse(),
+      nCompared: deltas.length,
+    });
+  });
+  return { mean: Math.round(mean*100)/100, flagged };
+}
+
+/* ---------- RENDER ---------- */
+function viewMonthly(){
+  const model = buildMonthlyModel_();
+  const { months } = model;
+  const machinesAll = model.machines;
+  const machines = applyMonthlyFilters_(machinesAll);
+  const totals = monthlyTotals_(months, machines);
+  const trend = computeMonthlyTrend_(months, machines, totals);
+  const mismatch = computeMeterMismatch_().filter(x => machines.some(m => m.code === x.code));
+
+  if (!months.length){
+    return `
+      <div class="ph"><h1>Tổng kết hiệu quả tháng</h1></div>
+      <div class="card" style="background:#fffbeb;border-left:4px solid var(--amb)">
+        <div style="padding:14px 16px;font-size:11px;color:#78350f;line-height:1.7">
+          Chưa đọc được khối cột theo tháng trong sheet <b>"9. Tổng kết hiệu quả tháng"</b>.<br>
+          Cần: cột <b>B = Mã máy</b>, và từ cột E trở đi mỗi tháng 3 cột với header 2 dòng dạng
+          <code>08/2026 ⏎ Tổng công suất</code>, <code>08/2026 ⏎ Chỉ số công tơ</code>,
+          <code>08/2026 ⏎ Tổng số giờ</code>.<br>
+          Bấm nút bên dưới để Apps Script tự dựng cột và điền số liệu từ Sheet 5.
+        </div>
+        <div style="padding:0 16px 14px"><button class="btn bg-g" onclick="rebuildMonthly()">↻ Tính lại tổng kết tháng</button></div>
+      </div>`;
+  }
+
+  // Tháng đang xem ở bảng chi tiết — mặc định tháng mới nhất có dữ liệu
+  const defaultMonth = (totals.filter(t=>t.hasData).slice(-1)[0] || totals[totals.length-1]).label;
+  const sel = months.some(m=>m.label===S.filters.monthly.month) ? S.filters.monthly.month : defaultMonth;
+  const selTotal = totals.find(t=>t.label===sel) || {};
+
+  const f = S.filters.monthly;
+  const chip = (setName, value) => {
+    const on = f[setName].has(value);
+    return `<button class="fchip ${on?'on':''}" onclick="toggleMonthlyFilter('${setName}','${esc(value)}')">${esc(value)}</button>`;
+  };
+  const units = [...new Set(machinesAll.map(x=>x.unit).filter(Boolean))].sort();
+  const anyFilter = f.region.size || f.type.size || f.unit.size || f.q;
+
+  return `
+    <div class="ph">
+      <h1>Tổng kết hiệu quả tháng</h1>
+      <p>${months.length} tháng đã ghi nhận · ${machines.length}/${machinesAll.length} máy theo bộ lọc ·
+         <b style="color:var(--red)">${mismatch.length}</b> dòng lệch công tơ >${METER_TOLERANCE_PCT}% ·
+         <b style="color:var(--amb)">${trend.flagged.length}</b> tháng lệch khỏi đường trung bình</p>
+    </div>
+
+    <div class="msf" style="flex-direction:column;align-items:stretch;gap:10px">
+      <div class="msg">
+        <span class="mslbl">Khu vực</span>${chip('region','Miền Bắc')}${chip('region','Miền Nam')}
+      </div>
+      <div class="msg">
+        <span class="mslbl">Loại hình</span>${chip('type','Thuê')}${chip('type','Hợp tác')}${chip('type','Bán')}
+      </div>
+      ${units.length ? `<div class="msg"><span class="mslbl">Đơn vị</span>${units.map(u=>chip('unit',u)).join('')}</div>` : ''}
+      <div class="msg">
+        <input class="si" style="max-width:230px" placeholder="🔍 Tìm mã máy, đơn vị, trại…"
+               value="${esc(f.q||'')}" oninput="S.filters.monthly.q=this.value;renderPage('monthly')">
+        <span class="mslbl" style="margin-left:8px">Tháng xem chi tiết</span>
+        <select class="sel" style="min-width:120px" onchange="S.filters.monthly.month=this.value;renderPage('monthly')">
+          ${months.map(m=>`<option value="${esc(m.label)}" ${m.label===sel?'selected':''}>${esc(m.label)}</option>`).join('')}
+        </select>
+        <button class="btn bg-g sm" onclick="rebuildMonthly()">↻ Tính lại từ Sheet 5</button>
+        <button class="btn bg-gr sm" onclick="exportMonthlyCsv()">⤓ CSV</button>
+        ${anyFilter?`<button class="btn bg-gr sm" onclick="clearMonthlyFilters()">↺ Bỏ lọc</button>`:''}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>Tháng ${esc(sel)}</h3><span class="b bmu">${selTotal.nPower||0} máy có số liệu</span></div>
+      <div class="cb"><div class="effstats">
+        <div class="es"><div class="esl">Tổng công suất</div><div class="esv">${fmt2_(selTotal.power)} <span style="font-size:9px;color:var(--mu);font-weight:500">kWh</span></div></div>
+        <div class="es"><div class="esl">Tổng số giờ</div><div class="esv">${fmt2_(selTotal.hours)} <span style="font-size:9px;color:var(--mu);font-weight:500">h</span></div></div>
+        <div class="es"><div class="esl">Công suất phát TB</div><div class="esv ok">${selTotal.avgKw!=null?fmt2_(selTotal.avgKw):'—'} <span style="font-size:9px;color:var(--mu);font-weight:500">kW = tổng CS ÷ tổng giờ</span></div></div>
+        <div class="es"><div class="esl">Tổng chỉ số công tơ</div><div class="esv">${fmt2_(selTotal.meter)} <span style="font-size:9px;color:var(--mu);font-weight:500">${selTotal.nMeter||0} máy đã nhập</span></div></div>
+      </div></div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>Công suất phát trung bình theo tháng (kW)</h3>
+        <span class="b bmu">Tổng công suất ÷ Tổng số giờ của chính tháng đó · đường xám = trung bình các tháng</span></div>
+      <div class="cb"><div class="cw" style="height:260px"><canvas id="chMonAvgKw"></canvas></div></div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>Tổng công suất theo tháng (kWh)</h3>
+        <span class="b bmu">Cột vàng = lệch >${MONTHLY_TREND_PCT}% so với đường trung bình → có phân tích tách top 5 bên dưới</span></div>
+      <div class="cb"><div class="cw" style="height:260px"><canvas id="chMonPower"></canvas></div></div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>Đối chiếu Tổng công suất ↔ Chỉ số công tơ theo tháng</h3>
+        <span class="b bmu">2 cột sát nhau càng chênh nhiều thì số liệu càng đáng ngờ</span></div>
+      <div class="cb"><div class="cw" style="height:260px"><canvas id="chMonMeter"></canvas></div></div>
+    </div>
+
+    ${meterMismatchCardHtml_(mismatch)}
+    ${trend.flagged.map(monthlyTrendCardHtml_).join('')}
+    ${monthlyDetailTableHtml_(months, machines, sel)}
+  `;
+}
+
+/* NỘI DUNG 2 — bảng cảnh báo chênh lệch số liệu */
+function meterMismatchCardHtml_(list){
+  return `
+    <div class="card">
+      <div class="ch">
+        <h3>${list.length?'⚠️':'✅'} Kiểm tra độ trùng khớp Tổng công suất ↔ Chỉ số công tơ</h3>
+        <span class="b ${list.length?'br':'bg'}">${list.length} dòng lệch quá ±${METER_TOLERANCE_PCT}%</span>
+      </div>
+      <div class="cb">
+      ${list.length ? `<div class="tw" style="max-height:340px"><table>
+        <thead><tr>
+          <th>Tháng</th><th>Mã máy</th><th>Đơn vị · Trại</th>
+          <th style="text-align:right">Tổng công suất (kWh)</th>
+          <th style="text-align:right">Chỉ số công tơ</th>
+          <th style="text-align:right">Chênh lệch</th><th></th>
+        </tr></thead>
+        <tbody>${list.map(x=>`<tr>
+          <td><b>${esc(x.month)}</b></td>
+          <td><span class="mm">${esc(x.code)}</span></td>
+          <td>${esc(x.unit)}${x.farm?' · '+esc(x.farm):''}</td>
+          <td style="text-align:right;font-family:var(--mono)">${fmt2_(x.power)}</td>
+          <td style="text-align:right;font-family:var(--mono)">${fmt2_(x.meter)}</td>
+          <td style="text-align:right"><span class="b br">${x.devPct>0?'+':''}${fmt2_(x.devPct)}%</span></td>
+          <td><button class="btn bg-b sm" onclick="openEfficiencyEditByCode('${esc(x.code)}')">✎ Soi Sheet 5</button></td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      <div style="font-size:10px;color:var(--mu);margin-top:8px;line-height:1.6">
+        Chênh lệch tính theo chỉ số công tơ (số đo thực tế): (Tổng công suất − Chỉ số công tơ) ÷ Chỉ số công tơ.
+        Lệch dương = hệ thống ghi nhận cao hơn công tơ · lệch âm = ghi nhận thấp hơn. Cần kiểm tra lại đồng bộ Smartgen hoặc số công tơ đã nhập.
+      </div>`
+      : '<div class="empty"><div class="ei">✅</div>Mọi máy đã nhập công tơ đều khớp trong dải ±'+METER_TOLERANCE_PCT+'%.</div>'}
+      </div>
+    </div>`;
+}
+
+/* NỘI DUNG 3 — thẻ phân tích cho 1 tháng lệch khỏi đường trung bình */
+function monthlyTrendCardHtml_(t){
+  const up = t.direction === 'up';
+  const tbl = (rows, tone) => rows.length ? `<div class="tw" style="max-height:230px"><table>
+      <thead><tr><th>Mã máy</th><th>Đơn vị</th>
+        <th style="text-align:right">${esc(t.prevLabel)}</th>
+        <th style="text-align:right">${esc(t.label)}</th>
+        <th style="text-align:right">Chênh lệch</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr>
+        <td><span class="mm">${esc(r.code)}</span></td>
+        <td>${esc(r.unit||'—')}</td>
+        <td style="text-align:right;font-family:var(--mono)">${fmt2_(r.prev)}</td>
+        <td style="text-align:right;font-family:var(--mono)">${fmt2_(r.cur)}</td>
+        <td style="text-align:right"><span class="b ${r.delta>=0?'bg':'br'}">${r.delta>=0?'+':''}${fmt2_(r.delta)} kWh${r.deltaPct!=null?` · ${r.deltaPct>=0?'+':''}${fmt2_(r.deltaPct)}%`:''}</span></td>
+      </tr>`).join('')}</tbody></table></div>`
+    : '<div class="empty">Không đủ dữ liệu 2 tháng liên tiếp để so sánh.</div>';
+
+  return `
+    <div class="card">
+      <div class="ch">
+        <h3>${up?'📈':'📉'} Tháng ${esc(t.label)} ${up?'cao hơn':'thấp hơn'} đường trung bình ${fmt2_(Math.abs(t.devPct))}%</h3>
+        <span class="b ${up?'bg':'ba'}">${fmt2_(t.power)} kWh · TB các tháng ${fmt2_(t.mean)} kWh</span>
+      </div>
+      <div class="cb">
+        <div style="font-size:10px;color:var(--mu);margin-bottom:10px;line-height:1.6">
+          So sánh tổng công suất từng máy giữa tháng <b>${esc(t.label)}</b> và tháng liền trước <b>${esc(t.prevLabel)}</b>
+          (${t.nCompared} máy có đủ số liệu cả 2 tháng).
+        </div>
+        <div class="cg2">
+          <div>
+            <div class="ct" style="color:var(--grn);font-weight:700;margin-bottom:6px">🏆 ${MONTHLY_TOP_N} máy hiệu quả cao — tăng nhiều nhất</div>
+            ${tbl(t.top,'ok')}
+          </div>
+          <div>
+            <div class="ct" style="color:var(--red);font-weight:700;margin-bottom:6px">⚠️ ${MONTHLY_TOP_N} máy không hiệu quả — giảm nhiều nhất</div>
+            ${tbl(t.bottom,'bad')}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* Bảng chi tiết theo máy của tháng đang chọn — cột "Chỉ số công tơ" nhập tay được */
+function monthlyDetailTableHtml_(months, machines, sel){
+  const mo = months.find(m=>m.label===sel);
+  const idx = months.findIndex(m=>m.label===sel);
+  const prev = idx > 0 ? months[idx-1] : null;
+
+  return `
+    <div class="card">
+      <div class="ch"><h3>Chi tiết theo máy · tháng ${esc(sel)}</h3>
+        <span class="b bmu">${machines.length} máy · ô "Chỉ số công tơ" nhập trực tiếp, tự lưu vào Sheet 9</span></div>
+      <div class="tw" style="max-height:70vh"><table>
+        <thead><tr>
+          <th>Mã máy</th><th>Đơn vị · Trại</th><th>Khu vực</th>
+          <th style="text-align:right">Giờ chạy TK/tháng</th>
+          <th style="text-align:right">CS thiết kế phát/tháng</th>
+          <th style="text-align:right">Tổng công suất</th>
+          <th style="text-align:right">Tổng số giờ</th>
+          <th style="text-align:right">CS phát TB (kW)</th>
+          <th style="text-align:center">Chỉ số công tơ ✎</th>
+          <th style="text-align:right">Lệch công tơ</th>
+          ${prev?`<th style="text-align:right">So với ${esc(prev.label)}</th>`:''}
+        </tr></thead>
+        <tbody>${machines.map(x=>{
+          const d = x.byMonth[sel] || {};
+          const p = prev ? (x.byMonth[prev.label]||{}).power : null;
+          const delta = (d.power!=null && p!=null) ? Math.round((d.power-p)*100)/100 : null;
+          const pctKw = (d.power!=null && x.designKw) ? Math.round(d.power/x.designKw*100) : null;
+          const pctHr = (d.hours!=null && x.designHr) ? Math.round(d.hours/x.designHr*100) : null;
+          return `<tr>
+            <td><span class="mm">${esc(x.code)}</span></td>
+            <td>${esc(x.unit||'—')}${x.farm?' · '+esc(x.farm):''}</td>
+            <td>${esc(x.region)}</td>
+            <td style="text-align:right;font-family:var(--mono)">${fmt2_(x.designHr)}</td>
+            <td style="text-align:right;font-family:var(--mono)">${fmt2_(x.designKw)}</td>
+            <td style="text-align:right;font-family:var(--mono)">${fmt2_(d.power)}${pctKw!=null?` <span class="b ${pctBadgeCls_(pctKw)}">${pctKw}%</span>`:''}</td>
+            <td style="text-align:right;font-family:var(--mono)">${fmt2_(d.hours)}${pctHr!=null?` <span class="b ${pctBadgeCls_(pctHr)}">${pctHr}%</span>`:''}</td>
+            <td style="text-align:right;font-family:var(--mono);font-weight:700">${d.avgKw!=null?fmt2_(d.avgKw):'—'}</td>
+            <td style="text-align:center">
+              <input class="inp" style="min-width:110px;text-align:right;font-family:var(--mono)" type="number" step="any"
+                     value="${d.meter!=null?esc(d.meter):''}" placeholder="Nhập tay"
+                     onchange="saveMonthlyMeter('${esc(x.code)}','${esc(sel)}',this.value)">
+            </td>
+            <td style="text-align:right">${d.devPct!=null
+              ? `<span class="b ${d.mismatch?'br':'bg'}">${d.devPct>0?'+':''}${fmt2_(d.devPct)}%</span>`
+              : '<span class="b bmu">—</span>'}</td>
+            ${prev?`<td style="text-align:right">${delta!=null
+              ? `<span class="b ${delta>=0?'bg':'br'}">${delta>=0?'+':''}${fmt2_(delta)}</span>`
+              : '<span class="b bmu">—</span>'}</td>`:''}
+          </tr>`;
+        }).join('') || '<tr><td colspan="99"><div class="empty">Không có máy nào khớp bộ lọc.</div></td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+}
+
+function afterMonthly(){
+  const model = buildMonthlyModel_();
+  const machines = applyMonthlyFilters_(model.machines);
+  const totals = monthlyTotals_(model.months, machines);
+  const withData = totals.filter(t=>t.hasData);
+  if (!withData.length) return;
+
+  const labels = totals.map(t=>t.label);
+
+  // 1) Công suất phát trung bình từng tháng (kW)
+  const avgVals = totals.map(t => t.avgKw || 0);
+  const avgNonZero = avgVals.filter(v=>v>0);
+  const meanAvg = avgNonZero.length ? avgNonZero.reduce((a,b)=>a+b,0)/avgNonZero.length : 0;
+  chartBarClickable('chMonAvgKw', labels, avgVals, '#0d6e3f', null,
+    { mean: meanAvg, xTitle: 'Tháng' });
+
+  // 2) Tổng công suất từng tháng + tô vàng tháng lệch khỏi đường trung bình
+  const powVals = totals.map(t=>t.power);
+  const meanPow = withData.reduce((a,t)=>a+t.power,0)/withData.length;
+  const anomaly = totals.map(t => t.hasData && meanPow>0 && Math.abs(t.power-meanPow)/meanPow*100 > MONTHLY_TREND_PCT);
+  chartBarClickable('chMonPower', labels, powVals, '#2563eb', null,
+    { mean: meanPow, anomalyDay: anomaly, xTitle: 'Tháng' });
+
+  // 3) Đối chiếu Tổng công suất ↔ Chỉ số công tơ
+  chartMonthlyCompare_('chMonMeter', labels, totals.map(t=>t.power), totals.map(t=>t.meter));
+}
+
+/* Biểu đồ 2 cột cạnh nhau: Tổng công suất vs Chỉ số công tơ, kèm đường % chênh lệch */
+function chartMonthlyCompare_(id, labels, power, meter){
+  const el = $(id); if (!el) return;
+  if (el._chart) el._chart.destroy();
+  const dev = labels.map((_,i) => (meter[i]>0 && power[i]!=null)
+    ? Math.round((power[i]-meter[i])/meter[i]*10000)/100 : null);
+
+  el._chart = new Chart(el, {
+    data:{ labels, datasets:[
+      { type:'bar', label:'Tổng công suất (kWh)', data:power, backgroundColor:'#0d6e3f', borderRadius:5, maxBarThickness:26, yAxisID:'y' },
+      { type:'bar', label:'Chỉ số công tơ', data:meter, backgroundColor:'#94a3b8', borderRadius:5, maxBarThickness:26, yAxisID:'y' },
+      { type:'line', label:`Chênh lệch (%) · ngưỡng ±${METER_TOLERANCE_PCT}%`, data:dev,
+        borderColor:'#dc2626', backgroundColor:'transparent', borderWidth:2, pointRadius:3, yAxisID:'y1', spanGaps:true },
+    ]},
+    options:{
+      maintainAspectRatio:false,
+      plugins:{
+        legend:{ position:'bottom', labels:{ color:'#475569', font:{family:'Be Vietnam Pro', size:9}, boxWidth:14 }, ...legendHoverIsolate_() },
+        tooltip:{ backgroundColor:'#083d24' }
+      },
+      scales:{
+        x:{ ticks:{color:'#64748b', font:{family:'Be Vietnam Pro', size:9}}, grid:{display:false},
+            title:{display:true, text:'Tháng', color:'#64748b', font:{family:'Be Vietnam Pro', size:10}} },
+        y:{ position:'left', ticks:{color:'#64748b', font:{family:'Be Vietnam Pro', size:10}}, grid:{color:'#f1f5f9'}, beginAtZero:true },
+        y1:{ position:'right', ticks:{color:'#dc2626', font:{family:'Be Vietnam Pro', size:10}, callback:v=>v+'%'}, grid:{display:false} },
+      }
+    }
+  });
+}
+
+/* ---------- HÀNH ĐỘNG ---------- */
+function toggleMonthlyFilter(setName, val){
+  const set = S.filters.monthly[setName];
+  if (set.has(val)) set.delete(val); else set.add(val);
+  renderPage('monthly');
+}
+function clearMonthlyFilters(){
+  S.filters.monthly.region.clear();
+  S.filters.monthly.type.clear();
+  S.filters.monthly.unit.clear();
+  S.filters.monthly.q = '';
+  renderPage('monthly');
+}
+
+/* KTV nhập "Chỉ số công tơ" — đường DUY NHẤT ghi vào cột này (code tự động không đụng tới).
+ * Sau này nối nguồn lấy tự động thì chỉ cần gọi lại đúng action 'updateMeter'. */
+async function saveMonthlyMeter(code, monthLabel, value){
+  setStatus(true,'Đang lưu chỉ số công tơ…');
+  try {
+    const res = await apiPost({ action:'updateMeter', maCode:code, monthLabel, value, user:S.user.name });
+    if (!res.ok) throw new Error(res.error||'Lỗi lưu');
+    // Cập nhật state cục bộ để bảng + biểu đồ đổi ngay, không cần tải lại cả Sheet
+    const H = (S.monthly.headers||[]).filter(Boolean);
+    const hMa = findHeader(H, 'mã.?máy','ma may','^ma$');
+    const hMeter = H.find(h => { const i = monthlyHeaderInfo_(h); return i && i.label===monthLabel && i.key==='meter'; });
+    let row = S.monthly.rows.find(r => String((hMa?r[hMa]:'')||r._byLetter?.B||'').trim() === String(code).trim());
+    if (!row){
+      // Máy vừa được Apps Script thêm dòng mới → dựng dòng tạm để hiển thị luôn
+      row = { _row: res.row, _byLetter:{ B: code } };
+      if (hMa) row[hMa] = code;
+      S.monthly.rows.push(row);
+    }
+    if (hMeter) row[hMeter] = res.value;
+    else { await reloadAll(); }   // cột tháng vừa được tạo mới ở backend → phải nạp lại header
+    updateSidebarBadges();
+    setStatus(false, `Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
+    toast('✓ Đã lưu chỉ số công tơ vào Sheet 9','ok');
+    renderPage('monthly');
+  } catch(e){
+    toast('Lỗi lưu: '+e.message,'err');
+    setStatus(false,'❌ '+e.message,true);
+  }
+}
+
+/* Ép Apps Script tính lại toàn bộ Sheet 9 từ Sheet 5 (tự tạo cột tháng mới nếu thiếu) */
+async function rebuildMonthly(){
+  setStatus(true,'Đang tính lại tổng kết tháng…');
+  try {
+    const res = await apiPost({ action:'rebuildMonthly', user:S.user.name });
+    if (!res.ok) throw new Error(res.error||'Lỗi tính lại');
+    const created = (res.createdColumns||[]).length + (res.nextMonthColumns||[]).length;
+    toast(`✓ Đã tính lại tháng ${res.month} · ${res.machines} máy${created?` · tạo ${created} cột mới`:''}`,'ok');
+    await reloadAll();
+    nav('monthly');
+  } catch(e){
+    toast('Lỗi: '+e.message,'err');
+    setStatus(false,'❌ '+e.message,true);
+  }
+}
+
+function exportMonthlyCsv(){
+  const model = buildMonthlyModel_();
+  const machines = applyMonthlyFilters_(model.machines);
+  const rows = machines.map(x => {
+    const o = {
+      'Mã máy': x.code,
+      'Đơn vị hợp tác': x.unit,
+      'Tên Trang Trại / Đơn Vị': x.farm,
+      'Khu vực': x.region,
+      'Loại hình': x.type,
+      'Tổng số giờ chạy/tháng (TK)': x.designHr ?? '',
+      'Công suất thiết kế phát/tháng': x.designKw ?? '',
+    };
+    model.months.forEach(m => {
+      const d = x.byMonth[m.label] || {};
+      o[m.label+' · Tổng công suất'] = d.power ?? '';
+      o[m.label+' · Chỉ số công tơ'] = d.meter ?? '';
+      o[m.label+' · Tổng số giờ']    = d.hours ?? '';
+      o[m.label+' · CS phát TB (kW)'] = d.avgKw ?? '';
+      o[m.label+' · Lệch công tơ (%)'] = d.devPct ?? '';
+    });
+    return o;
+  });
+  exportCsv({ headers:Object.keys(rows[0]||{}), rows }, 'tong-ket-hieu-qua-thang');
+}
+
+/* ============================================================
  *  PHÁT HIỆN BẤT THƯỜNG DỮ LIỆU CÔNG SUẤT/GIỜ CHẠY THEO NGÀY (Sheet 5)
  *  Áp dụng cho MỌI máy có dòng Sheet 5 (không giới hạn loại hình/trạng thái)
  *  — đây là kiểm tra CHẤT LƯỢNG DỮ LIỆU đồng bộ từ Smartgen, khác với đánh giá
@@ -3107,6 +3706,20 @@ function chartBar(id, data){
   });
 }
 
+/* Chỉ số cột 0-based → chữ cái cột trên Sheet: 0→A, 25→Z, 26→AA, 30→AE…
+ * Sheet 2 (31 cột) và Sheet 5 (70 cột) đều vượt quá Z nên KHÔNG được dùng
+ * String.fromCharCode(65+i) — sẽ sinh ra ký tự rác '[', '\', ']'. */
+function colLetter_(idx0){
+  let n = Number(idx0) + 1, s = '';
+  if (!(n > 0)) return '';
+  while (n > 0){
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
 function $(id){ return document.getElementById(id); }
 function esc(s){ if (s===null||s===undefined) return ''; return String(s).replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function dateVal(v){ if (!v) return ''; const d=new Date(v); if (isNaN(d)) return ''; return d.toISOString().slice(0,10); }
@@ -3147,6 +3760,20 @@ function toast(msg, kind='info'){
   setTimeout(()=>t.classList.add('show'), 10);
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>t.classList.remove('show'), 3600);
+}
+
+/* Bản sao 1 sheet với MỌI ô số đã làm tròn 2 chữ số sau dấu phẩy — dùng khi xuất CSV
+ * các hạng mục đọc thẳng từ Google Sheet (Theo dõi bảo dưỡng, Data thay lọc). */
+function roundedSheet_(src){
+  const h = (src.headers||[]).filter(x=>x);
+  return {
+    headers: src.headers,
+    rows: (src.rows||[]).map(r => {
+      const o = Object.assign({}, r);
+      h.forEach(hd => { const n = num2_(o[hd]); if (n !== null) o[hd] = n; });
+      return o;
+    })
+  };
 }
 
 function exportCsv(src, name){
