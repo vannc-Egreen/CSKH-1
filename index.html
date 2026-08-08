@@ -285,6 +285,9 @@ td{padding:9px 12px;vertical-align:middle}
       <div class="nitem" data-page="spec" onclick="nav('spec')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>Định mức bảo dưỡng
       </div>
+      <div class="nitem" data-page="design" onclick="nav('design')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16M6 16V9M12 16V5M18 16v-4"/></svg>Định mức thiết kế<span class="nbadge" id="nb-design">0</span>
+      </div>
 
       <div class="sfooter">
         eGreen Genset v1.0<br>
@@ -296,6 +299,7 @@ td{padding:9px 12px;vertical-align:middle}
       <div id="pg-dash" class="page on"></div>
       <div id="pg-alerts" class="page"></div>
       <div id="pg-analysis" class="page"></div>
+      <div id="pg-design" class="page"></div>
       <div id="pg-tracking" class="page"></div>
       <div id="pg-filter" class="page"></div>
       <div id="pg-efficiency" class="page"></div>
@@ -335,7 +339,9 @@ const S = {
     alertsFields:new Set(),  // multi-select hạng mục theo dõi ('Đại tu','Nhớt','Lọc gió',...)
     eff:{ region:new Set(), type:new Set() },  // multi-select
     analysis:{ machine:new Set(), region:new Set(), type:new Set(), unit:new Set() },  // multi-select · trang Phân tích
-    monthly:{ q:'', month:'', region:new Set(), type:new Set(), unit:new Set() }       // trang Tổng kết tháng (Sheet 9)
+    monthly:{ q:'', month:'', region:new Set(), type:new Set(), unit:new Set() },      // trang Tổng kết tháng (Sheet 9)
+    anomalyCat:'',                                                                   // nhóm lỗi bất thường đang lọc ở trang Cảnh báo
+    design:{ q:'', region:new Set(), onlyProblem:false }                             // trang Định mức thiết kế
   }
 };
 
@@ -688,6 +694,9 @@ function updateSidebarBadges(){
   const filter$ = $('nb-filter'); if (filter$) filter$.textContent = filterWarn;
   const nbEff = $('nb-eff');
   if (nbEff) nbEff.textContent = computeInefficient(S.master.rows).length;
+  // Badge trang Định mức thiết kế = số dòng định mức cần rà lại (thiếu/vô lý)
+  const nbDsg = $('nb-design');
+  if (nbDsg) nbDsg.textContent = designRows_().filter(designProblem_).length;
 }
 
 function nav(page){
@@ -708,6 +717,7 @@ function renderPage(p){
     case 'dash':     el.innerHTML = viewDash(); afterDash(); break;
     case 'alerts':   el.innerHTML = viewAlerts(); break;
     case 'analysis': el.innerHTML = viewAnalysis(); afterAnalysis(); break;
+    case 'design':   el.innerHTML = viewDesign(); break;
     case 'tracking': el.innerHTML = viewTracking(); break;
     case 'filter':   el.innerHTML = viewFilter(); break;
     case 'efficiency': el.innerHTML = viewEfficiency(); afterEfficiency(); break;
@@ -776,7 +786,7 @@ function viewDash(){
       <div class="karr">↗</div>
       <div class="klbl">Không hiệu quả</div>
       <div class="kval">${data.worst}</div>
-      <div class="ksub">đủ giờ nhưng CS &lt; ${BAD_THRESHOLD_PCT}%</div>
+      <div class="ksub">giờ hoặc CS &lt; ${SEVERE_THRESHOLD_PCT}%, hoặc đủ giờ mà CS &lt; ${BAD_THRESHOLD_PCT}%</div>
     </div>
     <div class="kcard tl" onclick="navEfficiencyWith('${region}')">
       <div class="karr">↗</div>
@@ -821,6 +831,8 @@ function viewDash(){
         <div class="cw"><canvas id="chRegionS"></canvas></div>
       </div>
     </div>
+
+    ${anomalySummaryCardHtml_()}
 
     <div class="ph" style="margin-top:6px"><h1 style="font-size:15px">Phân bố chung</h1></div>
     <div class="cg2">
@@ -973,10 +985,31 @@ function viewAlerts(){
       ${fieldOrder.map(([name,cnt])=>fieldChip(name,cnt)).join('')}
     </div>
 
+    ${f==='data-anomaly' ? anomalyCatChipsHtml_(list) : ''}
+
     ${f==='data-anomaly'
-      ? dataAnomalyTableHtml(list)
+      ? dataAnomalyTableHtml(list.filter(a => !S.filters.anomalyCat || a.cat === S.filters.anomalyCat))
       : (machineList.length ? machineList.map(machineAlertCard).join('') : '<div class="empty"><div class="ei">✅</div>Không có cảnh báo trong bộ lọc này.</div>')}
   `;
+}
+
+/* Hàng chip lọc theo NHÓM lỗi bất thường — đồng bộ với ô thống kê ở trang Tổng quan. */
+function anomalyCatChipsHtml_(list){
+  const cur = S.filters.anomalyCat || '';
+  const cnt = id => list.filter(a => a.cat === id).length;
+  const chips = ANOMALY_CATS.filter(c => cnt(c.id) > 0)
+    .map(c => `<button class="fchip ${cur===c.id?'on':''}" title="${esc(c.hint)}" onclick="setAnomalyCat('${esc(c.id)}')">${esc(c.label)} (${cnt(c.id)})</button>`)
+    .join('');
+  if (!chips) return '';
+  return `<div class="fbar">
+    <span class="mslbl">Nhóm lỗi</span>
+    <button class="fchip ${!cur?'on':''}" onclick="setAnomalyCat('')">Tất cả (${list.length})</button>
+    ${chips}
+  </div>`;
+}
+function setAnomalyCat(id){
+  S.filters.anomalyCat = (S.filters.anomalyCat === id) ? '' : id;
+  renderPage('alerts');
 }
 
 /* Bảng cảnh báo bất thường sửa TRỰC TIẾP tại chỗ — mỗi ô giá trị là 1 input, đổi giá trị
@@ -2141,7 +2174,7 @@ function viewEfficiency(){
     <div class="ph">
       <h1>Theo dõi hiệu quả vận hành</h1>
       <p>${base.length} máy đủ điều kiện · ${filtered.length} máy sau lọc ·
-        <span style="color:var(--red);font-weight:700">${nIneffective} không hiệu quả</span> (chạy đủ giờ mà công suất &lt; ${BAD_THRESHOLD_PCT}%) ·
+        <span style="color:var(--red);font-weight:700">${nIneffective} không hiệu quả</span> (giờ hoặc CS &lt; ${SEVERE_THRESHOLD_PCT}%, hoặc đủ giờ mà CS &lt; ${BAD_THRESHOLD_PCT}%) ·
         <span style="color:var(--amb);font-weight:700">${nBad} kém hiệu quả</span> (giờ chạy và công suất cùng &lt; ${BAD_THRESHOLD_PCT}%) ·
         đánh giá theo TB ${RECENT_DAYS_FOR_EVAL} ngày gần nhất · biểu đồ vẫn hiện đủ cả tháng</p>
     </div>
@@ -2630,9 +2663,8 @@ function recentWindowAvg_(arr, anchorDay, n){
   return { avg: days.reduce((a,d)=>a+d.val,0) / days.length, n: days.length };
 }
 const RECENT_DAYS_FOR_EVAL = 3;     // đánh giá hiệu quả chỉ dựa vào N ngày gần nhất, không phải cả tháng
-const BAD_THRESHOLD_PCT = 80;       // ngưỡng chung: TB N ngày đạt < 80% thiết kế thì coi là thấp
-// INEFFECTIVE_THRESHOLD_PCT (cũ = 50) đã bỏ: mức nặng/nhẹ nay quyết định bởi việc giờ chạy
-// có đạt hay không, chứ không phải bởi một ngưỡng % thứ hai. Xem computeInefficient().
+const BAD_THRESHOLD_PCT    = 80;    // TB N ngày đạt < 80% thiết kế → coi là thấp
+const SEVERE_THRESHOLD_PCT = 50;    // TB N ngày đạt < 50% → "Không hiệu quả" ngay, bất kể chỉ số kia
 function pctClass_(p){ return p==null?'':(p<70?'bad':(p<90?'warn':'ok')); }
 function pctBadgeCls_(p){ const c = pctClass_(p); return c==='bad'?'br':(c==='warn'?'ba':(c===''?'bmu':'bg')); }
 
@@ -2641,11 +2673,14 @@ function pctBadgeCls_(p){ const c = pctClass_(p); return c==='bad'?'br':(c==='wa
  * Đánh giá theo TRUNG BÌNH {RECENT_DAYS_FOR_EVAL} ngày gần nhất so với thiết kế/ngày —
  * đúng bằng con số % hiển thị trên thẻ máy.
  *
- * CÔNG SUẤT PHÁT QUYẾT ĐỊNH, giờ chạy chỉ phân mức nặng/nhẹ:
- *   - Công suất ≥ 80%                    → không vào danh sách (dù giờ chạy thấp)
- *   - Công suất < 80% và giờ chạy ≥ 80%  → "Không hiệu quả"  (chạy đủ giờ mà không ra điện)
- *   - Công suất < 80% và giờ chạy < 80%  → "Kém hiệu quả"    (ít được huy động)
+ * XÉT THEO THỨ TỰ ƯU TIÊN TỪ TRÊN XUỐNG:
+ *   1. Giờ chạy < 50% HOẶC công suất < 50%  → "Không hiệu quả"  (ngưỡng nặng, xét trước tiên)
+ *   2. Công suất < 80% và giờ chạy ≥ 80%    → "Không hiệu quả"  (chạy đủ giờ mà không ra điện)
+ *   3. Công suất < 80% và giờ chạy < 80%    → "Kém hiệu quả"    (ít được huy động)
+ *   4. Còn lại (gồm cả giờ 50-80% mà CS ≥ 80%) → không vào danh sách
  *   → 2 nhóm loại trừ nhau.
+ * Quy tắc 1 cố ý ghi đè miễn trừ ở quy tắc 4: giờ 71% + CS 104% được bỏ qua, nhưng
+ * giờ 40% + CS 104% thì không — tụt quá nửa thiết kế là bất thường dù chỉ số kia đẹp.
  *
  * Lọc: chỉ tính máy Thuê/Hợp tác/Bán ở trạng thái HĐ bình thường.
  * Biểu đồ (drawEfficiencyChart) vẫn vẽ đủ dữ liệu cả tháng — chỉ phần đánh giá/badge dùng cửa sổ ngắn.
@@ -2705,7 +2740,7 @@ function computeInefficient(masterRows){
     const allDayPcts = recentHrDays.concat(recentKwDays).filter(d => d.pct != null);
 
     // Chỉ để hiển thị "ngày nào cần soi", KHÔNG dùng phân loại (xem giải thích bên dưới)
-    const worstDays = allDayPcts.filter(d => d.pct < 50);
+    const worstDays = allDayPcts.filter(d => d.pct < SEVERE_THRESHOLD_PCT);
     const badDays = allDayPcts.filter(d => d.pct < BAD_THRESHOLD_PCT);
     // ===== PHÂN LOẠI THEO TRUNG BÌNH {RECENT_DAYS_FOR_EVAL} NGÀY GẦN NHẤT =====
     // CÔNG SUẤT PHÁT LÀ TIÊU CHÍ QUYẾT ĐỊNH. Giờ chạy chỉ dùng để phân mức nặng/nhẹ.
@@ -2729,10 +2764,16 @@ function computeInefficient(masterRows){
 
     const badHr = pctHr != null && pctHr < BAD_THRESHOLD_PCT;
     const badKw = pctKw != null && pctKw < BAD_THRESHOLD_PCT;
-    // Không đọc được % công suất (thiếu thiết kế hoặc thiếu dữ liệu) → không kết luận,
-    // để cảnh báo "dữ liệu bất thường" xử lý riêng thay vì đoán mò.
-    const isIneffective = badKw && !badHr;    // đủ giờ mà thiếu điện → nặng
-    const isBad         = badKw && badHr;     // cả hai cùng thấp → nhẹ hơn
+    /* NGƯỠNG NẶNG (ưu tiên cao nhất): chỉ cần MỘT trong hai chỉ số tụt dưới 50% là
+     * "Không hiệu quả", kể cả khi chỉ số còn lại vẫn đạt. Quy tắc này CỐ Ý ghi đè
+     * miễn trừ "giờ thấp nhưng CS đạt" ở trên: giờ chạy 40% mà công suất 95% nghĩa là
+     * máy gần như không được huy động — dù mỗi giờ chạy vẫn ra điện tốt, đó vẫn là
+     * bất thường phải xem lại, không thể bỏ qua như trường hợp giờ 71%. */
+    const severeHr = pctHr != null && pctHr < SEVERE_THRESHOLD_PCT;
+    const severeKw = pctKw != null && pctKw < SEVERE_THRESHOLD_PCT;
+
+    const isIneffective = severeHr || severeKw || (badKw && !badHr);
+    const isBad         = !isIneffective && badKw && badHr;
 
     return {
       code, row:r, effRow, designHr, actualHr, designKw, actualKw,
@@ -3426,6 +3467,294 @@ function exportMonthlyCsv(){
 }
 
 /* ============================================================
+ *  TRANG "ĐỊNH MỨC THIẾT KẾ" (Sheet 5 — phần đầu bảng)
+ * ------------------------------------------------------------
+ *  Trước đây giờ chạy thiết kế/ngày và công suất thiết kế phát/ngày chỉ sửa được
+ *  bằng cách mở thẳng Google Sheet. Nhưng đây là 2 con số làm MẪU SỐ cho gần như
+ *  mọi phép đánh giá trong hệ thống: % đạt giờ chạy, % đạt công suất, phân loại
+ *  kém/không hiệu quả, ngưỡng "vượt 150% thiết kế", và cột C/D của Sheet 9
+ *  (nhân 25 ngày). Sai định mức là sai dây chuyền. Nên tách hẳn thành 1 trang để
+ *  KTV xem - sửa - thêm - bớt ngay trên web, có kiểm tra đầu vào.
+ *
+ *  Mỗi ô sửa xong lưu ngay qua saveEffCell (action updateEfficiency) — cùng đường
+ *  với sửa dữ liệu ngày, nên Sheet 9 cũng được tính lại tự động.
+ * ============================================================ */
+
+/* Định vị các cột định mức trong Sheet 5. Dò theo TÊN header, không theo vị trí cứng. */
+function designCols_(){
+  const H = (S.efficiency.headers || []).filter(Boolean);
+  return {
+    H,
+    hMa:    findHeader(H, 'mã.?máy','ma may','^ma$'),
+    hLoai:  findHeader(H, 'loại\\s*hình'),
+    hKhu:   findHeader(H, 'khu\\s*vực'),
+    hRated: findHeader(H, 'công suất tk','công suất thiết kế \\(kw'),
+    hHrTk:  findHeader(H, 'tổng.*giờ chạy/.?ngày','tổng.*giờ chạy.*ngày(?!.*thực)'),
+    hKwTk:  findHeader(H, 'công suất thiết kế phát','thiết kế.*phát/.?ngày'),
+  };
+}
+
+function designRows_(){
+  const c = designCols_();
+  const mByCode = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA]||'').trim(), m]));
+  return (S.efficiency.rows || []).map(r => {
+    const code = String((c.hMa ? r[c.hMa] : '') || r._byLetter?.B || '').trim();
+    if (!code) return null;
+    const m = mByCode.get(code);
+    const hrTk = numOrNull_(c.hHrTk ? r[c.hHrTk] : null);
+    const kwTk = numOrNull_(c.hKwTk ? r[c.hKwTk] : null);
+    return {
+      code, row: r, master: m,
+      loai:  c.hLoai  ? String(r[c.hLoai]||'').trim()  : (m ? typeOf(m) : ''),
+      khu:   c.hKhu   ? String(r[c.hKhu]||'').trim()   : (m ? regionOf(m) : ''),
+      unit:  m ? String(m._byLetter[COL.DONVI]||'').trim() : '',
+      farm:  m ? String(m._byLetter[COL.TRAI]||'').trim()  : '',
+      rated: numOrNull_(c.hRated ? r[c.hRated] : null),
+      hrTk, kwTk,
+      // Suy ra công suất trung bình mỗi giờ theo thiết kế — con số hay bị nhập sai nhất
+      kwPerHour: (hrTk > 0 && kwTk != null) ? Math.round(kwTk / hrTk * 100) / 100 : null,
+      inMaster: !!m,
+    };
+  }).filter(Boolean);
+}
+
+function viewDesign(){
+  const c = designCols_();
+  if (!c.hMa || (!c.hHrTk && !c.hKwTk)){
+    return `<div class="ph"><h1>Định mức thiết kế</h1></div>
+      <div class="card"><div class="cb"><div class="empty"><div class="ei">⚠️</div>
+        Chưa đọc được cột định mức trong sheet "5. Theo dõi hiệu quả vận hành".<br>
+        Cần có cột <b>Mã máy</b>, <b>Tổng số giờ chạy/ngày</b> và <b>Công suất thiết kế phát/ngày</b>.
+      </div></div></div>`;
+  }
+
+  const all = designRows_();
+  const f = S.filters.design;
+  const q = (f.q||'').trim().toLowerCase();
+  const list = all.filter(x => {
+    if (f.region.size && !f.region.has(x.khu)) return false;
+    if (f.onlyProblem && !designProblem_(x)) return false;
+    if (q && !`${x.code} ${x.unit} ${x.farm}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const nProblem = all.filter(designProblem_).length;
+  const nOrphan  = all.filter(x => !x.inMaster).length;
+  const regions = [...new Set(all.map(x=>x.khu).filter(Boolean))].sort();
+
+  return `
+    <div class="ph">
+      <h1>Định mức thiết kế</h1>
+      <p>${list.length}/${all.length} máy · sửa trực tiếp, lưu ngay vào Sheet 5 ·
+         <b style="color:var(--red)">${nProblem}</b> dòng cần rà lại${nOrphan?` · <b style="color:var(--amb)">${nOrphan}</b> mã không có trong Danh sách máy`:''}</p>
+    </div>
+
+    <div class="card" style="background:#f0f9ff;border-left:4px solid var(--blu)">
+      <div style="padding:12px 16px;font-size:11px;color:#075985;line-height:1.7">
+        Hai cột <b>Tổng số giờ chạy/ngày</b> và <b>Công suất thiết kế phát/ngày</b> là mẫu số của mọi
+        đánh giá: % đạt giờ chạy, % đạt công suất, phân loại kém/không hiệu quả, ngưỡng "vượt 150% thiết kế",
+        và cột C/D của Tổng kết tháng (nhân ${MONTHLY_DESIGN_DAYS_UI} ngày). Sửa ở đây là đổi kết quả toàn hệ thống.
+      </div>
+    </div>
+
+    <div class="msf" style="flex-direction:column;align-items:stretch;gap:10px">
+      <div class="msg">
+        <span class="mslbl">Khu vực</span>
+        ${regions.map(r=>`<button class="fchip ${f.region.has(r)?'on':''}" onclick="toggleDesignRegion('${esc(r)}')">${esc(r)}</button>`).join('')}
+        <button class="fchip ${f.onlyProblem?'on':''}" onclick="S.filters.design.onlyProblem=!S.filters.design.onlyProblem;renderPage('design')">⚠ Chỉ dòng cần rà lại (${nProblem})</button>
+      </div>
+      <div class="msg">
+        <input class="si" style="max-width:240px" placeholder="🔍 Tìm mã máy, đơn vị, trại…"
+               value="${esc(f.q||'')}" oninput="S.filters.design.q=this.value;renderPage('design')">
+        <button class="btn bg-g sm" onclick="openAddDesignRow()">+ Thêm mã máy</button>
+        <button class="btn bg-gr sm" onclick="exportDesignCsv()">⤓ CSV</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="tw" style="max-height:72vh"><table>
+        <thead><tr>
+          <th>Mã máy</th><th>Đơn vị · Trại</th><th>Khu vực</th>
+          <th style="text-align:right">CS định mức máy (kW)</th>
+          <th style="text-align:center">Giờ chạy TK/ngày ✎</th>
+          <th style="text-align:center">CS thiết kế phát/ngày ✎</th>
+          <th style="text-align:right">→ kW/giờ</th>
+          <th style="text-align:right">Giờ TK/tháng</th>
+          <th style="text-align:right">CS TK/tháng</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${list.map(x=>{
+          const prob = designProblem_(x);
+          return `<tr style="${prob?'background:#fffbeb':''}">
+            <td><span class="mm">${esc(x.code)}</span>${!x.inMaster?' <span class="b ba" title="Mã máy này không có trong Danh sách máy">⚠ lạc</span>':''}</td>
+            <td>${esc(x.unit||'—')}${x.farm?' · '+esc(x.farm):''}</td>
+            <td>${esc(x.khu||'—')}</td>
+            <td style="text-align:right;font-family:var(--mono)">${x.rated!=null?fmt2_(x.rated):'—'}</td>
+            <td style="text-align:center">
+              <input class="inp" style="min-width:92px;text-align:right;font-family:var(--mono)" type="number" step="any" min="0" max="24"
+                     value="${x.hrTk!=null?esc(x.hrTk):''}"
+                     onchange="saveDesignCell(${x.row._row},'hr',this.value,'${esc(x.code)}')">
+            </td>
+            <td style="text-align:center">
+              <input class="inp" style="min-width:104px;text-align:right;font-family:var(--mono)" type="number" step="any" min="0"
+                     value="${x.kwTk!=null?esc(x.kwTk):''}"
+                     onchange="saveDesignCell(${x.row._row},'kw',this.value,'${esc(x.code)}')">
+            </td>
+            <td style="text-align:right;font-family:var(--mono)">${x.kwPerHour!=null
+              ? `<span class="b ${designKwPerHourCls_(x)}">${x.kwPerHour}</span>` : '<span class="b bmu">—</span>'}</td>
+            <td style="text-align:right;font-family:var(--mono)">${x.hrTk!=null?fmt2_(x.hrTk*MONTHLY_DESIGN_DAYS_UI):'—'}</td>
+            <td style="text-align:right;font-family:var(--mono)">${x.kwTk!=null?fmt2_(x.kwTk*MONTHLY_DESIGN_DAYS_UI):'—'}</td>
+            <td><button class="btn bg-r sm" onclick="deleteDesignRow('${esc(x.code)}')">🗑 Xoá</button></td>
+          </tr>`;
+        }).join('') || '<tr><td colspan="99"><div class="empty">Không có máy nào khớp bộ lọc.</div></td></tr>'}</tbody>
+      </table></div>
+      ${nProblem?`<div style="padding:10px 16px;font-size:10px;color:var(--mu);line-height:1.6">
+        Dòng nền vàng = cần rà lại: thiếu định mức, giờ chạy TK &gt; 24h, hoặc công suất TK/giờ vượt quá
+        công suất định mức của chính máy đó.
+      </div>`:''}
+    </div>`;
+}
+
+/* Số ngày quy đổi thiết kế/ngày → thiết kế/tháng. PHẢI khớp MONTHLY_DESIGN_DAYS bên Code.gs. */
+const MONTHLY_DESIGN_DAYS_UI = 25;
+
+/* Dòng "cần rà lại": định mức vô lý hoặc thiếu → mọi đánh giá dựa vào nó đều sai theo. */
+function designProblem_(x){
+  if (x.hrTk == null || x.kwTk == null) return true;          // thiếu mẫu số
+  if (x.hrTk <= 0 || x.kwTk <= 0) return true;
+  if (x.hrTk > 24) return true;                                // quá 24h/ngày
+  if (x.rated > 0 && x.kwPerHour != null && x.kwPerHour > x.rated * 1.05) return true;
+  return false;
+}
+function designKwPerHourCls_(x){
+  if (x.rated > 0 && x.kwPerHour > x.rated * 1.05) return 'br';
+  if (x.rated > 0 && x.kwPerHour < x.rated * 0.4) return 'ba';
+  return 'bg';
+}
+
+function toggleDesignRegion(r){
+  const set = S.filters.design.region;
+  if (set.has(r)) set.delete(r); else set.add(r);
+  renderPage('design');
+}
+
+/* Lưu 1 ô định mức. Kiểm tra đầu vào TRƯỚC khi gửi lên Sheet — số vô lý ở đây
+ * sẽ làm sai mọi phép đánh giá phía sau, chặn sớm rẻ hơn sửa sau. */
+async function saveDesignCell(rowId, which, value, code){
+  const c = designCols_();
+  const header = which === 'hr' ? c.hHrTk : c.hKwTk;
+  if (!header){ toast('Không tìm thấy cột định mức tương ứng trong Sheet 5','err'); return; }
+
+  const raw = String(value ?? '').trim();
+  if (raw !== ''){
+    const n = Number(raw.replace(/,/g,'.'));
+    if (isNaN(n) || n < 0){
+      toast('Giá trị phải là số không âm','err'); renderPage('design'); return;
+    }
+    if (which === 'hr' && n > 24){
+      toast('Giờ chạy thiết kế không thể vượt 24h/ngày','err'); renderPage('design'); return;
+    }
+  }
+  await saveEffCell(rowId, header, raw === '' ? '' : Number(raw.replace(/,/g,'.')));
+  renderPage('design');
+}
+
+function openAddDesignRow(){
+  const regions = [...new Set(S.master.rows.map(regionOf).filter(Boolean))].sort();
+  openOv(`
+    <div class="mh"><div><h2>+ Thêm mã máy vào định mức thiết kế</h2>
+      <p>Dòng mới được thêm vào Sheet 5 · khối dữ liệu ngày để trống cho Smartgen điền dần</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div class="iw"><div class="il">Mã máy *</div>
+        <input class="inp" id="dsgCode" placeholder="VD: NS200KVA20"></div>
+      <div class="iw"><div class="il">Loại hình</div>
+        <select class="sel" id="dsgLoai"><option value="">—</option>
+          <option>Thuê</option><option>Hợp tác</option><option>Bán</option></select></div>
+      <div class="iw"><div class="il">Khu vực</div>
+        <select class="sel" id="dsgKhu"><option value="">—</option>
+          ${regions.map(r=>`<option>${esc(r)}</option>`).join('')}</select></div>
+      <div class="iw"><div class="il">Công suất định mức máy (kW)</div>
+        <input class="inp" id="dsgRated" type="number" step="any" min="0"></div>
+      <div class="iw"><div class="il">Tổng số giờ chạy/ngày (TK)</div>
+        <input class="inp" id="dsgHr" type="number" step="any" min="0" max="24" placeholder="≤ 24"></div>
+      <div class="iw"><div class="il">Công suất thiết kế phát/ngày (kWh)</div>
+        <input class="inp" id="dsgKw" type="number" step="any" min="0"></div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
+      <button class="btn bg-g" onclick="submitAddDesignRow()">Thêm vào Sheet 5</button>
+    </div>`);
+}
+
+async function submitAddDesignRow(){
+  const code = ($('dsgCode').value||'').trim();
+  if (!code){ toast('Phải nhập mã máy','err'); return; }
+  if (designRows_().some(x => x.code.toLowerCase() === code.toLowerCase())){
+    toast('Mã máy "'+code+'" đã có trong Sheet 5','err'); return;
+  }
+  const hr = ($('dsgHr').value||'').trim();
+  if (hr !== '' && Number(hr) > 24){ toast('Giờ chạy thiết kế không thể vượt 24h/ngày','err'); return; }
+
+  setStatus(true,'Đang thêm mã máy…');
+  try {
+    const res = await apiPost({ action:'addEfficiencyRow', user:S.user.name, data:{
+      maCode: code,
+      loaiHinh: $('dsgLoai').value,
+      khuVuc: $('dsgKhu').value,
+      ratedKw: $('dsgRated').value,
+      designHrDay: hr,
+      designKwDay: $('dsgKw').value,
+    }});
+    if (!res.ok) throw new Error(res.error||'Lỗi thêm dòng');
+    if (res.efficiency) S.efficiency = res.efficiency;
+    closeOv();
+    refreshAlerts(); updateSidebarBadges();
+    setStatus(false,`Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
+    toast('✓ Đã thêm '+code+' vào Sheet 5','ok');
+    renderPage('design');
+  } catch(e){
+    toast('Lỗi: '+e.message,'err');
+    setStatus(false,'❌ '+e.message,true);
+  }
+}
+
+async function deleteDesignRow(code){
+  if (!confirm(`Xoá hẳn dòng của máy "${code}" khỏi Sheet 5?\n\nToàn bộ dữ liệu ngày của máy này trong tháng cũng mất theo. Số liệu đã chốt ở các tháng trước trong Sheet 9 vẫn được giữ.`)) return;
+  setStatus(true,'Đang xoá dòng…');
+  try {
+    const res = await apiPost({ action:'deleteEfficiencyRow', maCode:code, user:S.user.name });
+    if (!res.ok) throw new Error(res.error||'Lỗi xoá dòng');
+    if (res.efficiency) S.efficiency = res.efficiency;
+    refreshAlerts(); updateSidebarBadges();
+    setStatus(false,`Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
+    toast('✓ Đã xoá '+code+' khỏi Sheet 5','ok');
+    renderPage('design');
+  } catch(e){
+    toast('Lỗi: '+e.message,'err');
+    setStatus(false,'❌ '+e.message,true);
+  }
+}
+
+function exportDesignCsv(){
+  const rows = designRows_().map(x => ({
+    'Mã máy': x.code,
+    'Đơn vị hợp tác': x.unit,
+    'Tên Trang Trại / Đơn Vị': x.farm,
+    'Khu vực': x.khu,
+    'Loại hình': x.loai,
+    'Công suất định mức máy (kW)': x.rated ?? '',
+    'Tổng số giờ chạy/ngày (TK)': x.hrTk ?? '',
+    'Công suất thiết kế phát/ngày (kWh)': x.kwTk ?? '',
+    'kW/giờ theo thiết kế': x.kwPerHour ?? '',
+    [`Giờ chạy TK/tháng (×${MONTHLY_DESIGN_DAYS_UI})`]: x.hrTk != null ? x.hrTk*MONTHLY_DESIGN_DAYS_UI : '',
+    [`CS thiết kế phát/tháng (×${MONTHLY_DESIGN_DAYS_UI})`]: x.kwTk != null ? x.kwTk*MONTHLY_DESIGN_DAYS_UI : '',
+    'Cần rà lại': designProblem_(x) ? 'x' : '',
+  }));
+  exportCsv({ headers:Object.keys(rows[0]||{}), rows }, 'dinh-muc-thiet-ke');
+}
+
+/* ============================================================
  *  PHÁT HIỆN BẤT THƯỜNG DỮ LIỆU CÔNG SUẤT/GIỜ CHẠY THEO NGÀY (Sheet 5)
  *  Áp dụng cho MỌI máy có dòng Sheet 5 (không giới hạn loại hình/trạng thái)
  *  — đây là kiểm tra CHẤT LƯỢNG DỮ LIỆU đồng bộ từ Smartgen, khác với đánh giá
@@ -3435,11 +3764,25 @@ function exportMonthlyCsv(){
  * ============================================================ */
 const ANOMALY_CFG = {
   MAX_HOURS_PER_DAY: 24,      // 1 ngày không thể chạy quá 24h
+  MAX_KWH_PER_DAY: 2500,      // Điện phát ra 1 ngày vượt 2500 kWh → nghi số liệu sai
   OVER_CAPACITY_RATIO: 1.3,   // Công suất TB/giờ vượt >130% công suất định mức máy → nghi ngờ
   OVER_DESIGN_RATIO: 1.5,     // Số liệu ngày vượt >150% thiết kế/ngày → cảnh báo "cao bất thường"
   SPIKE_RATIO: 2.5,           // Lệch > 2.5x so với TB 3 ngày liền trước → nghi ngờ đột biến
   MIN_BASE_FOR_SPIKE: 1,      // TB nền tối thiểu mới xét đột biến (tránh chia cho số quá nhỏ)
 };
+
+/* Nhóm lỗi bất thường — dùng cho ô thống kê ở trang Tổng quan.
+ * Thứ tự trong mảng = thứ tự hiển thị (nặng trước). */
+const ANOMALY_CATS = [
+  { id:'over-24h',       label:'Giờ chạy vượt 24h/ngày',        hint:'Không thể có ngày nào chạy quá 24 giờ' },
+  { id:'over-kwh',       label:'Điện phát vượt 2500 kWh/ngày',  hint:'Vượt trần sản lượng hợp lý của 1 máy trong 1 ngày' },
+  { id:'negative',       label:'Số liệu âm',                    hint:'Giờ chạy hoặc điện phát nhận giá trị âm' },
+  { id:'power-no-hours', label:'Số giờ bất thường',             hint:'Có điện phát ra nhưng giờ chạy = 0' },
+  { id:'hours-no-power', label:'Số điện bất thường',            hint:'Có giờ chạy nhưng điện phát = 0' },
+  { id:'over-design',    label:'Vượt 150% thiết kế',            hint:'Giờ chạy hoặc điện phát vượt 1.5 lần định mức thiết kế/ngày' },
+  { id:'over-capacity',  label:'Vượt công suất định mức máy',   hint:'Công suất trung bình mỗi giờ vượt quá công suất máy' },
+  { id:'spike',          label:'Đột biến so với ngày trước',    hint:'Lệch quá 2.5 lần so với trung bình 3 ngày liền trước' },
+];
 
 function computeDataAnomalies(){
   const eff = S.efficiency || {headers:[], rows:[]};
@@ -3473,35 +3816,45 @@ function computeDataAnomalies(){
       hoursVals.push(num(effRow[hoursCols[i].header]));
     }
 
-    const flag = (day, metric, message, severity) => alerts.push({
+    const flag = (day, metric, message, severity, cat) => alerts.push({
       type:'data-anomaly', kind:'efficiency', maCode:code, region, site, operator:oper, phone,
-      field:'Dữ liệu ngày '+day, message, severity, row: effRow._row, day, metric
+      field:'Dữ liệu ngày '+day, message, severity, row: effRow._row, day, metric, cat
     });
 
     for (let i=0;i<n;i++){
       const p = powerVals[i], h = hoursVals[i];
       const day = i+1;
 
-      if (h!=null && h > ANOMALY_CFG.MAX_HOURS_PER_DAY) flag(day, 'hours', `Giờ chạy ngày ${day} = ${h}h > 24h — không hợp lệ`, 'high');
-      if (h!=null && h < 0) flag(day, 'hours', `Giờ chạy ngày ${day} âm (${h}h)`, 'high');
-      if (p!=null && p < 0) flag(day, 'power', `Công suất phát ngày ${day} âm (${p} kWh)`, 'high');
+      /* NGÀY CHƯA CÓ DỮ LIỆU — BỎ QUA HOÀN TOÀN.
+       * Cả điện phát lẫn giờ chạy đều bằng 0 nghĩa là chưa đồng bộ tới ngày này (hoặc
+       * máy nghỉ trọn ngày), KHÔNG phải lỗi số liệu. Phải chặn ngay từ đây vì nếu để
+       * lọt xuống, luật "đột biến so với 3 ngày trước" sẽ thấy 0 << trung bình nền và
+       * báo bất thường hàng loạt cho mọi ngày chưa có dữ liệu. */
+      if ((p === 0 || p == null) && (h === 0 || h == null)) continue;
+
+      if (h!=null && h > ANOMALY_CFG.MAX_HOURS_PER_DAY) flag(day, 'hours', `Giờ chạy ngày ${day} = ${h}h > ${ANOMALY_CFG.MAX_HOURS_PER_DAY}h — không hợp lệ`, 'high', 'over-24h');
+      if (p!=null && p > ANOMALY_CFG.MAX_KWH_PER_DAY) flag(day, 'power', `Điện phát ngày ${day} = ${p} kWh > ${ANOMALY_CFG.MAX_KWH_PER_DAY} kWh/ngày — vượt trần hợp lý`, 'high', 'over-kwh');
+      if (h!=null && h < 0) flag(day, 'hours', `Giờ chạy ngày ${day} âm (${h}h)`, 'high', 'negative');
+      if (p!=null && p < 0) flag(day, 'power', `Công suất phát ngày ${day} âm (${p} kWh)`, 'high', 'negative');
 
       if (h!=null && p!=null){
-        if (h > 0 && p === 0) flag(day, 'power', `Ngày ${day}: có giờ chạy (${h}h) nhưng không ghi nhận điện phát`, 'med');
-        if (p > 0 && h === 0) flag(day, 'hours', `Ngày ${day}: có điện phát (${p} kWh) nhưng không ghi nhận giờ chạy`, 'med');
+        // Có giờ chạy mà không ra điện → SỐ ĐIỆN sai
+        if (h > 0 && p === 0) flag(day, 'power', `Ngày ${day}: có giờ chạy (${h}h) nhưng không ghi nhận điện phát`, 'med', 'hours-no-power');
+        // Có điện phát mà không có giờ chạy → SỐ GIỜ sai
+        if (p > 0 && h === 0) flag(day, 'hours', `Ngày ${day}: có điện phát (${p} kWh) nhưng không ghi nhận giờ chạy`, 'med', 'power-no-hours');
         if (h > 0 && p > 0 && ratedKw > 0){
           const avgKw = p / h;
           if (avgKw > ratedKw * ANOMALY_CFG.OVER_CAPACITY_RATIO){
-            flag(day, 'power', `Ngày ${day}: công suất TB ${avgKw.toFixed(1)}kW vượt ${Math.round(avgKw/ratedKw*100)}% định mức máy (${ratedKw}kW)`, 'high');
+            flag(day, 'power', `Ngày ${day}: công suất TB ${avgKw.toFixed(1)}kW vượt ${Math.round(avgKw/ratedKw*100)}% định mức máy (${ratedKw}kW)`, 'high', 'over-capacity');
           }
         }
       }
       // Số liệu thực tế cao bất thường so với THIẾT KẾ/NGÀY (khác với vượt công suất định mức máy ở trên)
       if (h!=null && designHrDay>0 && h > designHrDay * ANOMALY_CFG.OVER_DESIGN_RATIO){
-        flag(day, 'hours', `Ngày ${day}: giờ chạy ${h}h vượt ${Math.round(h/designHrDay*100)}% so với thiết kế/ngày (${designHrDay}h)`, 'high');
+        flag(day, 'hours', `Ngày ${day}: giờ chạy ${h}h vượt ${Math.round(h/designHrDay*100)}% so với thiết kế/ngày (${designHrDay}h)`, 'high', 'over-design');
       }
       if (p!=null && designKwDay>0 && p > designKwDay * ANOMALY_CFG.OVER_DESIGN_RATIO){
-        flag(day, 'power', `Ngày ${day}: điện phát ${p}kWh vượt ${Math.round(p/designKwDay*100)}% so với thiết kế/ngày (${designKwDay}kWh)`, 'high');
+        flag(day, 'power', `Ngày ${day}: điện phát ${p}kWh vượt ${Math.round(p/designKwDay*100)}% so với thiết kế/ngày (${designKwDay}kWh)`, 'high', 'over-design');
       }
 
       // Đột biến so với TB 3 ngày liền trước (chỉ xét khi có đủ 3 điểm liền trước)
@@ -3513,12 +3866,69 @@ function computeDataAnomalies(){
         if (base < ANOMALY_CFG.MIN_BASE_FOR_SPIKE) return;
         if (v > base * ANOMALY_CFG.SPIKE_RATIO || v < base / ANOMALY_CFG.SPIKE_RATIO){
           const label = metric==='power' ? 'Công suất' : 'Giờ chạy';
-          flag(day, metric, `Ngày ${day}: ${label} (${v}) lệch bất thường so với TB 3 ngày trước (${base.toFixed(1)})`, 'med');
+          flag(day, metric, `Ngày ${day}: ${label} (${v}) lệch bất thường so với TB 3 ngày trước (${base.toFixed(1)})`, 'med', 'spike');
         }
       });
     }
   });
   return alerts;
+}
+
+/* ============================================================
+ *  Ô THỐNG KÊ LỖI BẤT THƯỜNG (trang Tổng quan)
+ *  Gom toàn bộ cảnh báo type='data-anomaly' theo nhóm ANOMALY_CATS, kèm số máy
+ *  bị ảnh hưởng. Bấm 1 nhóm → mở trang Cảnh báo đã lọc sẵn đúng nhóm đó.
+ * ============================================================ */
+function anomalyStats_(){
+  const all = (S.alerts.alerts || []).filter(a => a.type === 'data-anomaly');
+  const byCat = {};
+  all.forEach(a => {
+    const id = a.cat || 'khac';
+    if (!byCat[id]) byCat[id] = { n: 0, machines: new Set() };
+    byCat[id].n++;
+    byCat[id].machines.add(a.maCode);
+  });
+  const cats = ANOMALY_CATS
+    .map(c => ({ ...c, n: byCat[c.id] ? byCat[c.id].n : 0, nMay: byCat[c.id] ? byCat[c.id].machines.size : 0 }))
+    .filter(c => c.n > 0);
+  // Nhóm chưa được gắn nhãn (phòng khi thêm luật mới mà quên khai báo trong ANOMALY_CATS)
+  if (byCat.khac) cats.push({ id:'khac', label:'Khác', hint:'Chưa phân nhóm', n: byCat.khac.n, nMay: byCat.khac.machines.size });
+  return { total: all.length, nMachines: new Set(all.map(a => a.maCode)).size, cats };
+}
+
+function anomalySummaryCardHtml_(){
+  const st = anomalyStats_();
+  return `
+    <div class="card">
+      <div class="ch">
+        <h3>${st.total ? '⚠️' : '✅'} Thống kê lỗi dữ liệu bất thường</h3>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="b ${st.total?'br':'bg'}">${st.total} điểm · ${st.nMachines} máy</span>
+          ${st.total?`<button class="btn bg-gr sm" onclick="setAlertFilter('data-anomaly');nav('alerts')">Xem chi tiết →</button>`:''}
+        </div>
+      </div>
+      <div class="cb">
+        ${st.total ? `<div class="effstats">
+          ${st.cats.map(c=>`
+            <div class="es" style="cursor:pointer" title="${esc(c.hint)}" onclick="openAnomalyCat('${esc(c.id)}')">
+              <div class="esl">${esc(c.label)}</div>
+              <div class="esv bad">${c.n} <span style="font-size:9px;color:var(--mu);font-weight:500">điểm · ${c.nMay} máy</span></div>
+            </div>`).join('')}
+        </div>
+        <div style="font-size:10px;color:var(--mu);margin-top:10px;line-height:1.6">
+          Ngày có cả điện phát lẫn giờ chạy đều bằng 0 được coi là <b>chưa cập nhật dữ liệu</b>, không tính là bất thường.
+          Bấm vào từng nhóm để mở danh sách máy tương ứng.
+        </div>`
+        : '<div class="empty"><div class="ei">✅</div>Không phát hiện điểm dữ liệu bất thường nào.</div>'}
+      </div>
+    </div>`;
+}
+
+/* Mở trang Cảnh báo, lọc sẵn đúng nhóm bất thường vừa bấm */
+function openAnomalyCat(catId){
+  S.filters.anomalyCat = catId;
+  setAlertFilter('data-anomaly');
+  nav('alerts');
 }
 
 function ineffCardHtml(x, uid){
@@ -3735,6 +4145,15 @@ function drawEfficiencyChart(canvasId, x){
       ticks: { color:'#991b1b', font:{family:'Be Vietnam Pro',size:9} },
       grid: { drawOnChartArea:false },
       title: { display:true, text:'Số giờ chạy (h)', color:'#991b1b', font:{family:'Be Vietnam Pro',size:10,weight:'600'} },
+      /* CHUẨN HOÁ TRỤC GIỜ CHẠY VỀ 0-24 CỐ ĐỊNH.
+       * Trước đây Chart.js tự co giãn theo dữ liệu nên mỗi máy một dải khác nhau
+       * (máy này 0-20, máy kia 0-25) → nhìn 2 biểu đồ cạnh nhau không so sánh được,
+       * và một ngày 5h ở máy A trông "cao" ngang một ngày 12h ở máy B.
+       * 24 là trần vật lý của 1 ngày nên mọi máy dùng chung một thước đo.
+       * Trục công suất (y trái) vẫn để tự co giãn vì mỗi máy một công suất định mức. */
+      min: 0,
+      max: 24,
+      ticks: { stepSize: 4 },
       beginAtZero: true
     }
   };
