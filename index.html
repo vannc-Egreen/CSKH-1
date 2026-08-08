@@ -55,6 +55,7 @@ body{background:var(--bg);color:var(--s);min-height:100vh;font-size:14px;overflo
 .mcdrop .mcempty{padding:10px 12px;font-size:11px;color:var(--mu)}
 .mcdrop .mchint{padding:6px 10px;font-size:10px;color:var(--mu);border-top:1px solid var(--bd);margin-top:2px}
 .dsgcalc{padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:700;font-family:var(--mono);color:var(--g)}
+.tin24{min-width:76px;max-width:86px;text-align:center;font-family:var(--mono);letter-spacing:.5px}
 .sspin{display:none;width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0}
 .sspin.on{display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -3537,6 +3538,25 @@ function parseHHMM_(v){
   }
   return null;
 }
+/* Ô nhập giờ 24h TỰ LÀM, KHÔNG dùng <input type="time">.
+ * Lý do: type="time" hiển thị theo NGÔN NGỮ TRÌNH DUYỆT — máy đặt tiếng Anh/Việt sẽ ra
+ * "11:06 CH" (12h kèm SA/CH) chứ không phải 23:06. Không có thuộc tính HTML nào ép được
+ * về 24h. Nên dùng ô text và tự chèn dấu ":" khi gõ, đảm bảo mọi máy đều thấy 24h giống nhau.
+ * Chỉ giữ chữ số, tự thêm ":" sau 2 ký tự đầu. */
+function maskHHMM_(el){
+  const pos = el.selectionStart;
+  const before = el.value;
+  let d = before.replace(/\D/g, '').slice(0, 4);
+  let out = d.length <= 2 ? d : d.slice(0, 2) + ':' + d.slice(2);
+  el.value = out;
+  // Giữ con trỏ đúng chỗ khi dấu ":" vừa được chèn thêm
+  if (pos != null){
+    const delta = out.length - before.length;
+    const np = Math.max(0, pos + (delta > 0 ? delta : 0));
+    try { el.setSelectionRange(np, np); } catch(e){}
+  }
+}
+
 function fmtHHMM_(min){
   if (min == null) return '';
   const h = Math.floor(min / 60) % 24, m = min % 60;
@@ -3741,13 +3761,13 @@ function designTableRowsHtml_(){
                  value="${esc(x.code)}"
                  onchange="saveDesignCell(${r},'code',this.value)"></td>
       <td style="text-align:center">
-        <input class="inp" style="min-width:82px;text-align:center;font-family:var(--mono)" type="time"
-               value="${fmtHHMM_(x.startMin)}"
-               onchange="saveDesignCell(${r},'start',this.value)"></td>
+        <input class="inp tin24" value="${fmtHHMM_(x.startMin)}" placeholder="HH:mm"
+               inputmode="numeric" maxlength="5" autocomplete="off"
+               oninput="maskHHMM_(this)" onchange="saveDesignCell(${r},'start',this.value)"></td>
       <td style="text-align:center">
-        <input class="inp" style="min-width:82px;text-align:center;font-family:var(--mono)" type="time"
-               value="${fmtHHMM_(x.endMin)}"
-               onchange="saveDesignCell(${r},'end',this.value)"></td>
+        <input class="inp tin24" value="${fmtHHMM_(x.endMin)}" placeholder="HH:mm"
+               inputmode="numeric" maxlength="5" autocomplete="off"
+               oninput="maskHHMM_(this)" onchange="saveDesignCell(${r},'end',this.value)"></td>
       <td style="text-align:center">${x.khungCalc
         ? `<span class="b ${khungCls(x.khungCalc)}">${esc(x.khungCalc)}</span>${
             (x.khungStored && x.khungStored !== x.khungCalc)
@@ -3905,10 +3925,12 @@ function openAddDesignRow(){
     <div class="mb">
       <div class="iw"><div class="il">Mã Máy *</div>
         <input class="inp" id="dsgCode" placeholder="VD: NS200KVA20"></div>
-      <div class="iw"><div class="il">Giờ bắt đầu *</div>
-        <input class="inp" id="dsgStart" type="time" oninput="previewDesignCalc()"></div>
-      <div class="iw"><div class="il">Giờ kết thúc *</div>
-        <input class="inp" id="dsgEnd" type="time" oninput="previewDesignCalc()"></div>
+      <div class="iw"><div class="il">Giờ bắt đầu * (24h)</div>
+        <input class="inp tin24" id="dsgStart" placeholder="HH:mm" inputmode="numeric" maxlength="5"
+               autocomplete="off" oninput="maskHHMM_(this);previewDesignCalc()"></div>
+      <div class="iw"><div class="il">Giờ kết thúc * (24h)</div>
+        <input class="inp tin24" id="dsgEnd" placeholder="HH:mm" inputmode="numeric" maxlength="5"
+               autocomplete="off" oninput="maskHHMM_(this);previewDesignCalc()"></div>
       <div class="iw"><div class="il">Công suất TK (KW) *</div>
         <input class="inp" id="dsgRated" type="number" step="any" min="0" oninput="previewDesignCalc()"></div>
       <div class="iw"><div class="il">Khung giờ chạy chính — tự tính</div>
