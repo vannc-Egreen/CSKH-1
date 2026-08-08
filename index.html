@@ -45,6 +45,15 @@ body{background:var(--bg);color:var(--s);min-height:100vh;font-size:14px;overflo
 .sgddown-menu button:hover{background:var(--gp);color:var(--g)}
 .sgddown-menu button:disabled{opacity:.5;cursor:default}
 .sdot{width:7px;height:7px;border-radius:50%;flex-shrink:0}.sdot.on{background:#4ade80}.sdot.off{background:#f87171}
+/* Ô tìm mã máy kiểu gõ-để-gợi-ý (trang Phân tích) */
+.mcbox{position:relative;display:inline-block}
+.mcdrop{position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1.5px solid var(--bd);border-radius:10px;box-shadow:var(--shl);min-width:230px;max-height:260px;overflow-y:auto;z-index:320;padding:4px}
+.mcdrop button{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;padding:7px 10px;background:none;border:none;border-radius:7px;font-size:12px;font-weight:600;color:var(--s2);cursor:pointer;font-family:var(--font)}
+.mcdrop button:hover,.mcdrop button.hl{background:var(--gp);color:var(--g)}
+.mcdrop button .sub{font-size:10px;font-weight:500;color:var(--mu)}
+.mcdrop button.on{background:var(--gp);color:var(--g)}
+.mcdrop .mcempty{padding:10px 12px;font-size:11px;color:var(--mu)}
+.mcdrop .mchint{padding:6px 10px;font-size:10px;color:var(--mu);border-top:1px solid var(--bd);margin-top:2px}
 .sspin{display:none;width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0}
 .sspin.on{display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -257,9 +266,6 @@ td{padding:9px 12px;vertical-align:middle}
       <div class="nitem" data-page="analysis" onclick="nav('analysis')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>Phân tích
       </div>
-      <div class="nitem" data-page="monthly" onclick="nav('monthly')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 15l2.5 2.5L16 12"/></svg>Tổng kết tháng<span class="nbadge rd" id="nb-monthly">0</span>
-      </div>
 
       <div class="nsec">Vận hành</div>
       <div class="nitem" data-page="tracking" onclick="nav('tracking')">
@@ -290,7 +296,6 @@ td{padding:9px 12px;vertical-align:middle}
       <div id="pg-dash" class="page on"></div>
       <div id="pg-alerts" class="page"></div>
       <div id="pg-analysis" class="page"></div>
-      <div id="pg-monthly" class="page"></div>
       <div id="pg-tracking" class="page"></div>
       <div id="pg-filter" class="page"></div>
       <div id="pg-efficiency" class="page"></div>
@@ -503,6 +508,23 @@ function navEfficiencyWith(region){
   if (region) S.filters.eff.region.add(region);
   nav('efficiency');
 }
+/* Từ bảng tóm tắt ở Tổng quan → mở trang Hiệu quả vận hành và cuộn tới đúng máy.
+ * Trang Tổng quan nay chỉ liệt kê dạng bảng, biểu đồ chi tiết từng máy nằm ở trang kia. */
+function navEfficiencyToCode(code){
+  S.filters.eff.region.clear();
+  S.filters.eff.type.clear();
+  nav('efficiency');
+  setTimeout(() => {
+    const el = [...document.querySelectorAll('#pg-efficiency .mm')].find(x => x.textContent.trim() === code);
+    const card = el && el.closest('.card');
+    if (card){
+      card.scrollIntoView({ behavior:'smooth', block:'center' });
+      card.style.transition = 'box-shadow .3s';
+      card.style.boxShadow = '0 0 0 3px var(--g)';
+      setTimeout(()=>{ card.style.boxShadow = ''; }, 1600);
+    }
+  }, 220);
+}
 
 async function apiGet(action){
   const url = new URL(API_URL); url.searchParams.set('action', action);
@@ -537,7 +559,6 @@ async function reloadAll(){
     $('nb-alerts').textContent = S.alerts.total;
     const ineff = computeInefficient(S.master.rows);
     const nbEff = $('nb-eff'); if (nbEff) nbEff.textContent = ineff.length;
-    const nbMon = $('nb-monthly'); if (nbMon) nbMon.textContent = computeMeterMismatch_().length;
     $('ftTime').textContent = new Date().toLocaleTimeString('vi-VN');
 
     setStatus(false, `Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
@@ -667,8 +688,6 @@ function updateSidebarBadges(){
   const filter$ = $('nb-filter'); if (filter$) filter$.textContent = filterWarn;
   const nbEff = $('nb-eff');
   if (nbEff) nbEff.textContent = computeInefficient(S.master.rows).length;
-  const nbMon = $('nb-monthly');
-  if (nbMon) nbMon.textContent = computeMeterMismatch_().length;
 }
 
 function nav(page){
@@ -689,7 +708,6 @@ function renderPage(p){
     case 'dash':     el.innerHTML = viewDash(); afterDash(); break;
     case 'alerts':   el.innerHTML = viewAlerts(); break;
     case 'analysis': el.innerHTML = viewAnalysis(); afterAnalysis(); break;
-    case 'monthly':  el.innerHTML = viewMonthly(); afterMonthly(); break;
     case 'tracking': el.innerHTML = viewTracking(); break;
     case 'filter':   el.innerHTML = viewFilter(); break;
     case 'efficiency': el.innerHTML = viewEfficiency(); afterEfficiency(); break;
@@ -758,13 +776,13 @@ function viewDash(){
       <div class="karr">↗</div>
       <div class="klbl">Không hiệu quả</div>
       <div class="kval">${data.worst}</div>
-      <div class="ksub">dưới ${INEFFECTIVE_THRESHOLD_PCT}% thiết kế</div>
+      <div class="ksub">đủ giờ nhưng CS &lt; ${BAD_THRESHOLD_PCT}%</div>
     </div>
     <div class="kcard tl" onclick="navEfficiencyWith('${region}')">
       <div class="karr">↗</div>
       <div class="klbl">Kém hiệu quả</div>
       <div class="kval">${data.bad}</div>
-      <div class="ksub">dưới ${BAD_THRESHOLD_PCT}% thiết kế</div>
+      <div class="ksub">giờ và CS cùng &lt; ${BAD_THRESHOLD_PCT}%</div>
     </div>
   `;
 
@@ -804,6 +822,16 @@ function viewDash(){
       </div>
     </div>
 
+    <div class="ph" style="margin-top:6px"><h1 style="font-size:15px">Phân bố chung</h1></div>
+    <div class="cg2">
+      <div class="cc"><div class="ct">Công suất theo khu vực (kW)</div><div class="cw"><canvas id="chP1"></canvas></div></div>
+      <div class="cc"><div class="ct">Số máy theo đơn vị hợp tác</div><div class="cw"><canvas id="chP2"></canvas></div></div>
+    </div>
+    <div class="cg2">
+      <div class="cc"><div class="ct">Số máy theo tỉnh (top 15)</div><div class="cw"><canvas id="chP3"></canvas></div></div>
+      <div class="cc"><div class="ct">Cảnh báo theo loại</div><div class="cw"><canvas id="chP4"></canvas></div></div>
+    </div>
+
     <div class="card">
       <div class="ch">
         <h3>Máy kém hiệu quả · Thiết kế vs. Thực tế</h3>
@@ -812,9 +840,21 @@ function viewDash(){
           <button class="btn bg-gr sm" onclick="nav('efficiency')">Xem tất cả →</button>
         </div>
       </div>
-      <div class="cb" id="ineffList">
-        ${ineff.length ? ineff.slice(0,4).map((x,i)=>ineffCardHtml(x, 'dash_ineff_'+i)).join('') :
-          '<div class="empty"><div class="ei">📈</div>Không có máy nào kém hiệu quả trong kỳ đang theo dõi.</div>'}
+      <div class="cb">
+        ${ineff.length ? `<div class="tw" style="max-height:320px"><table>
+          <thead><tr><th>Mã máy</th><th>Đơn vị · Trại</th><th>Khu vực</th><th>Phân loại</th>
+            <th style="text-align:right">Đạt giờ chạy</th><th style="text-align:right">Đạt công suất</th><th></th></tr></thead>
+          <tbody>${ineff.slice(0,12).map(x=>`<tr>
+            <td><span class="mm">${esc(x.code)}</span></td>
+            <td>${esc(String(x.row._byLetter[COL.DONVI]||'').trim()||'—')}${String(x.row._byLetter[COL.TRAI]||'').trim()?' · '+esc(String(x.row._byLetter[COL.TRAI]).trim()):''}</td>
+            <td>${esc(regionOf(x.row))}</td>
+            <td><span class="b ${x.isIneffective?'br':'ba'}">${x.isIneffective?'Không hiệu quả':'Kém hiệu quả'}</span></td>
+            <td style="text-align:right"><span class="b ${pctBadgeCls_(x.pctHr)}">${x.pctHr!=null?Math.round(x.pctHr)+'%':'—'}</span></td>
+            <td style="text-align:right"><span class="b ${pctBadgeCls_(x.pctKw)}">${x.pctKw!=null?Math.round(x.pctKw)+'%':'—'}</span></td>
+            <td><button class="btn bg-b sm" onclick="navEfficiencyToCode('${esc(x.code)}')">Xem biểu đồ →</button></td>
+          </tr>`).join('')}</tbody></table></div>
+          ${ineff.length>12?`<div style="font-size:10px;color:var(--mu);margin-top:8px">Hiện 12/${ineff.length} máy · bấm “Xem tất cả” để xem đầy đủ kèm biểu đồ từng máy.</div>`:''}`
+        : '<div class="empty"><div class="ei">📈</div>Không có máy nào kém hiệu quả trong kỳ đang theo dõi.</div>'}
       </div>
     </div>
 
@@ -844,9 +884,20 @@ function afterDash(){
   chartDoughnutColored('chRegionN', groupRegion('Miền Bắc'), 'north');
   chartDoughnutColored('chRegionS', groupRegion('Miền Nam'), 'south');
 
-  // Render mini charts trong danh sách máy kém hiệu quả
-  const ineff = computeInefficient(m);
-  ineff.slice(0,4).forEach((x,i)=>drawEfficiencyChart('dash_ineff_'+i+'_chart', x));
+  /* "Phân bố chung" — chuyển từ trang Phân tích sang đây. Trang Tổng quan nhìn toàn hệ thống
+   * nên KHÔNG áp bộ lọc (trang Phân tích mới là nơi lọc). Biểu đồ chi tiết từng máy đã bỏ khỏi
+   * trang này — xem ở trang Hiệu quả vận hành. */
+  const sumBy = (k, valK) => m.reduce((o,r)=>{const key=String(r._byLetter[k]||'—').trim()||'—';o[key]=(o[key]||0)+(Number(r._byLetter[valK])||0);return o;},{});
+  const cnt = (k) => m.reduce((o,r)=>{const key=String(r._byLetter[k]||'—').trim()||'—';o[key]=(o[key]||0)+1;return o;},{});
+  chartBar('chP1', sumBy(COL.KHU, COL.KW));   // CS (kW) theo Khu vực
+  chartBar('chP2', cnt(COL.DONVI));           // Số máy theo Đơn vị hợp tác
+  const prov = cnt(COL.TINH);
+  chartBar('chP3', Object.fromEntries(Object.entries(prov).sort((a,b)=>b[1]-a[1]).slice(0,15)));
+  const at = S.alerts.alerts.reduce((o,a)=>{
+    const lbl = a.type==='overdue'?'Quá hạn':(a.type==='oil-high'?'Hao nhớt':(a.type==='data-anomaly'?'Dữ liệu bất thường':'Sắp đến hạn'));
+    o[lbl]=(o[lbl]||0)+1;return o;
+  },{});
+  chartDoughnut('chP4', at);
 }
 
 function viewAlerts(){
@@ -1129,19 +1180,110 @@ function clearAllAnalysisFilters(){
   Object.values(S.filters.analysis).forEach(s => s.clear());
   renderPage('analysis');
 }
-/* Lọc trực tiếp trên DOM danh sách chip mã máy khi gõ tìm — tránh render lại
- * cả trang (mất focus ô tìm) mỗi lần gõ 1 ký tự. */
-function filterMachineChips(q){
-  q = q.trim().toLowerCase();
-  document.querySelectorAll('#machineChipList .fchip').forEach(el => {
-    el.style.display = (!q || (el.dataset.code||'').includes(q)) ? '' : 'none';
-  });
+/* ---- Ô lọc mã máy kiểu gõ-để-gợi-ý ----------------------------------------
+ * Trước đây in thẳng cả 80 chip mã máy ra màn hình, chiếm gần nửa trang và
+ * càng thêm máy càng rối. Nay: KTV gõ vài ký tự → hiện danh sách thả xuống các
+ * mã khớp để bấm chọn. Mã đã chọn hiển thị thành chip có nút ✕ để bỏ.
+ *
+ * Ô input được cập nhật TRỰC TIẾP TRÊN DOM (không render lại cả trang mỗi lần
+ * gõ 1 ký tự) — nếu render lại, ô input bị dựng mới và mất con trỏ ngay lập tức. */
+const MACHINE_DROPDOWN_MAX = 30;   // số gợi ý tối đa hiện 1 lúc, tránh danh sách dài vô tận
+
+function allMachineCodes_(){
+  return [...new Set(S.master.rows.map(r => String(r._byLetter.B||'').trim()).filter(Boolean))].sort();
 }
 
+/* Gợi ý theo ký tự đã gõ. Khớp cả mã máy lẫn đơn vị/trại để gõ "baf" cũng ra máy của BAF. */
+function machineSuggestions_(q){
+  const sel = S.filters.analysis.machine;
+  const key = String(q||'').trim().toLowerCase();
+  const byCode = new Map(S.master.rows.map(r => [String(r._byLetter.B||'').trim(), r]));
+  let list = allMachineCodes_().filter(c => !sel.has(c));
+  if (key){
+    list = list.filter(c => {
+      const r = byCode.get(c);
+      const hay = `${c} ${r?r._byLetter[COL.DONVI]||'':''} ${r?r._byLetter[COL.TRAI]||'':''}`.toLowerCase();
+      return hay.includes(key);
+    });
+    // Mã bắt đầu bằng chuỗi gõ được ưu tiên lên đầu
+    list.sort((a,b) => {
+      const sa = a.toLowerCase().startsWith(key) ? 0 : 1;
+      const sb = b.toLowerCase().startsWith(key) ? 0 : 1;
+      return sa - sb || a.localeCompare(b);
+    });
+  }
+  return { list, byCode, total: list.length };
+}
+
+function renderMachineDropdown(){
+  const box = $('anMachineDrop');
+  if (!box) return;
+  const q = ($('anMachineInput') || {}).value || '';
+  const { list, byCode, total } = machineSuggestions_(q);
+
+  if (!total){
+    box.innerHTML = `<div class="mcempty">${q.trim() ? 'Không có mã máy nào khớp “'+esc(q.trim())+'”' : 'Đã chọn hết mã máy'}</div>`;
+    box.style.display = 'block';
+    return;
+  }
+  const shown = list.slice(0, MACHINE_DROPDOWN_MAX);
+  box.innerHTML = shown.map(c => {
+    const r = byCode.get(c);
+    const sub = r ? [String(r._byLetter[COL.DONVI]||'').trim(), String(r._byLetter[COL.TRAI]||'').trim()].filter(Boolean).join(' · ') : '';
+    return `<button onclick="pickMachine('${esc(c)}')"><span>${esc(c)}</span><span class="sub">${esc(sub)}</span></button>`;
+  }).join('')
+  + (total > shown.length ? `<div class="mchint">Còn ${total-shown.length} mã nữa — gõ thêm ký tự để thu hẹp</div>` : '');
+  box.style.display = 'block';
+}
+
+function openMachineDropdown(){ renderMachineDropdown(); }
+function closeMachineDropdown(){ const b = $('anMachineDrop'); if (b) b.style.display = 'none'; }
+
+function pickMachine(code){
+  S.filters.analysis.machine.add(code);
+  renderPage('analysis');
+  // Trả lại con trỏ vào ô tìm để chọn tiếp máy thứ 2, 3… mà không phải bấm chuột lại
+  const inp = $('anMachineInput');
+  if (inp){ inp.value = ''; inp.focus(); renderMachineDropdown(); }
+}
+function unpickMachine(code){
+  S.filters.analysis.machine.delete(code);
+  renderPage('analysis');
+}
+
+/* Enter = chọn luôn gợi ý đầu tiên · Escape = đóng danh sách */
+function onMachineInputKey(ev){
+  if (ev.key === 'Escape'){ closeMachineDropdown(); return; }
+  if (ev.key === 'Enter'){
+    const { list } = machineSuggestions_(ev.target.value);
+    if (list.length) pickMachine(list[0]);
+  }
+}
+
+// Bấm ra ngoài thì đóng danh sách thả xuống
+document.addEventListener('click', e => {
+  const box = document.querySelector('.mcbox');
+  if (box && !box.contains(e.target)) closeMachineDropdown();
+});
+
 /* So sánh thực tế/thiết kế cho đúng bộ máy đang lọc — hiện ngay phía trên 2 biểu đồ theo ngày. */
-function analysisComparisonHtml(totals){
+function analysisComparisonHtml(totals, nMachines){
   const pctKwh = totals.designKwhTotal > 0 ? Math.round(totals.totalKwh / totals.designKwhTotal * 100) : null;
   const pctHours = totals.designHoursTotal > 0 ? Math.round(totals.totalHours / totals.designHoursTotal * 100) : null;
+
+  /* Giờ chạy trung bình của 1 máy trong 1 ngày = tổng giờ ÷ số máy ÷ số ngày đã có dữ liệu.
+   * Chia thêm cho số ngày vì tổng giờ là cộng dồn nhiều ngày — nếu chỉ chia cho số máy thì
+   * con số nhận được là "giờ/máy trong cả kỳ", không phải "/ngày" như tiêu đề.
+   * Cả 2 cách đọc đều hiển thị: số lớn là giá trị/ngày, dòng phụ ghi rõ phép chia. */
+  const nM = nMachines || 0;
+  const nD = totals.daysWithData || 0;
+  const hrPerMachineDay = (nM > 0 && nD > 0) ? totals.totalHours / nM / nD : null;
+  const hrPerMachinePeriod = nM > 0 ? totals.totalHours / nM : null;
+  // Thiết kế/máy/ngày để biết đạt bao nhiêu %
+  const designHrPerMachineDay = (nM > 0 && totals.designHoursPerDay > 0) ? totals.designHoursPerDay / nM : null;
+  const pctHrPerMachine = (hrPerMachineDay != null && designHrPerMachineDay > 0)
+    ? Math.round(hrPerMachineDay / designHrPerMachineDay * 100) : null;
+
   return `
     <div class="card">
       <div class="ch"><h3>So sánh Thực tế / Thiết kế (${totals.daysWithData} ngày đã có dữ liệu)</h3></div>
@@ -1155,6 +1297,14 @@ function analysisComparisonHtml(totals){
             <div class="esv ${pctClass_(pctHours)}">${totals.totalHours.toFixed(1)} <span style="font-size:9px;color:var(--mu);font-weight:500">/ ${totals.designHoursTotal.toFixed(1)} h thiết kế</span></div>
           </div>
           <div class="es"><div class="esl">% Đạt giờ chạy</div><div class="esv ${pctClass_(pctHours)}">${pctHours!=null?pctHours+'%':'—'}</div></div>
+          <div class="es"><div class="esl">Giờ chạy TB 1 máy/ngày</div>
+            <div class="esv ${pctClass_(pctHrPerMachine)}">${hrPerMachineDay!=null?hrPerMachineDay.toFixed(2)+' h':'—'}
+              <span style="font-size:9px;color:var(--mu);font-weight:500">${totals.totalHours.toFixed(1)} h ÷ ${nM} máy ÷ ${nD} ngày${designHrPerMachineDay!=null?` · TK ${designHrPerMachineDay.toFixed(2)} h`:''}</span></div>
+          </div>
+          <div class="es"><div class="esl">Giờ chạy TB 1 máy cả kỳ</div>
+            <div class="esv">${hrPerMachinePeriod!=null?hrPerMachinePeriod.toFixed(1)+' h':'—'}
+              <span style="font-size:9px;color:var(--mu);font-weight:500">${totals.totalHours.toFixed(1)} h ÷ ${nM} máy</span></div>
+          </div>
         </div>
       </div>
     </div>`;
@@ -1171,7 +1321,7 @@ function viewAnalysis(){
     return `<button class="fchip ${on?'on':''}" onclick="toggleAnalysisFilter('${setName}','${esc(value)}')">${esc(label ?? value)}</button>`;
   };
   const units = [...new Set(S.master.rows.map(r=>String(r._byLetter[COL.DONVI]||'').trim()).filter(Boolean))].sort();
-  const allCodes = S.master.rows.map(r=>String(r._byLetter.B||'').trim()).filter(Boolean).sort();
+  const picked = [...f.machine].sort();
 
   return `
     <div class="ph">
@@ -1195,18 +1345,22 @@ function viewAnalysis(){
         <span class="mslbl">Đơn vị hợp tác</span>
         ${units.map(u=>chip('unit',u)).join('')}
       </div>` : ''}
-      <div class="msg" style="align-items:flex-start">
+      <div class="msg" style="align-items:center">
         <span class="mslbl">Mã máy</span>
-        <input class="si" style="max-width:200px" placeholder="🔍 Tìm mã máy…" oninput="filterMachineChips(this.value)">
-        ${f.machine.size?`<button class="fchip on" onclick="clearAnalysisFilter('machine')">✕ Bỏ chọn (${f.machine.size})</button>`:''}
-      </div>
-      <div id="machineChipList" style="display:flex;flex-wrap:wrap;gap:5px;max-height:110px;overflow-y:auto;padding-left:2px">
-        ${allCodes.map(c=>`<button class="fchip ${f.machine.has(c)?'on':''}" data-code="${esc(c.toLowerCase())}" onclick="toggleAnalysisFilter('machine','${esc(c)}')">${esc(c)}</button>`).join('')}
+        <span class="mcbox">
+          <input class="si" id="anMachineInput" style="max-width:230px" autocomplete="off"
+                 placeholder="Gõ mã máy để chọn…"
+                 oninput="renderMachineDropdown()" onfocus="openMachineDropdown()"
+                 onkeydown="onMachineInputKey(event)">
+          <div class="mcdrop" id="anMachineDrop" style="display:none"></div>
+        </span>
+        ${picked.map(c=>`<button class="fchip on" title="Bỏ chọn ${esc(c)}" onclick="unpickMachine('${esc(c)}')">${esc(c)} ✕</button>`).join('')}
+        ${picked.length>1?`<button class="fchip" onclick="clearAnalysisFilter('machine')">✕ Bỏ hết ${picked.length} mã</button>`:''}
       </div>
       ${anyFilter?`<div class="msg"><button class="btn bg-gr sm" onclick="clearAllAnalysisFilters()">↺ Bỏ hết bộ lọc</button></div>`:''}
     </div>
 
-    ${analysisComparisonHtml(totals)}
+    ${analysisComparisonHtml(totals, filteredM.length)}
 
     <div class="card">
       <div class="ch">
@@ -1226,15 +1380,7 @@ function viewAnalysis(){
       <div class="cb"><div class="cw" style="height:260px"><canvas id="chDailyHours"></canvas></div></div>
     </div>
 
-    <div class="ph" style="margin-top:6px"><h1 style="font-size:15px">Phân bố chung</h1></div>
-    <div class="cg2">
-      <div class="cc"><div class="ct">Công suất theo khu vực (kW)</div><div class="cw"><canvas id="chP1"></canvas></div></div>
-      <div class="cc"><div class="ct">Số máy theo đơn vị hợp tác</div><div class="cw"><canvas id="chP2"></canvas></div></div>
-    </div>
-    <div class="cg2">
-      <div class="cc"><div class="ct">Số máy theo tỉnh (top 15)</div><div class="cw"><canvas id="chP3"></canvas></div></div>
-      <div class="cc"><div class="ct">Cảnh báo theo loại</div><div class="cw"><canvas id="chP4"></canvas></div></div>
-    </div>
+    ${monthlySectionHtml_()}
   `;
 }
 
@@ -1293,19 +1439,9 @@ function afterAnalysis(){
   chartBarClickable('chDailyHours', totals.labels, totals.hoursByDay, '#2563eb',
     idx => openDayDrilldown(idx+1, 'hours'), { anomalyDay: totals.hoursAnomalyDay, mean: totals.meanHours, design: totals.designHoursPerDay });
 
-  const m = S.master.rows;
-  // Công suất (kW) theo Khu vực (F), giá trị I
-  const sumBy = (k, valK) => m.reduce((o,r)=>{const key=String(r._byLetter[k]||'—').trim()||'—';o[key]=(o[key]||0)+(Number(r._byLetter[valK])||0);return o;},{});
-  const cnt = (k) => m.reduce((o,r)=>{const key=String(r._byLetter[k]||'—').trim()||'—';o[key]=(o[key]||0)+1;return o;},{});
-  chartBar('chP1', sumBy(COL.KHU, COL.KW));   // CS (kW) theo Khu vực
-  chartBar('chP2', cnt(COL.DONVI));           // Số máy theo Đơn vị hợp tác
-  const prov = cnt(COL.TINH);
-  chartBar('chP3', Object.fromEntries(Object.entries(prov).sort((a,b)=>b[1]-a[1]).slice(0,15)));
-  const at = S.alerts.alerts.reduce((o,a)=>{
-    const lbl = a.type==='overdue'?'Quá hạn':(a.type==='oil-high'?'Hao nhớt':(a.type==='data-anomaly'?'Dữ liệu bất thường':'Sắp đến hạn'));
-    o[lbl]=(o[lbl]||0)+1;return o;
-  },{});
-  chartDoughnut('chP4', at);
+  // "Phân bố chung" đã chuyển sang trang Tổng quan (afterDash).
+  // Tổng kết hiệu quả tháng nay là 1 phần của trang này → vẽ luôn tại đây.
+  afterMonthly();
 }
 
 /* Drill-down: bấm vào 1 cột biểu đồ theo ngày → xem chi tiết từng máy ngày đó */
@@ -2005,9 +2141,9 @@ function viewEfficiency(){
     <div class="ph">
       <h1>Theo dõi hiệu quả vận hành</h1>
       <p>${base.length} máy đủ điều kiện · ${filtered.length} máy sau lọc ·
-        <span style="color:var(--red);font-weight:700">${nIneffective} không hiệu quả</span> (dưới ${INEFFECTIVE_THRESHOLD_PCT}%) ·
-        <span style="color:var(--amb);font-weight:700">${nBad} kém hiệu quả</span> (dưới ${BAD_THRESHOLD_PCT}%) ·
-        đánh giá theo từng ngày trong ${RECENT_DAYS_FOR_EVAL} ngày gần nhất · biểu đồ vẫn hiện đủ cả tháng</p>
+        <span style="color:var(--red);font-weight:700">${nIneffective} không hiệu quả</span> (chạy đủ giờ mà công suất &lt; ${BAD_THRESHOLD_PCT}%) ·
+        <span style="color:var(--amb);font-weight:700">${nBad} kém hiệu quả</span> (giờ chạy và công suất cùng &lt; ${BAD_THRESHOLD_PCT}%) ·
+        đánh giá theo TB ${RECENT_DAYS_FOR_EVAL} ngày gần nhất · biểu đồ vẫn hiện đủ cả tháng</p>
     </div>
 
     <div class="msf">
@@ -2132,6 +2268,22 @@ function hhmm(v){
   return '';
 }
 
+/* Nạp lại Sheet 9 mà backend trả kèm sau khi sửa dữ liệu ngày ở Sheet 5.
+ * Backend (_updateEfficiencyAndResync) tính lại tổng tháng ngay trong cùng request,
+ * nên web chỉ cần thay state là mọi biểu đồ/bảng tháng dùng đúng số mới. */
+function applyMonthlyResync_(res){
+  if (!res) return;
+  if (res.monthlySheet && res.monthlySheet.headers){
+    S.monthly = res.monthlySheet;
+  }
+  if (res.monthlyError){
+    toast('Đã lưu Sheet 5, nhưng chưa tính lại được Tổng kết tháng: ' + res.monthlyError, 'err');
+  }
+  if (res.monthlyWarning){
+    toast(res.monthlyWarning, 'err');
+  }
+}
+
 async function saveEffCell(rowId, header, value){
   setStatus(true,'Đang lưu…');
   try {
@@ -2140,6 +2292,10 @@ async function saveEffCell(rowId, header, value){
     // cập nhật state cục bộ
     const r = S.efficiency.rows.find(x=>x._row===rowId);
     if (r) r[header] = value;
+    /* Sửa số liệu ngày làm thay đổi tổng tháng → backend đã tính lại Sheet 9 và trả về kèm.
+     * Nạp ngay vào state để phần "Tổng kết hiệu quả tháng" trong trang Phân tích không còn
+     * hiển thị số cũ. Nếu backend báo lỗi phụ, số Sheet 5 vẫn đã lưu — chỉ nhắc tính lại tay. */
+    applyMonthlyResync_(res);
     refreshAlerts();              // tính lại cảnh báo bất thường dữ liệu ngay (không cần tải lại trang)
     updateSidebarBadges();
     setStatus(false,`Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
@@ -2150,7 +2306,7 @@ async function saveEffCell(rowId, header, value){
     } else {
       // Sửa trực tiếp trên bảng (trang Cảnh báo/Hiệu quả vận hành, không qua modal) → vẽ lại trang để cập nhật danh sách
       const curPage = document.querySelector('.page.on');
-      if (curPage && (curPage.id==='pg-alerts' || curPage.id==='pg-efficiency')) renderCurrent();
+      if (curPage && (curPage.id==='pg-alerts' || curPage.id==='pg-efficiency' || curPage.id==='pg-analysis')) renderCurrent();
     }
   } catch(e){
     toast('Lỗi lưu: '+e.message,'err');
@@ -2275,6 +2431,7 @@ async function saveEfficiencyModal(rowId){
     const res = await apiPost({action:'updateEfficiency', row:rowId, updates, user:S.user.name});
     if (!res.ok) throw new Error(res.error||'Lỗi lưu');
     Object.assign(row, updates);
+    applyMonthlyResync_(res);
     clearDraft('efficiency:'+rowId);
     clearDraftContext();
     closeOv();
@@ -2473,18 +2630,23 @@ function recentWindowAvg_(arr, anchorDay, n){
   return { avg: days.reduce((a,d)=>a+d.val,0) / days.length, n: days.length };
 }
 const RECENT_DAYS_FOR_EVAL = 3;     // đánh giá hiệu quả chỉ dựa vào N ngày gần nhất, không phải cả tháng
-const BAD_THRESHOLD_PCT = 80;       // 1 trong N ngày đạt < 80% thiết kế → "kém hiệu quả"
-const INEFFECTIVE_THRESHOLD_PCT = 50; // 1 trong N ngày đạt < 50% thiết kế → "không hiệu quả" (nặng hơn, loại khỏi "kém hiệu quả")
+const BAD_THRESHOLD_PCT = 80;       // ngưỡng chung: TB N ngày đạt < 80% thiết kế thì coi là thấp
+// INEFFECTIVE_THRESHOLD_PCT (cũ = 50) đã bỏ: mức nặng/nhẹ nay quyết định bởi việc giờ chạy
+// có đạt hay không, chứ không phải bởi một ngưỡng % thứ hai. Xem computeInefficient().
 function pctClass_(p){ return p==null?'':(p<70?'bad':(p<90?'warn':'ok')); }
 function pctBadgeCls_(p){ const c = pctClass_(p); return c==='bad'?'br':(c==='warn'?'ba':(c===''?'bmu':'bg')); }
 
 /**
  * Tính danh sách máy kém hiệu quả / không hiệu quả từ S.efficiency.
- * ĐÁNH GIÁ THEO TỪNG NGÀY (không phải trung bình) trong {RECENT_DAYS_FOR_EVAL} ngày gần
- * nhất có dữ liệu, so với thiết kế/ngày:
- *   - "Không hiệu quả"  : chỉ cần 1 trong N ngày có % đạt (giờ chạy HOẶC điện phát) < 50%
- *   - "Kém hiệu quả"    : chỉ cần 1 trong N ngày có % đạt < 80% (và KHÔNG rơi vào "không hiệu quả")
- *   → 2 nhóm loại trừ nhau: máy đã vào "không hiệu quả" thì không còn nằm trong "kém hiệu quả".
+ * Đánh giá theo TRUNG BÌNH {RECENT_DAYS_FOR_EVAL} ngày gần nhất so với thiết kế/ngày —
+ * đúng bằng con số % hiển thị trên thẻ máy.
+ *
+ * CÔNG SUẤT PHÁT QUYẾT ĐỊNH, giờ chạy chỉ phân mức nặng/nhẹ:
+ *   - Công suất ≥ 80%                    → không vào danh sách (dù giờ chạy thấp)
+ *   - Công suất < 80% và giờ chạy ≥ 80%  → "Không hiệu quả"  (chạy đủ giờ mà không ra điện)
+ *   - Công suất < 80% và giờ chạy < 80%  → "Kém hiệu quả"    (ít được huy động)
+ *   → 2 nhóm loại trừ nhau.
+ *
  * Lọc: chỉ tính máy Thuê/Hợp tác/Bán ở trạng thái HĐ bình thường.
  * Biểu đồ (drawEfficiencyChart) vẫn vẽ đủ dữ liệu cả tháng — chỉ phần đánh giá/badge dùng cửa sổ ngắn.
  * Muốn xem tổng kết CẢ THÁNG so với thiết kế (đạt bao nhiêu %) → dùng computeMonthlyReport().
@@ -2542,16 +2704,39 @@ function computeInefficient(masterRows){
     const recentKwDays = recentWindowDays_(powerArr, anchorDay, RECENT_DAYS_FOR_EVAL).map(d => ({ ...d, pct: pctOf(d.val, designKw) }));
     const allDayPcts = recentHrDays.concat(recentKwDays).filter(d => d.pct != null);
 
-    const worstDays = allDayPcts.filter(d => d.pct < INEFFECTIVE_THRESHOLD_PCT);
+    // Chỉ để hiển thị "ngày nào cần soi", KHÔNG dùng phân loại (xem giải thích bên dưới)
+    const worstDays = allDayPcts.filter(d => d.pct < 50);
     const badDays = allDayPcts.filter(d => d.pct < BAD_THRESHOLD_PCT);
-    const isIneffective = worstDays.length > 0;                    // "không hiệu quả" — < 50% ở ít nhất 1 ngày
-    const badHr = badDays.some(d => recentHrDays.includes(d));
-    const badKw = badDays.some(d => recentKwDays.includes(d));
-    const isBad = !isIneffective && badDays.length > 0;            // "kém hiệu quả" — < 80%, loại trừ máy đã "không hiệu quả"
+    // ===== PHÂN LOẠI THEO TRUNG BÌNH {RECENT_DAYS_FOR_EVAL} NGÀY GẦN NHẤT =====
+    // CÔNG SUẤT PHÁT LÀ TIÊU CHÍ QUYẾT ĐỊNH. Giờ chạy chỉ dùng để phân mức nặng/nhẹ.
+    //
+    //   Công suất ≥ 80%                     → KHÔNG vào danh sách, dù giờ chạy thấp bao nhiêu.
+    //       Máy chạy ít giờ nhưng vẫn phát đủ điện là máy tốt — ít giờ là do nhu cầu huy động,
+    //       không phải lỗi máy. (VD NS200KVA18: giờ 71% nhưng công suất 104% → máy bình thường.)
+    //   Công suất < 80% VÀ giờ chạy ≥ 80%   → "Không hiệu quả" (nặng).
+    //       Chạy đủ giờ mà không ra công suất → hỏng hóc/suy giảm thực sự, phải kiểm tra máy.
+    //   Công suất < 80% VÀ giờ chạy < 80%   → "Kém hiệu quả" (nhẹ hơn).
+    //       Cả hai cùng thấp tương ứng nhau → máy ít được huy động, cần rà lại kế hoạch vận
+    //       hành trước khi nghi ngờ thiết bị.
+    //
+    // LỊCH SỬ 2 LẦN SỬA — KHÔNG quay lại cách cũ:
+    //   1. Bản đầu phân loại theo TỪNG NGÀY (1 ngày dưới ngưỡng là bị liệt kê) → máy có ngày
+    //      nghỉ luôn bị gắn "không hiệu quả" dù TB đạt 85-104%.
+    //   2. Bản sau phân loại theo TB nhưng giờ chạy thấp vẫn tự kéo máy vào danh sách → vẫn
+    //      báo nhầm máy phát đủ điện.
+    const pctHr = pctOf(actualHr, designHr);
+    const pctKw = pctOf(actualKw, designKw);
+
+    const badHr = pctHr != null && pctHr < BAD_THRESHOLD_PCT;
+    const badKw = pctKw != null && pctKw < BAD_THRESHOLD_PCT;
+    // Không đọc được % công suất (thiếu thiết kế hoặc thiếu dữ liệu) → không kết luận,
+    // để cảnh báo "dữ liệu bất thường" xử lý riêng thay vì đoán mò.
+    const isIneffective = badKw && !badHr;    // đủ giờ mà thiếu điện → nặng
+    const isBad         = badKw && badHr;     // cả hai cùng thấp → nhẹ hơn
 
     return {
       code, row:r, effRow, designHr, actualHr, designKw, actualKw,
-      monthActualHr, monthActualKw,
+      monthActualHr, monthActualKw, pctHr, pctKw,
       recentDaysHr: recentHr.n, recentDaysKw: recentKw.n,
       recentHrDays, recentKwDays, worstDays, badDays,
       daily, points, powerArr, hoursArr, badHr, badKw,
@@ -2769,15 +2954,17 @@ function buildMonthlyModel_(){
   return { months, machines, hasData: months.length>0 && machines.length>0, hHrTk, hKwTk };
 }
 
-/* Áp bộ lọc của trang lên danh sách máy */
+/* Áp bộ lọc lên danh sách máy của Sheet 9.
+ * Tổng kết tháng nay nằm TRONG trang Phân tích nên dùng CHUNG bộ lọc của trang đó
+ * (mã máy / khu vực / loại hình / đơn vị) — không còn bộ lọc riêng, tránh cảnh 2 bộ lọc
+ * chồng nhau trên cùng 1 màn hình cho ra 2 tập máy khác nhau. */
 function applyMonthlyFilters_(machines){
-  const f = S.filters.monthly;
-  const q = (f.q||'').trim().toLowerCase();
+  const f = S.filters.analysis;
   return machines.filter(x => {
-    if (f.region.size && !f.region.has(x.region)) return false;
-    if (f.type.size   && !f.type.has(x.type))     return false;
-    if (f.unit.size   && !f.unit.has(x.unit))     return false;
-    if (q && !`${x.code} ${x.unit} ${x.farm}`.toLowerCase().includes(q)) return false;
+    if (f.machine.size && !f.machine.has(x.code)) return false;
+    if (f.region.size  && !f.region.has(x.region)) return false;
+    if (f.type.size    && !f.type.has(x.type))     return false;
+    if (f.unit.size    && !f.unit.has(x.unit))     return false;
     return true;
   });
 }
@@ -2863,7 +3050,10 @@ function computeMonthlyTrend_(months, machines, totals){
 }
 
 /* ---------- RENDER ---------- */
-function viewMonthly(){
+/* Khối "Tổng kết hiệu quả tháng" — nay là 1 SECTION nằm trong trang Phân tích
+ * (trước là trang riêng ở sidebar). Dùng chung bộ lọc của trang Phân tích,
+ * chỉ giữ riêng ô chọn "tháng xem chi tiết". */
+function monthlySectionHtml_(){
   const model = buildMonthlyModel_();
   const { months } = model;
   const machinesAll = model.machines;
@@ -2874,7 +3064,7 @@ function viewMonthly(){
 
   if (!months.length){
     return `
-      <div class="ph"><h1>Tổng kết hiệu quả tháng</h1></div>
+      <div class="ph" style="margin-top:6px"><h1 style="font-size:15px">Tổng kết hiệu quả tháng</h1></div>
       <div class="card" style="background:#fffbeb;border-left:4px solid var(--amb)">
         <div style="padding:14px 16px;font-size:11px;color:#78350f;line-height:1.7">
           Chưa đọc được khối cột theo tháng trong sheet <b>"9. Tổng kết hiệu quả tháng"</b>.<br>
@@ -2892,49 +3082,31 @@ function viewMonthly(){
   const sel = months.some(m=>m.label===S.filters.monthly.month) ? S.filters.monthly.month : defaultMonth;
   const selTotal = totals.find(t=>t.label===sel) || {};
 
-  const f = S.filters.monthly;
-  const chip = (setName, value) => {
-    const on = f[setName].has(value);
-    return `<button class="fchip ${on?'on':''}" onclick="toggleMonthlyFilter('${setName}','${esc(value)}')">${esc(value)}</button>`;
-  };
-  const units = [...new Set(machinesAll.map(x=>x.unit).filter(Boolean))].sort();
-  const anyFilter = f.region.size || f.type.size || f.unit.size || f.q;
-
   return `
-    <div class="ph">
-      <h1>Tổng kết hiệu quả tháng</h1>
-      <p>${months.length} tháng đã ghi nhận · ${machines.length}/${machinesAll.length} máy theo bộ lọc ·
+    <div class="ph" style="margin-top:6px">
+      <h1 style="font-size:15px">Tổng kết hiệu quả tháng</h1>
+      <p>${months.length} tháng đã ghi nhận · ${machines.length}/${machinesAll.length} máy theo bộ lọc phía trên ·
          <b style="color:var(--red)">${mismatch.length}</b> dòng lệch công tơ >${METER_TOLERANCE_PCT}% ·
          <b style="color:var(--amb)">${trend.flagged.length}</b> tháng lệch khỏi đường trung bình</p>
     </div>
 
-    <div class="msf" style="flex-direction:column;align-items:stretch;gap:10px">
-      <div class="msg">
-        <span class="mslbl">Khu vực</span>${chip('region','Miền Bắc')}${chip('region','Miền Nam')}
-      </div>
-      <div class="msg">
-        <span class="mslbl">Loại hình</span>${chip('type','Thuê')}${chip('type','Hợp tác')}${chip('type','Bán')}
-      </div>
-      ${units.length ? `<div class="msg"><span class="mslbl">Đơn vị</span>${units.map(u=>chip('unit',u)).join('')}</div>` : ''}
-      <div class="msg">
-        <input class="si" style="max-width:230px" placeholder="🔍 Tìm mã máy, đơn vị, trại…"
-               value="${esc(f.q||'')}" oninput="S.filters.monthly.q=this.value;renderPage('monthly')">
-        <span class="mslbl" style="margin-left:8px">Tháng xem chi tiết</span>
-        <select class="sel" style="min-width:120px" onchange="S.filters.monthly.month=this.value;renderPage('monthly')">
-          ${months.map(m=>`<option value="${esc(m.label)}" ${m.label===sel?'selected':''}>${esc(m.label)}</option>`).join('')}
-        </select>
-        <button class="btn bg-g sm" onclick="rebuildMonthly()">↻ Tính lại từ Sheet 5</button>
-        <button class="btn bg-gr sm" onclick="exportMonthlyCsv()">⤓ CSV</button>
-        ${anyFilter?`<button class="btn bg-gr sm" onclick="clearMonthlyFilters()">↺ Bỏ lọc</button>`:''}
-      </div>
-    </div>
-
     <div class="card">
-      <div class="ch"><h3>Tháng ${esc(sel)}</h3><span class="b bmu">${selTotal.nPower||0} máy có số liệu</span></div>
+      <div class="ch">
+        <h3>Tháng ${esc(sel)}</h3>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span class="b bmu">${selTotal.nPower||0} máy có số liệu</span>
+          <select class="sel" style="min-width:110px" onchange="S.filters.monthly.month=this.value;renderPage('analysis')">
+            ${months.map(m=>`<option value="${esc(m.label)}" ${m.label===sel?'selected':''}>${esc(m.label)}</option>`).join('')}
+          </select>
+          <button class="btn bg-g sm" onclick="rebuildMonthly()">↻ Tính lại từ Sheet 5</button>
+          <button class="btn bg-gr sm" onclick="exportMonthlyCsv()">⤓ CSV</button>
+        </div>
+      </div>
       <div class="cb"><div class="effstats">
         <div class="es"><div class="esl">Tổng công suất</div><div class="esv">${fmt2_(selTotal.power)} <span style="font-size:9px;color:var(--mu);font-weight:500">kWh</span></div></div>
         <div class="es"><div class="esl">Tổng số giờ</div><div class="esv">${fmt2_(selTotal.hours)} <span style="font-size:9px;color:var(--mu);font-weight:500">h</span></div></div>
         <div class="es"><div class="esl">Công suất phát TB</div><div class="esv ok">${selTotal.avgKw!=null?fmt2_(selTotal.avgKw):'—'} <span style="font-size:9px;color:var(--mu);font-weight:500">kW = tổng CS ÷ tổng giờ</span></div></div>
+        <div class="es"><div class="esl">Giờ chạy TB 1 máy/ngày</div><div class="esv">${monthlyHrPerMachineDay_(selTotal, machines.length, sel)}</div></div>
         <div class="es"><div class="esl">Tổng chỉ số công tơ</div><div class="esv">${fmt2_(selTotal.meter)} <span style="font-size:9px;color:var(--mu);font-weight:500">${selTotal.nMeter||0} máy đã nhập</span></div></div>
       </div></div>
     </div>
@@ -2943,6 +3115,12 @@ function viewMonthly(){
       <div class="ch"><h3>Công suất phát trung bình theo tháng (kW)</h3>
         <span class="b bmu">Tổng công suất ÷ Tổng số giờ của chính tháng đó · đường xám = trung bình các tháng</span></div>
       <div class="cb"><div class="cw" style="height:260px"><canvas id="chMonAvgKw"></canvas></div></div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>Giờ chạy trung bình 1 máy/ngày theo tháng (h)</h3>
+        <span class="b bmu">Tổng số giờ ÷ số máy ÷ số ngày của tháng đó</span></div>
+      <div class="cb"><div class="cw" style="height:240px"><canvas id="chMonHrPerMachine"></canvas></div></div>
     </div>
 
     <div class="card">
@@ -2961,6 +3139,21 @@ function viewMonthly(){
     ${trend.flagged.map(monthlyTrendCardHtml_).join('')}
     ${monthlyDetailTableHtml_(months, machines, sel)}
   `;
+}
+
+/* Số ngày của 1 tháng theo nhãn "MM/yyyy" — dùng để quy tổng giờ về giờ/máy/ngày */
+function daysInMonthLabel_(label){
+  const m = String(label||'').match(/^(\d{1,2})\/(\d{4})$/);
+  if (!m) return 30;
+  return new Date(Number(m[2]), Number(m[1]), 0).getDate();
+}
+
+/* Giờ chạy TB 1 máy/ngày của 1 tháng = tổng giờ ÷ số máy ÷ số ngày trong tháng */
+function monthlyHrPerMachineDay_(t, nMachines, label){
+  const nD = daysInMonthLabel_(label);
+  if (!nMachines || !nD || t.hours == null) return '—';
+  const v = t.hours / nMachines / nD;
+  return `${(Math.round(v*100)/100)} <span style="font-size:9px;color:var(--mu);font-weight:500">${fmt2_(t.hours)} h ÷ ${nMachines} máy ÷ ${nD} ngày</span>`;
 }
 
 /* NỘI DUNG 2 — bảng cảnh báo chênh lệch số liệu */
@@ -3110,14 +3303,22 @@ function afterMonthly(){
   chartBarClickable('chMonAvgKw', labels, avgVals, '#0d6e3f', null,
     { mean: meanAvg, xTitle: 'Tháng' });
 
-  // 2) Tổng công suất từng tháng + tô vàng tháng lệch khỏi đường trung bình
+  // 2) Giờ chạy TB 1 máy/ngày từng tháng = tổng giờ ÷ số máy ÷ số ngày trong tháng
+  const nM = machines.length;
+  const hrPerMD = totals.map(t => (nM > 0 && t.hours != null)
+    ? Math.round(t.hours / nM / daysInMonthLabel_(t.label) * 100) / 100 : 0);
+  const hrNonZero = hrPerMD.filter(v => v > 0);
+  chartBarClickable('chMonHrPerMachine', labels, hrPerMD, '#7c3aed', null,
+    { mean: hrNonZero.length ? hrNonZero.reduce((a,b)=>a+b,0)/hrNonZero.length : 0, xTitle: 'Tháng' });
+
+  // 3) Tổng công suất từng tháng + tô vàng tháng lệch khỏi đường trung bình
   const powVals = totals.map(t=>t.power);
   const meanPow = withData.reduce((a,t)=>a+t.power,0)/withData.length;
   const anomaly = totals.map(t => t.hasData && meanPow>0 && Math.abs(t.power-meanPow)/meanPow*100 > MONTHLY_TREND_PCT);
   chartBarClickable('chMonPower', labels, powVals, '#2563eb', null,
     { mean: meanPow, anomalyDay: anomaly, xTitle: 'Tháng' });
 
-  // 3) Đối chiếu Tổng công suất ↔ Chỉ số công tơ
+  // 4) Đối chiếu Tổng công suất ↔ Chỉ số công tơ
   chartMonthlyCompare_('chMonMeter', labels, totals.map(t=>t.power), totals.map(t=>t.meter));
 }
 
@@ -3152,19 +3353,6 @@ function chartMonthlyCompare_(id, labels, power, meter){
 }
 
 /* ---------- HÀNH ĐỘNG ---------- */
-function toggleMonthlyFilter(setName, val){
-  const set = S.filters.monthly[setName];
-  if (set.has(val)) set.delete(val); else set.add(val);
-  renderPage('monthly');
-}
-function clearMonthlyFilters(){
-  S.filters.monthly.region.clear();
-  S.filters.monthly.type.clear();
-  S.filters.monthly.unit.clear();
-  S.filters.monthly.q = '';
-  renderPage('monthly');
-}
-
 /* KTV nhập "Chỉ số công tơ" — đường DUY NHẤT ghi vào cột này (code tự động không đụng tới).
  * Sau này nối nguồn lấy tự động thì chỉ cần gọi lại đúng action 'updateMeter'. */
 async function saveMonthlyMeter(code, monthLabel, value){
@@ -3188,7 +3376,7 @@ async function saveMonthlyMeter(code, monthLabel, value){
     updateSidebarBadges();
     setStatus(false, `Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
     toast('✓ Đã lưu chỉ số công tơ vào Sheet 9','ok');
-    renderPage('monthly');
+    renderPage('analysis');
   } catch(e){
     toast('Lỗi lưu: '+e.message,'err');
     setStatus(false,'❌ '+e.message,true);
@@ -3204,7 +3392,7 @@ async function rebuildMonthly(){
     const created = (res.createdColumns||[]).length + (res.nextMonthColumns||[]).length;
     toast(`✓ Đã tính lại tháng ${res.month} · ${res.machines} máy${created?` · tạo ${created} cột mới`:''}`,'ok');
     await reloadAll();
-    nav('monthly');
+    nav('analysis');
   } catch(e){
     toast('Lỗi: '+e.message,'err');
     setStatus(false,'❌ '+e.message,true);
