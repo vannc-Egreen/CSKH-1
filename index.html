@@ -54,6 +54,7 @@ body{background:var(--bg);color:var(--s);min-height:100vh;font-size:14px;overflo
 .mcdrop button.on{background:var(--gp);color:var(--g)}
 .mcdrop .mcempty{padding:10px 12px;font-size:11px;color:var(--mu)}
 .mcdrop .mchint{padding:6px 10px;font-size:10px;color:var(--mu);border-top:1px solid var(--bd);margin-top:2px}
+.dsgcalc{padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:700;font-family:var(--mono);color:var(--g)}
 .sspin{display:none;width:12px;height:12px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0}
 .sspin.on{display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -3506,49 +3507,133 @@ function exportMonthlyCsv(){
  *  với sửa dữ liệu ngày, nên Sheet 9 cũng được tính lại tự động.
  * ============================================================ */
 
-/* Định vị các cột định mức trong Sheet 5. Dò theo TÊN header, không theo vị trí cứng. */
+/* ---- GIỜ VÀ KHUNG GIỜ CHẠY -------------------------------------------------
+ * Sheet 5 lưu giờ bắt đầu/kết thúc ở cột C/D dưới dạng ô định dạng giờ. Backend đã
+ * chuẩn hoá về chuỗi "HH:mm" trước khi gửi (xem normalizeCell_ trong Code.gs), nhưng
+ * hàm dưới vẫn nhận nhiều dạng để chịu được ô gõ tay: "7:00", "07:00", "7h30", "7.5".
+ */
+function parseHHMM_(v){
+  if (v === null || v === undefined || v === '') return null;
+  if (v instanceof Date) return v.getHours()*60 + v.getMinutes();
+  const s = String(v).trim();
+  if (!s) return null;
+
+  const m = s.match(/^(\d{1,2})\s*[:hH.,]\s*(\d{1,2})\s*$/);
+  if (m){
+    const hh = Number(m[1]), mm = Number(m[2]);
+    if (hh > 24 || mm > 59) return null;
+    return (hh % 24) * 60 + mm;
+  }
+  // Chỉ có giờ: "7" → 07:00
+  if (/^\d{1,2}$/.test(s)){
+    const hh = Number(s);
+    return hh <= 24 ? (hh % 24) * 60 : null;
+  }
+  // "0730" / "1930"
+  if (/^\d{4}$/.test(s)){
+    const hh = Number(s.slice(0,2)), mm = Number(s.slice(2));
+    if (hh > 24 || mm > 59) return null;
+    return (hh % 24) * 60 + mm;
+  }
+  return null;
+}
+function fmtHHMM_(min){
+  if (min == null) return '';
+  const h = Math.floor(min / 60) % 24, m = min % 60;
+  return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+}
+
+/* Tổng số giờ chạy/ngày = giờ kết thúc − giờ bắt đầu.
+ * Kết thúc ≤ bắt đầu nghĩa là máy chạy xuyên đêm sang hôm sau: cộng từ giờ bắt đầu
+ * đến 24:00 rồi cộng tiếp từ 00:00 đến giờ kết thúc — tương đương cộng thêm 24h.
+ * Trả về số thập phân, làm tròn 2 chữ số. */
+function runHours_(startMin, endMin){
+  if (startMin == null || endMin == null) return null;
+  let d = endMin - startMin;
+  if (d <= 0) d += 24 * 60;
+  return Math.round(d / 60 * 100) / 100;
+}
+
+/* Khung giờ chạy chính — tự suy ra, không nhập tay.
+ * Thứ tự xét CÓ Ý NGHĨA: "Cả ngày" phải xét trước, vì máy chạy 9:00→7:00 (22h) vừa
+ * thoả "bắt đầu sau 16h" lẫn "kết thúc trước 9h" nên nếu xét Ca đêm trước sẽ bị gán nhầm. */
+function shiftLabel_(startMin, endMin){
+  const dur = runHours_(startMin, endMin);
+  if (dur == null) return '';
+  // Hai mốc giờ cách nhau dưới 4 tiếng trên mặt đồng hồ → máy chạy gần trọn 24h
+  if (24 - dur < 4) return 'Cả ngày';
+
+  const sH = startMin / 60, eH = endMin / 60;
+  const wraps = endMin <= startMin;            // vắt qua nửa đêm
+  if (!wraps && sH >= 5 && eH <= 23) return 'Ca ngày';
+  if (sH >= 16 && eH <= 9) return 'Ca đêm';
+  // Không khớp khung nào (VD 3:00→10:00): phân theo việc có vắt qua nửa đêm hay không
+  return wraps ? 'Ca đêm' : 'Ca ngày';
+}
+
+/* Định vị các cột A→H của Sheet 5. Dò theo TÊN header, không theo vị trí cứng. */
 function designCols_(){
   const H = (S.efficiency.headers || []).filter(Boolean);
   return {
     H,
-    hMa:    findHeader(H, 'mã.?máy','ma may','^ma$'),
-    hLoai:  findHeader(H, 'loại\\s*hình'),
-    hKhu:   findHeader(H, 'khu\\s*vực'),
-    hRated: findHeader(H, 'công suất tk','công suất thiết kế \\(kw'),
-    hHrTk:  findHeader(H, 'tổng.*giờ chạy/.?ngày','tổng.*giờ chạy.*ngày(?!.*thực)'),
-    hKwTk:  findHeader(H, 'công suất thiết kế phát','thiết kế.*phát/.?ngày'),
+    hStt:    H.find(h => /^stt$/i.test(h.trim())),
+    hMa:     findHeader(H, 'mã.?máy','ma may','^ma$'),
+    hStart:  findHeader(H, 'giờ bắt đầu'),
+    hEnd:    findHeader(H, 'giờ kết thúc'),
+    hKhung:  findHeader(H, 'khung giờ chạy'),
+    hHrTk:   findHeader(H, 'tổng.*giờ chạy/.?ngày','tổng.*giờ chạy.*ngày(?!.*thực)'),
+    hRated:  findHeader(H, 'công suất tk','công suất thiết kế \\(kw'),
+    hKwTk:   findHeader(H, 'công suất thiết kế phát','thiết kế.*phát/.?ngày'),
   };
 }
 
 function designRows_(){
   const c = designCols_();
   const mByCode = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA]||'').trim(), m]));
-  return (S.efficiency.rows || []).map(r => {
+  return (S.efficiency.rows || []).map((r, i) => {
     const code = String((c.hMa ? r[c.hMa] : '') || r._byLetter?.B || '').trim();
     if (!code) return null;
     const m = mByCode.get(code);
-    // Mọi số đọc từ Google Sheet đều làm tròn 2 chữ số — Sheet hay trả về
-    // 13.000000000000002 hoặc 1119.9999999999998 do lỗi dấu phẩy động khi tính công thức.
+
+    const startMin = parseHHMM_(c.hStart ? r[c.hStart] : null);
+    const endMin   = parseHHMM_(c.hEnd   ? r[c.hEnd]   : null);
+    // Số đọc từ Sheet luôn làm tròn 2 chữ số — công thức Sheet hay trả 13.000000000000002
     const rated = num2_(c.hRated ? r[c.hRated] : null);
-    const hrTk  = num2_(c.hHrTk  ? r[c.hHrTk]  : null);
-    const kwTkStored = num2_(c.hKwTk ? r[c.hKwTk] : null);
-    // CS thiết kế phát/ngày là KẾT QUẢ TÍNH: CS định mức máy × Giờ chạy TK/ngày
-    const kwTkCalc = (rated != null && hrTk != null) ? Math.round(rated * hrTk * 100) / 100 : null;
+
+    const hrCalc    = runHours_(startMin, endMin);                     // cột F tính ra
+    const khungCalc = shiftLabel_(startMin, endMin);                   // cột E tính ra
+    const kwCalc    = (rated != null && hrCalc != null) ? Math.round(rated * hrCalc * 100) / 100 : null;
+
+    const hrStored    = num2_(c.hHrTk ? r[c.hHrTk] : null);
+    const kwStored    = num2_(c.hKwTk ? r[c.hKwTk] : null);
+    const khungStored = c.hKhung ? String(r[c.hKhung]||'').trim() : '';
+
     return {
+      stt: c.hStt ? r[c.hStt] : (i + 1),
       code, row: r, master: m,
-      loai:  c.hLoai  ? String(r[c.hLoai]||'').trim()  : (m ? typeOf(m) : ''),
-      khu:   c.hKhu   ? String(r[c.hKhu]||'').trim()   : (m ? regionOf(m) : ''),
       unit:  m ? String(m._byLetter[COL.DONVI]||'').trim() : '',
       farm:  m ? String(m._byLetter[COL.TRAI]||'').trim()  : '',
-      rated, hrTk, kwTkStored, kwTkCalc,
-      // Số đang lưu trong Sheet lệch với công thức → các phép đánh giá đang chạy trên số sai
-      mismatch: (kwTkCalc != null && kwTkStored != null && Math.abs(kwTkCalc - kwTkStored) > 0.01),
+      khu:   m ? regionOf(m) : '',
+      startMin, endMin, rated,
+      hrCalc, khungCalc, kwCalc,
+      hrStored, kwStored, khungStored,
+      /* PHÂN BIỆT 2 LOẠI LỆCH — cố ý tách riêng:
+       *  numMismatch  : SỐ đang lưu (giờ chạy/ngày, CS thiết kế phát) khác kết quả công thức.
+       *                 Đây là lỗi THẬT — mọi đánh giá % đạt, phân loại hiệu quả, cột C/D
+       *                 Sheet 9 đều đọc số đã lưu nên đang chạy sai.
+       *  khungMismatch: NHÃN khung giờ khác 3 giá trị chuẩn (Ca ngày/Ca đêm/Cả ngày).
+       *                 Sheet cũ ghi tự do "ban ngày", "chạy xuyên đêm", "Xuyên đêm"… nên
+       *                 gần như DÒNG NÀO CŨNG lệch. Chỉ là khác cách gọi, không sai số liệu,
+       *                 nên KHÔNG tính vào "cần rà lại" — nếu tính, cả 45 dòng đều vàng và
+       *                 bộ lọc cảnh báo mất hết tác dụng. */
+      numMismatch: (hrCalc != null && hrStored != null && Math.abs(hrCalc - hrStored) > 0.01)
+                || (kwCalc != null && kwStored != null && Math.abs(kwCalc - kwStored) > 0.01),
+      khungMismatch: (!!khungCalc && !!khungStored && khungCalc !== khungStored),
       inMaster: !!m,
     };
   }).filter(Boolean);
 }
 
-/* Lọc danh sách theo bộ lọc hiện tại của trang */
 function designFiltered_(){
   const f = S.filters.design;
   const q = (f.q||'').trim().toLowerCase();
@@ -3562,42 +3647,45 @@ function designFiltered_(){
 
 function viewDesign(){
   const c = designCols_();
-  if (!c.hMa || !c.hHrTk || !c.hKwTk){
+  if (!c.hMa || !c.hHrTk){
     return `<div class="ph"><h1>Định mức thiết kế</h1></div>
       <div class="card"><div class="cb"><div class="empty"><div class="ei">⚠️</div>
         Chưa đọc được cột định mức trong sheet "5. Theo dõi hiệu quả vận hành".<br>
-        Cần có cột <b>Mã máy</b>, <b>Tổng số giờ chạy/ngày</b> và <b>Công suất thiết kế phát/ngày</b>.
+        Cần có cột <b>Mã Máy</b>, <b>Giờ bắt đầu</b>, <b>Giờ kết thúc</b>, <b>Tổng số giờ chạy/ngày</b>,
+        <b>Công suất TK (KW)</b> và <b>Công suất thiết kế phát/ngày</b>.
       </div></div></div>`;
   }
 
   const all = designRows_();
   const f = S.filters.design;
   const nProblem  = all.filter(designProblem_).length;
-  const nMismatch = all.filter(x => x.mismatch).length;
-  const nOrphan   = all.filter(x => !x.inMaster).length;
+  const nNum      = all.filter(x => x.numMismatch).length;
+  const nKhung    = all.filter(x => x.khungMismatch).length;
+  const nMismatch = all.filter(x => x.numMismatch || x.khungMismatch).length;
   const regions = [...new Set(all.map(x=>x.khu).filter(Boolean))].sort();
 
   return `
     <div class="ph">
       <h1>Định mức thiết kế</h1>
-      <p id="designCount">${designFiltered_().length}/${all.length} máy · sửa trực tiếp, lưu ngay vào Sheet 5 ·
-         <b style="color:var(--red)">${nProblem}</b> dòng cần rà lại${nOrphan?` · <b style="color:var(--amb)">${nOrphan}</b> mã không có trong Danh sách máy`:''}</p>
+      <p id="designCount">${designFiltered_().length}/${all.length} máy · cột A→H của sheet "5. Theo dõi hiệu quả vận hành" ·
+         sửa là ghi thẳng vào đúng ô tương ứng trên Google Sheet</p>
     </div>
 
     <div class="card" style="background:#f0f9ff;border-left:4px solid var(--blu)">
       <div style="padding:12px 16px;font-size:11px;color:#075985;line-height:1.7">
-        Chỉ <b>CS định mức máy (kW)</b> và <b>Giờ chạy TK/ngày</b> là số nhập tay. Ba cột còn lại tự tính:
-        CS thiết kế phát/ngày = CS định mức máy × Giờ chạy TK/ngày · Giờ TK/tháng = Giờ chạy TK/ngày × ${MONTHLY_DESIGN_DAYS_UI} ·
-        CS TK/tháng = CS thiết kế phát/ngày × ${MONTHLY_DESIGN_DAYS_UI}.<br>
-        Đây là mẫu số của mọi đánh giá: % đạt giờ chạy, % đạt công suất, phân loại kém/không hiệu quả,
-        ngưỡng "vượt 150% thiết kế", và cột C/D của Tổng kết tháng. Sửa ở đây là đổi kết quả toàn hệ thống.
+        <b>Nhập tay:</b> Mã Máy · Giờ bắt đầu · Giờ kết thúc · Công suất TK (KW).
+        <b>Tự tính:</b> Khung giờ chạy chính · Tổng số giờ chạy/ngày · Công suất thiết kế phát/ngày.<br>
+        Tổng số giờ chạy/ngày = giờ kết thúc − giờ bắt đầu; nếu kết thúc sớm hơn bắt đầu thì máy chạy
+        xuyên đêm nên cộng thêm 24h. Khung giờ: hai mốc cách nhau dưới 4 tiếng → <b>Cả ngày</b>;
+        bắt đầu từ 5h và kết thúc trước 23h → <b>Ca ngày</b>; bắt đầu từ 16h và kết thúc trước 9h → <b>Ca đêm</b>.
       </div>
     </div>
 
     ${nMismatch ? `<div class="card" style="background:#fffbeb;border-left:4px solid var(--amb)">
       <div style="padding:12px 16px;font-size:11px;color:#78350f;line-height:1.7;display:flex;justify-content:space-between;align-items:center;gap:12px">
-        <span><b>${nMismatch} dòng</b> có "CS thiết kế phát/ngày" đang lưu trong Sheet lệch với công thức
-        (CS định mức máy × Giờ chạy TK/ngày). Các phép đánh giá đang chạy trên số đã lưu, không phải số tính ra.</span>
+        <span>${nNum?`<b>${nNum} dòng</b> có SỐ đang lưu lệch với công thức — mọi đánh giá (% đạt, phân loại
+        hiệu quả, cột C/D Tổng kết tháng) đang chạy trên số sai. `:''}${nKhung?`<b>${nKhung} dòng</b> ghi khung giờ
+        theo cách gọi cũ ("ban ngày", "chạy xuyên đêm"…) thay vì 3 giá trị chuẩn Ca ngày / Ca đêm / Cả ngày.`:''}</span>
         <button class="btn bg-g sm" style="flex-shrink:0" onclick="syncDesignFormula()">⟳ Đồng bộ ${nMismatch} dòng</button>
       </div>
     </div>` : ''}
@@ -3620,51 +3708,63 @@ function viewDesign(){
     <div class="card">
       <div class="tw" style="max-height:72vh"><table>
         <thead><tr>
-          <th>Mã máy</th><th>Đơn vị · Trại</th><th>Khu vực</th>
-          <th style="text-align:center">CS định mức máy (kW) ✎</th>
-          <th style="text-align:center">Giờ chạy TK/ngày ✎</th>
-          <th style="text-align:right">CS thiết kế phát/ngày</th>
-          <th style="text-align:right">Giờ TK/tháng</th>
-          <th style="text-align:right">CS TK/tháng</th>
+          <th style="text-align:right">STT</th>
+          <th>Mã Máy ✎</th>
+          <th style="text-align:center">Giờ bắt đầu ✎</th>
+          <th style="text-align:center">Giờ kết thúc ✎</th>
+          <th style="text-align:center">Khung giờ chạy chính</th>
+          <th style="text-align:right">Tổng số giờ chạy/ngày</th>
+          <th style="text-align:center">Công suất TK (KW) ✎</th>
+          <th style="text-align:right">Công suất thiết kế phát/ngày</th>
+          <th>Đơn vị · Trại</th>
           <th></th>
         </tr></thead>
         <tbody id="designTableBody">${designTableRowsHtml_()}</tbody>
       </table></div>
       <div style="padding:10px 16px;font-size:10px;color:var(--mu);line-height:1.6">
-        Dòng nền vàng = cần rà lại: thiếu định mức, giờ chạy TK &gt; 24h, hoặc số đã lưu lệch với công thức.
+        Dòng nền vàng = cần rà lại: thiếu giờ bắt đầu/kết thúc, thiếu công suất TK, hoặc số đã lưu lệch với công thức.
       </div>
     </div>`;
 }
 
-/* Chỉ phần thân bảng — tách riêng để lọc theo ô tìm kiếm mà KHÔNG dựng lại cả trang.
- * Dựng lại cả trang sẽ tạo mới thẻ <input>, khiến con trỏ nhảy ra ngoài ngay sau
- * ký tự đầu tiên và phải bấm chuột lại mới gõ tiếp được. */
 function designTableRowsHtml_(){
   const list = designFiltered_();
   if (!list.length) return '<tr><td colspan="99"><div class="empty">Không có máy nào khớp bộ lọc.</div></td></tr>';
+
+  const khungCls = k => k==='Cả ngày' ? 'bg' : (k==='Ca đêm' ? 'bb' : 'ba');
   return list.map(x => {
     const prob = designProblem_(x);
-    const hrMonth = x.hrTk != null ? Math.round(x.hrTk * MONTHLY_DESIGN_DAYS_UI * 100) / 100 : null;
-    const kwMonth = x.kwTkCalc != null ? Math.round(x.kwTkCalc * MONTHLY_DESIGN_DAYS_UI * 100) / 100 : null;
+    const r = x.row._row;
     return `<tr style="${prob?'background:#fffbeb':''}">
-      <td><span class="mm">${esc(x.code)}</span>${!x.inMaster?' <span class="b ba" title="Mã máy này không có trong Danh sách máy">⚠ lạc</span>':''}</td>
-      <td>${esc(x.unit||'—')}${x.farm?' · '+esc(x.farm):''}</td>
-      <td>${esc(x.khu||'—')}</td>
+      <td style="text-align:right;font-family:var(--mono);color:var(--mu)">${esc(x.stt ?? '')}</td>
+      <td><input class="inp mm" style="min-width:118px;font-weight:700"
+                 value="${esc(x.code)}"
+                 onchange="saveDesignCell(${r},'code',this.value)"></td>
       <td style="text-align:center">
-        <input class="inp" style="min-width:92px;text-align:right;font-family:var(--mono)" type="number" step="any" min="0"
+        <input class="inp" style="min-width:82px;text-align:center;font-family:var(--mono)" type="time"
+               value="${fmtHHMM_(x.startMin)}"
+               onchange="saveDesignCell(${r},'start',this.value)"></td>
+      <td style="text-align:center">
+        <input class="inp" style="min-width:82px;text-align:center;font-family:var(--mono)" type="time"
+               value="${fmtHHMM_(x.endMin)}"
+               onchange="saveDesignCell(${r},'end',this.value)"></td>
+      <td style="text-align:center">${x.khungCalc
+        ? `<span class="b ${khungCls(x.khungCalc)}">${esc(x.khungCalc)}</span>${
+            (x.khungStored && x.khungStored !== x.khungCalc)
+              ? ` <span class="b bmu" title="Sheet đang lưu: ${esc(x.khungStored)}">≠</span>` : ''}`
+        : '<span class="b bmu">—</span>'}</td>
+      <td style="text-align:right;font-family:var(--mono);font-weight:600">${x.hrCalc!=null?x.hrCalc:'—'}${
+        (x.hrStored!=null && x.hrCalc!=null && Math.abs(x.hrStored-x.hrCalc)>0.01)
+          ? ` <span class="b ba" title="Sheet đang lưu: ${x.hrStored}">≠ ${x.hrStored}</span>` : ''}</td>
+      <td style="text-align:center">
+        <input class="inp" style="min-width:82px;text-align:right;font-family:var(--mono)" type="number" step="any" min="0"
                value="${x.rated!=null?esc(x.rated):''}"
-               onchange="saveDesignCell(${x.row._row},'rated',this.value)">
-      </td>
-      <td style="text-align:center">
-        <input class="inp" style="min-width:92px;text-align:right;font-family:var(--mono)" type="number" step="any" min="0" max="24"
-               value="${x.hrTk!=null?esc(x.hrTk):''}"
-               onchange="saveDesignCell(${x.row._row},'hr',this.value)">
-      </td>
-      <td style="text-align:right;font-family:var(--mono);font-weight:600">${x.kwTkCalc!=null?x.kwTkCalc:'—'}${
-        x.mismatch?` <span class="b ba" title="Số đang lưu trong Sheet: ${x.kwTkStored}">≠ ${x.kwTkStored}</span>`:''}</td>
-      <td style="text-align:right;font-family:var(--mono)">${hrMonth!=null?hrMonth:'—'}</td>
-      <td style="text-align:right;font-family:var(--mono)">${kwMonth!=null?kwMonth:'—'}</td>
-      <td><button class="btn bg-r sm" onclick="deleteDesignRow('${esc(x.code)}')">🗑 Xoá</button></td>
+               onchange="saveDesignCell(${r},'rated',this.value)"></td>
+      <td style="text-align:right;font-family:var(--mono);font-weight:600">${x.kwCalc!=null?x.kwCalc:'—'}${
+        (x.kwStored!=null && x.kwCalc!=null && Math.abs(x.kwStored-x.kwCalc)>0.01)
+          ? ` <span class="b ba" title="Sheet đang lưu: ${x.kwStored}">≠ ${x.kwStored}</span>` : ''}</td>
+      <td style="font-size:10px;color:var(--mu)">${esc(x.unit||'—')}${x.farm?' · '+esc(x.farm):''}</td>
+      <td><button class="btn bg-r sm" onclick="deleteDesignRow('${esc(x.code)}')">🗑</button></td>
     </tr>`;
   }).join('');
 }
@@ -3675,23 +3775,17 @@ function onDesignSearch(v){
   const tb = $('designTableBody');
   if (tb) tb.innerHTML = designTableRowsHtml_();
   const cnt = $('designCount');
-  if (cnt){
-    const total = designRows_().length;
-    cnt.innerHTML = cnt.innerHTML.replace(/^\s*\d+\/\d+ máy/, `${designFiltered_().length}/${total} máy`);
-  }
+  if (cnt) cnt.innerHTML = cnt.innerHTML.replace(/^\s*\d+\/\d+ máy/, `${designFiltered_().length}/${designRows_().length} máy`);
 }
 
 /* Số ngày quy đổi thiết kế/ngày → thiết kế/tháng. PHẢI khớp MONTHLY_DESIGN_DAYS bên Code.gs. */
 const MONTHLY_DESIGN_DAYS_UI = 25;
 
-/* Dòng "cần rà lại": định mức thiếu/vô lý, hoặc số đã lưu lệch công thức →
- * mọi đánh giá dựa vào nó đều sai theo. */
 function designProblem_(x){
-  if (x.rated == null || x.hrTk == null) return true;   // thiếu 1 trong 2 số nhập tay
-  if (x.rated <= 0 || x.hrTk <= 0) return true;
-  if (x.hrTk > 24) return true;                          // quá 24h/ngày
-  if (x.mismatch) return true;                           // Sheet đang giữ số khác công thức
-  return false;
+  if (x.startMin == null || x.endMin == null) return true;   // thiếu mốc giờ → không tính được gì
+  if (x.rated == null || x.rated <= 0) return true;
+  if (x.numMismatch) return true;                             // Sheet đang giữ SỐ khác công thức
+  return false;                                               // lệch nhãn khung giờ không tính là lỗi
 }
 
 function toggleDesignRegion(r){
@@ -3701,37 +3795,62 @@ function toggleDesignRegion(r){
 }
 
 /**
- * Lưu 1 ô định mức nhập tay (CS định mức máy hoặc Giờ chạy TK/ngày).
- * LUÔN ghi kèm cột "CS thiết kế phát/ngày" = rated × giờ, vì phần còn lại của hệ thống
- * (computeInefficient, ngưỡng 150%, cột C/D Sheet 9) đọc thẳng cột đã lưu trong Sheet,
- * không tự nhân lại. Nếu chỉ ghi 1 ô thì bảng hiện số mới còn đánh giá vẫn chạy số cũ.
+ * Sửa 1 ô nhập tay trên trang Định mức thiết kế → ghi thẳng vào đúng ô của Sheet 5.
+ *
+ * LUÔN ghi kèm các cột TỰ TÍNH bị ảnh hưởng (khung giờ, tổng giờ chạy/ngày, công suất
+ * thiết kế phát/ngày). Lý do: phần còn lại của hệ thống (computeInefficient, ngưỡng
+ * "vượt 150% thiết kế", cột C/D Sheet 9) đọc thẳng giá trị ĐÃ LƯU trong Sheet chứ không
+ * tự nhân lại. Nếu chỉ ghi ô vừa sửa thì bảng hiện số mới còn đánh giá vẫn chạy số cũ.
  */
 async function saveDesignCell(rowId, which, value){
   const c = designCols_();
   const x = designRows_().find(r => r.row._row === rowId);
   if (!x){ toast('Không tìm thấy dòng '+rowId,'err'); return; }
 
-  const raw = String(value ?? '').trim();
-  let n = null;
-  if (raw !== ''){
-    n = Number(raw.replace(/,/g,'.'));
-    if (isNaN(n) || n < 0){ toast('Giá trị phải là số không âm','err'); renderPage('design'); return; }
-    if (which === 'hr' && n > 24){ toast('Giờ chạy thiết kế không thể vượt 24h/ngày','err'); renderPage('design'); return; }
-    n = Math.round(n * 100) / 100;
-  }
-
-  const rated = which === 'rated' ? n : x.rated;
-  const hrTk  = which === 'hr'    ? n : x.hrTk;
-  const kwTk  = (rated != null && hrTk != null) ? Math.round(rated * hrTk * 100) / 100 : '';
-
   const updates = {};
-  if (which === 'rated' && c.hRated) updates[c.hRated] = n === null ? '' : n;
-  if (which === 'hr') updates[c.hHrTk] = n === null ? '' : n;
-  updates[c.hKwTk] = kwTk;      // luôn cập nhật kết quả tính
+  let startMin = x.startMin, endMin = x.endMin, rated = x.rated;
 
-  if (which === 'rated' && !c.hRated){
-    toast('Sheet 5 không có cột "Công suất TK (KW)" để lưu','err'); renderPage('design'); return;
+  if (which === 'code'){
+    const code = String(value||'').trim();
+    if (!code){ toast('Mã máy không được để trống','err'); renderPage('design'); return; }
+    if (code !== x.code && designRows_().some(r => r.code.toLowerCase() === code.toLowerCase())){
+      toast('Mã máy "'+code+'" đã tồn tại trong Sheet 5','err'); renderPage('design'); return;
+    }
+    if (code === x.code) return;
+    if (!confirm(`Đổi mã máy "${x.code}" → "${code}"?\n\nSố liệu các tháng đã chốt của máy này ở Tổng kết tháng sẽ được chuyển sang mã mới.`)){
+      renderPage('design'); return;
+    }
+    updates[c.hMa] = code;
+    await saveEffCellMulti_(rowId, updates);
+    renderPage('design');
+    return;
   }
+
+  if (which === 'start' || which === 'end'){
+    const min = value === '' ? null : parseHHMM_(value);
+    if (value !== '' && min == null){ toast('Giờ phải ở dạng 24h, ví dụ 07:30','err'); renderPage('design'); return; }
+    if (which === 'start'){ startMin = min; updates[c.hStart] = min == null ? '' : fmtHHMM_(min); }
+    else                  { endMin   = min; updates[c.hEnd]   = min == null ? '' : fmtHHMM_(min); }
+  }
+
+  if (which === 'rated'){
+    const raw = String(value ?? '').trim();
+    if (raw === '') rated = null;
+    else {
+      const n = Number(raw.replace(/,/g,'.'));
+      if (isNaN(n) || n < 0){ toast('Công suất TK phải là số không âm','err'); renderPage('design'); return; }
+      rated = Math.round(n * 100) / 100;
+    }
+    updates[c.hRated] = rated == null ? '' : rated;
+  }
+
+  // Các cột tự tính — cập nhật theo giá trị mới
+  const hr = runHours_(startMin, endMin);
+  const khung = shiftLabel_(startMin, endMin);
+  const kw = (rated != null && hr != null) ? Math.round(rated * hr * 100) / 100 : '';
+  if (c.hKhung) updates[c.hKhung] = khung;
+  if (c.hHrTk)  updates[c.hHrTk]  = hr == null ? '' : hr;
+  if (c.hKwTk)  updates[c.hKwTk]  = kw;
 
   await saveEffCellMulti_(rowId, updates);
   renderPage('design');
@@ -3750,7 +3869,7 @@ async function saveEffCellMulti_(rowId, updates){
     refreshAlerts();
     updateSidebarBadges();
     setStatus(false,`Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
-    toast('✓ Đã lưu vào Sheet 5','ok');
+    toast(res.renamed ? `✓ Đã đổi mã ${res.renamed.from} → ${res.renamed.to}` : '✓ Đã lưu vào Sheet 5','ok');
     return true;
   } catch(e){
     toast('Lỗi lưu: '+e.message,'err');
@@ -3759,43 +3878,45 @@ async function saveEffCellMulti_(rowId, updates){
   }
 }
 
-/* Ghi lại "CS thiết kế phát/ngày" theo đúng công thức cho mọi dòng đang lệch. */
+/* Ghi lại 3 cột tự tính theo đúng công thức cho mọi dòng đang lệch. */
 async function syncDesignFormula(){
-  const bad = designRows_().filter(x => x.mismatch);
+  const bad = designRows_().filter(x => x.numMismatch || x.khungMismatch);
   if (!bad.length){ toast('Không có dòng nào lệch công thức','ok'); return; }
-  if (!confirm(`Ghi đè "CS thiết kế phát/ngày" của ${bad.length} dòng theo công thức CS định mức máy × Giờ chạy TK/ngày?\n\nSố cũ trong Sheet sẽ bị thay.`)) return;
+  if (!confirm(`Ghi đè Khung giờ chạy · Tổng số giờ chạy/ngày · Công suất thiết kế phát/ngày của ${bad.length} dòng theo công thức?\n\nSố cũ trong Sheet sẽ bị thay.`)) return;
 
   const c = designCols_();
   let ok = 0, fail = 0;
   for (const x of bad){
-    const done = await saveEffCellMulti_(x.row._row, { [c.hKwTk]: x.kwTkCalc });
-    done ? ok++ : fail++;
+    const u = {};
+    if (c.hKhung) u[c.hKhung] = x.khungCalc;
+    if (c.hHrTk)  u[c.hHrTk]  = x.hrCalc == null ? '' : x.hrCalc;
+    if (c.hKwTk)  u[c.hKwTk]  = x.kwCalc == null ? '' : x.kwCalc;
+    (await saveEffCellMulti_(x.row._row, u)) ? ok++ : fail++;
   }
   toast(`Đồng bộ xong: ${ok} dòng${fail?` · ${fail} lỗi`:''}`, fail?'err':'ok');
   renderPage('design');
 }
 
 function openAddDesignRow(){
-  const regions = [...new Set(S.master.rows.map(regionOf).filter(Boolean))].sort();
   openOv(`
-    <div class="mh"><div><h2>+ Thêm mã máy vào định mức thiết kế</h2>
-      <p>Dòng mới được thêm vào Sheet 5 · khối dữ liệu ngày để trống cho Smartgen điền dần</p></div>
+    <div class="mh"><div><h2>+ Thêm mã máy vào Sheet 5</h2>
+      <p>Dòng mới thêm vào "5. Theo dõi hiệu quả vận hành" · khối dữ liệu ngày để trống cho Smartgen điền dần</p></div>
       <button class="mcl" onclick="closeOv()">✕</button></div>
     <div class="mb">
-      <div class="iw"><div class="il">Mã máy *</div>
+      <div class="iw"><div class="il">Mã Máy *</div>
         <input class="inp" id="dsgCode" placeholder="VD: NS200KVA20"></div>
-      <div class="iw"><div class="il">Loại hình</div>
-        <select class="sel" id="dsgLoai"><option value="">—</option>
-          <option>Thuê</option><option>Hợp tác</option><option>Bán</option></select></div>
-      <div class="iw"><div class="il">Khu vực</div>
-        <select class="sel" id="dsgKhu"><option value="">—</option>
-          ${regions.map(r=>`<option>${esc(r)}</option>`).join('')}</select></div>
-      <div class="iw"><div class="il">CS định mức máy (kW) *</div>
-        <input class="inp" id="dsgRated" type="number" step="any" min="0" oninput="previewDesignKw()"></div>
-      <div class="iw"><div class="il">Giờ chạy TK/ngày *</div>
-        <input class="inp" id="dsgHr" type="number" step="any" min="0" max="24" placeholder="≤ 24" oninput="previewDesignKw()"></div>
-      <div class="iw"><div class="il">CS thiết kế phát/ngày (kWh) — tự tính</div>
-        <div id="dsgKwPreview" style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:600;font-family:var(--mono)">—</div></div>
+      <div class="iw"><div class="il">Giờ bắt đầu *</div>
+        <input class="inp" id="dsgStart" type="time" oninput="previewDesignCalc()"></div>
+      <div class="iw"><div class="il">Giờ kết thúc *</div>
+        <input class="inp" id="dsgEnd" type="time" oninput="previewDesignCalc()"></div>
+      <div class="iw"><div class="il">Công suất TK (KW) *</div>
+        <input class="inp" id="dsgRated" type="number" step="any" min="0" oninput="previewDesignCalc()"></div>
+      <div class="iw"><div class="il">Khung giờ chạy chính — tự tính</div>
+        <div id="dsgKhungPreview" class="dsgcalc">—</div></div>
+      <div class="iw"><div class="il">Tổng số giờ chạy/ngày — tự tính</div>
+        <div id="dsgHrPreview" class="dsgcalc">—</div></div>
+      <div class="iw"><div class="il">Công suất thiết kế phát/ngày — tự tính</div>
+        <div id="dsgKwPreview" class="dsgcalc">—</div></div>
     </div>
     <div class="mf">
       <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
@@ -3803,13 +3924,17 @@ function openAddDesignRow(){
     </div>`);
 }
 
-/* Ô "CS thiết kế phát/ngày" trong modal là kết quả tính, hiện ngay khi gõ 2 ô kia */
-function previewDesignKw(){
-  const r = Number(($('dsgRated')||{}).value);
-  const h = Number(($('dsgHr')||{}).value);
-  const el = $('dsgKwPreview');
-  if (!el) return;
-  el.textContent = (r > 0 && h > 0) ? String(Math.round(r * h * 100) / 100) : '—';
+/* 3 ô tự tính trong modal — hiện ngay khi gõ, đúng công thức dùng ở bảng chính */
+function previewDesignCalc(){
+  const sMin = parseHHMM_(($('dsgStart')||{}).value);
+  const eMin = parseHHMM_(($('dsgEnd')||{}).value);
+  const rated = Number(($('dsgRated')||{}).value);
+  const hr = runHours_(sMin, eMin);
+  const khung = shiftLabel_(sMin, eMin);
+  const kw = (hr != null && rated > 0) ? Math.round(rated * hr * 100) / 100 : null;
+  if ($('dsgKhungPreview')) $('dsgKhungPreview').textContent = khung || '—';
+  if ($('dsgHrPreview'))    $('dsgHrPreview').textContent    = hr != null ? String(hr) : '—';
+  if ($('dsgKwPreview'))    $('dsgKwPreview').textContent    = kw != null ? String(kw) : '—';
 }
 
 async function submitAddDesignRow(){
@@ -3818,20 +3943,23 @@ async function submitAddDesignRow(){
   if (designRows_().some(x => x.code.toLowerCase() === code.toLowerCase())){
     toast('Mã máy "'+code+'" đã có trong Sheet 5','err'); return;
   }
-  const hr = ($('dsgHr').value||'').trim();
+  const sMin = parseHHMM_($('dsgStart').value);
+  const eMin = parseHHMM_($('dsgEnd').value);
   const rated = ($('dsgRated').value||'').trim();
-  if (hr !== '' && Number(hr) > 24){ toast('Giờ chạy thiết kế không thể vượt 24h/ngày','err'); return; }
-  if (rated === '' || hr === ''){ toast('Phải nhập cả CS định mức máy và Giờ chạy TK/ngày','err'); return; }
+  if (sMin == null || eMin == null){ toast('Phải nhập giờ bắt đầu và giờ kết thúc','err'); return; }
+  if (rated === ''){ toast('Phải nhập Công suất TK (KW)','err'); return; }
 
+  const hr = runHours_(sMin, eMin);
   setStatus(true,'Đang thêm mã máy…');
   try {
     const res = await apiPost({ action:'addEfficiencyRow', user:S.user.name, data:{
       maCode: code,
-      loaiHinh: $('dsgLoai').value,
-      khuVuc: $('dsgKhu').value,
+      gioBatDau: fmtHHMM_(sMin),
+      gioKetThuc: fmtHHMM_(eMin),
+      khungGio: shiftLabel_(sMin, eMin),
       ratedKw: rated,
       designHrDay: hr,
-      designKwDay: (rated !== '' && hr !== '') ? Math.round(Number(rated) * Number(hr) * 100) / 100 : '',
+      designKwDay: Math.round(Number(rated) * hr * 100) / 100,
     }});
     if (!res.ok) throw new Error(res.error||'Lỗi thêm dòng');
     if (res.efficiency) S.efficiency = res.efficiency;
@@ -3847,7 +3975,7 @@ async function submitAddDesignRow(){
 }
 
 async function deleteDesignRow(code){
-  if (!confirm(`Xoá hẳn dòng của máy "${code}" khỏi Sheet 5?\n\nToàn bộ dữ liệu ngày của máy này trong tháng cũng mất theo. Số liệu đã chốt ở các tháng trước trong Sheet 9 vẫn được giữ.`)) return;
+  if (!confirm(`Xoá hẳn dòng của máy "${code}" khỏi Sheet 5?\n\nToàn bộ dữ liệu ngày của máy này trong tháng cũng mất theo. Số liệu đã chốt ở các tháng trước trong Tổng kết tháng vẫn được giữ.`)) return;
   setStatus(true,'Đang xoá dòng…');
   try {
     const res = await apiPost({ action:'deleteEfficiencyRow', maCode:code, user:S.user.name });
@@ -3864,19 +3992,18 @@ async function deleteDesignRow(code){
 }
 
 function exportDesignCsv(){
-  const r2 = v => v == null ? '' : Math.round(v * 100) / 100;
   const rows = designFiltered_().map(x => ({
-    'Mã máy': x.code,
+    'STT': x.stt ?? '',
+    'Mã Máy': x.code,
+    'Giờ bắt đầu': fmtHHMM_(x.startMin),
+    'Giờ kết thúc': fmtHHMM_(x.endMin),
+    'Khung giờ chạy chính': x.khungCalc,
+    'Tổng số giờ chạy/ ngày': x.hrCalc ?? '',
+    'Công suất TK (KW)': x.rated ?? '',
+    'Công suất thiết kế phát/ngày': x.kwCalc ?? '',
     'Đơn vị hợp tác': x.unit,
     'Tên Trang Trại / Đơn Vị': x.farm,
     'Khu vực': x.khu,
-    'Loại hình': x.loai,
-    'CS định mức máy (kW)': r2(x.rated),
-    'Giờ chạy TK/ngày': r2(x.hrTk),
-    'CS thiết kế phát/ngày (kWh)': r2(x.kwTkCalc),
-    [`Giờ TK/tháng (×${MONTHLY_DESIGN_DAYS_UI})`]: x.hrTk != null ? r2(x.hrTk*MONTHLY_DESIGN_DAYS_UI) : '',
-    [`CS TK/tháng (×${MONTHLY_DESIGN_DAYS_UI})`]: x.kwTkCalc != null ? r2(x.kwTkCalc*MONTHLY_DESIGN_DAYS_UI) : '',
-    'Số đang lưu trong Sheet (nếu lệch)': x.mismatch ? r2(x.kwTkStored) : '',
     'Cần rà lại': designProblem_(x) ? 'x' : '',
   }));
   exportCsv({ headers:Object.keys(rows[0]||{}), rows }, 'dinh-muc-thiet-ke');
