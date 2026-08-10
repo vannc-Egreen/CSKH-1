@@ -282,13 +282,10 @@ td{padding:9px 12px;vertical-align:middle}
 
       <div class="nsec">Danh mục</div>
       <div class="nitem" data-page="master" onclick="nav('master')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3h-8M12 3v4"/></svg>Danh sách máy<span class="nbadge" id="nb-master">0</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3h-8M12 3v4"/></svg>Danh sách &amp; Định mức máy<span class="nbadge am" id="nb-master">0</span>
       </div>
       <div class="nitem" data-page="spec" onclick="nav('spec')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>Định mức bảo dưỡng
-      </div>
-      <div class="nitem" data-page="design" onclick="nav('design')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16M6 16V9M12 16V5M18 16v-4"/></svg>Định mức thiết kế<span class="nbadge" id="nb-design">0</span>
       </div>
 
       <div class="sfooter">
@@ -301,7 +298,6 @@ td{padding:9px 12px;vertical-align:middle}
       <div id="pg-dash" class="page on"></div>
       <div id="pg-alerts" class="page"></div>
       <div id="pg-analysis" class="page"></div>
-      <div id="pg-design" class="page"></div>
       <div id="pg-tracking" class="page"></div>
       <div id="pg-filter" class="page"></div>
       <div id="pg-efficiency" class="page"></div>
@@ -333,6 +329,11 @@ const S = {
   filters:{
     master:'',
     masterStatus:'',   // '', 'active', 'stopped', 'notinstalled'
+    /* Trang gộp "Danh sách & Định mức máy" — 3 tab dùng CHUNG 1 bộ lọc (ô tìm, trạng thái,
+     * khu vực) để chuyển tab không bị mất ngữ cảnh đang xem. */
+    machineTab:'info',            // 'info' | 'design' | 'sync'
+    machineRegion:new Set(),
+    machineOnlyProblem:false,
     tracking:'',
     filter:'',
     filterStatus:'',   // '', 'overdue', 'duesoon', 'ok'
@@ -340,10 +341,14 @@ const S = {
     alertsRegion:'',   // '', 'Miền Bắc', 'Miền Nam'
     alertsFields:new Set(),  // multi-select hạng mục theo dõi ('Đại tu','Nhớt','Lọc gió',...)
     eff:{ region:new Set(), type:new Set() },  // multi-select
-    analysis:{ machine:new Set(), region:new Set(), type:new Set(), unit:new Set() },  // multi-select · trang Phân tích
+    /* Trang Phân tích — MẶC ĐỊNH lọc sẵn 2 loại hình Thuê + Hợp tác.
+     * Đây là tập máy eGreen thực sự chịu trách nhiệm vận hành; máy "Bán" đã bàn giao cho
+     * khách nên đưa vào cùng biểu đồ sẽ kéo lệch mọi số trung bình. Người dùng vẫn bỏ hoặc
+     * thêm bộ lọc bình thường — đây chỉ là điểm khởi đầu, không phải ràng buộc cứng. */
+    analysis:{ machine:new Set(), region:new Set(), type:new Set(['Thuê','Hợp tác']), unit:new Set() },
     monthly:{ q:'', month:'', region:new Set(), type:new Set(), unit:new Set() },      // trang Tổng kết tháng (Sheet 9)
     anomalyCat:'',                                                                   // nhóm lỗi bất thường đang lọc ở trang Cảnh báo
-    design:{ q:'', region:new Set(), onlyProblem:false }                             // trang Định mức thiết kế
+    monthlyDummy:null                                                                // (giữ chỗ — bộ lọc Định mức thiết kế đã gộp vào machineTab/machineRegion)
   }
 };
 
@@ -686,7 +691,6 @@ function startAutoRefresh(){ /* noop — tự đồng bộ theo sự kiện, kh�
 function stopAutoRefresh(){ clearInterval(_autoTimer); _autoTimer = null; }
 async function silentReload(){ /* noop */ }
 function updateSidebarBadges(){
-  const master$ = $('nb-master'); if (master$) master$.textContent = S.master.rows.length;
   const track$  = $('nb-track');  if (track$)  track$.textContent  = S.tracking.rows.length;
   const alerts$ = $('nb-alerts'); if (alerts$) alerts$.textContent = S.alerts.total;
   const filterWarn = S.tracking.rows.reduce((s,r)=>{
@@ -696,12 +700,19 @@ function updateSidebarBadges(){
   const filter$ = $('nb-filter'); if (filter$) filter$.textContent = filterWarn;
   const nbEff = $('nb-eff');
   if (nbEff) nbEff.textContent = computeInefficient(S.master.rows).length;
-  // Badge trang Định mức thiết kế = số dòng định mức cần rà lại (thiếu/vô lý)
-  const nbDsg = $('nb-design');
-  if (nbDsg) nbDsg.textContent = designRows_().filter(designProblem_).length;
+  /* Badge trang "Danh sách & Định mức máy" = số việc cần xử lý: dòng định mức cần rà lại
+   * CỘNG số mã máy đang thiếu dòng ở sheet khác. Trước đây badge chỉ đếm tổng số máy —
+   * một con số không bao giờ đổi nên không ai nhìn. Nay nó là hàng chờ công việc thật. */
+  const master$ = $('nb-master');
+  if (master$){
+    const rec = machineReconcile_();
+    master$.textContent = designRows_().filter(designProblem_).length + rec.totalMissing;
+  }
 }
 
 function nav(page){
+  // Trang "Định mức thiết kế" đã gộp vào "Danh sách & Định mức máy" — mọi lối vào cũ đổi hướng
+  if (page === 'design'){ S.filters.machineTab = 'design'; page = 'master'; }
   document.querySelectorAll('.nitem').forEach(n => n.classList.toggle('on', n.dataset.page===page));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   const el = $('pg-'+page); if (!el) return;
@@ -745,11 +756,10 @@ function _renderPageInner_(p, el){
     case 'dash':     el.innerHTML = viewDash(); afterDash(); break;
     case 'alerts':   el.innerHTML = viewAlerts(); break;
     case 'analysis': el.innerHTML = viewAnalysis(); afterAnalysis(); break;
-    case 'design':   el.innerHTML = viewDesign(); break;
     case 'tracking': el.innerHTML = viewTracking(); break;
     case 'filter':   el.innerHTML = viewFilter(); break;
     case 'efficiency': el.innerHTML = viewEfficiency(); afterEfficiency(); break;
-    case 'master':   el.innerHTML = viewMaster(); break;
+    case 'master':   el.innerHTML = viewMaster(); afterMaster(); break;
     case 'spec':     el.innerHTML = viewSpec(); break;
   }
 }
@@ -849,6 +859,8 @@ function viewDash(){
     <div class="krow">${kpiRegionRow('Miền Bắc','n', bN)}</div>
     <div class="krow">${kpiRegionRow('Miền Nam','s', bS)}</div>
 
+    ${anomalySummaryCardHtml_()}
+
     <div class="cg2">
       <div class="cc">
         <div class="ct">Phân bố Miền Bắc · Loại hình × Trạng thái</div>
@@ -859,8 +871,6 @@ function viewDash(){
         <div class="cw"><canvas id="chRegionS"></canvas></div>
       </div>
     </div>
-
-    ${anomalySummaryCardHtml_()}
 
     <div class="ph" style="margin-top:6px"><h1 style="font-size:15px">Phân bố chung</h1></div>
     <div class="cg2">
@@ -1081,7 +1091,6 @@ function toggleAlertField(name){
   renderPage('alerts');
 }
 function clearAlertFields(){ S.filters.alertsFields.clear(); renderPage('alerts'); }
-function setMasterStatus(s){ S.filters.masterStatus = s; renderPage('master'); }
 
 /* Chuẩn hóa tên hạng mục về nhóm ngắn gọn — để chip filter đọc được và gộp trùng */
 function normField(raw){
@@ -1426,7 +1435,7 @@ function viewAnalysis(){
     <div class="card">
       <div class="ch">
         <h3>Tổng điện phát ra theo ngày (kWh)</h3>
-        <span class="b bmu">Đường xanh đậm = thiết kế · đường xám = trung bình thực tế · cột vàng = lệch >${ANALYSIS_DEVIATION_PCT}% · bấm vào cột để xem chi tiết</span>
+        <span class="b bmu">Xanh đậm = thiết kế · xám = TB thực tế tháng này · cam = TB tháng trước · cột vàng = lệch >${ANALYSIS_DEVIATION_PCT}% · bấm vào cột để xem chi tiết</span>
       </div>
       <div class="cb"><div class="cw" style="height:260px"><canvas id="chDailyKwh"></canvas></div></div>
     </div>
@@ -1434,7 +1443,7 @@ function viewAnalysis(){
       <div class="ch">
         <h3>Tổng số giờ chạy theo ngày (h)</h3>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <span class="b bmu">Đường xanh đậm = thiết kế · đường xám = trung bình thực tế · cột vàng = lệch >${ANALYSIS_DEVIATION_PCT}%</span>
+          <span class="b bmu">Xanh đậm = thiết kế · xám = TB thực tế tháng này · cam = TB tháng trước · cột vàng = lệch >${ANALYSIS_DEVIATION_PCT}%</span>
           <button class="btn bg-gr sm" onclick="exportAnalysisFullCsv()">⤓ Xuất Excel (cả bảng)</button>
         </div>
       </div>
@@ -1469,13 +1478,24 @@ function chartBarClickable(id, labels, values, color, onDayClick, opts){
       borderColor:'#64748b', backgroundColor:'transparent', borderWidth:1.5, borderDash:[3,3], pointRadius:0, order:2
     });
   }
+  /* ĐƯỜNG THAM CHIẾU THÁNG TRƯỚC — màu cam, đậm hơn đường TB để phân biệt ngay bằng mắt.
+   * Có đường này thì nhìn 1 phát biết tháng này đang trên hay dưới mặt bằng tháng trước. */
+  const prev = (opts && opts.prev) || null;
+  if (prev && prev.value != null && prev.value > 0){
+    datasets.push({
+      type:'line',
+      label:`TB tháng trước ${prev.label} (${Number(prev.value).toFixed(prev.decimals != null ? prev.decimals : 1)})`,
+      data: labels.map(()=>prev.value),
+      borderColor:'#ea580c', backgroundColor:'transparent', borderWidth:2, borderDash:[6,3], pointRadius:0, order:1
+    });
+  }
 
   el._chart = new Chart(el, {
     data:{ labels, datasets },
     options:{
       maintainAspectRatio:false,
       plugins:{
-        legend:{ display: mean>0 || design>0, position:'bottom', labels:{ color:'#475569', font:{family:'Be Vietnam Pro', size:9}, boxWidth:14 }, ...legendHoverIsolate_() },
+        legend:{ display: mean>0 || design>0 || datasets.length>1, position:'bottom', labels:{ color:'#475569', font:{family:'Be Vietnam Pro', size:9}, boxWidth:14 }, ...legendHoverIsolate_() },
         tooltip:{ backgroundColor:'#083d24' }
       },
       scales:{
@@ -1495,10 +1515,18 @@ function chartBarClickable(id, labels, values, color, onDayClick, opts){
 function afterAnalysis(){
   const filteredM = applyAnalysisFilters_(S.master.rows);
   const totals = computeDailyTotals_(filteredM);
+  const codes = new Set(filteredM.map(r => String(r._byLetter.B||'').trim()));
+  const prev = prevMonthStats_(codes);
+
   chartBarClickable('chDailyKwh', totals.labels, totals.kwhByDay, '#0d6e3f',
-    idx => openDayDrilldown(idx+1, 'kwh'), { anomalyDay: totals.kwhAnomalyDay, mean: totals.meanKwh, design: totals.designKwhPerDay });
+    idx => openDayDrilldown(idx+1, 'kwh'),
+    { anomalyDay: totals.kwhAnomalyDay, mean: totals.meanKwh, design: totals.designKwhPerDay,
+      prev: prev ? { label: prev.label, value: prev.avgKwhPerDay, decimals: 0 } : null });
+
   chartBarClickable('chDailyHours', totals.labels, totals.hoursByDay, '#2563eb',
-    idx => openDayDrilldown(idx+1, 'hours'), { anomalyDay: totals.hoursAnomalyDay, mean: totals.meanHours, design: totals.designHoursPerDay });
+    idx => openDayDrilldown(idx+1, 'hours'),
+    { anomalyDay: totals.hoursAnomalyDay, mean: totals.meanHours, design: totals.designHoursPerDay,
+      prev: prev ? { label: prev.label, value: prev.avgHoursPerDay, decimals: 1 } : null });
 
   // "Phân bố chung" đã chuyển sang trang Tổng quan (afterDash).
   // Tổng kết hiệu quả tháng nay là 1 phần của trang này → vẽ luôn tại đây.
@@ -1539,6 +1567,72 @@ function analyzeDayCause_(day, metric, filteredMasterRows){
   return { deviations, abnormal, total, systemWide };
 }
 
+/**
+ * SO VỚI NGÀY LIỀN TRƯỚC — top 5 hệ thống tăng mạnh nhất và top 5 giảm mạnh nhất.
+ *
+ * Khác với analyzeDayCause_ (so từng máy với TB RIÊNG của chính nó cả tháng, để biết máy đó
+ * có đang bất thường không), hàm này trả lời câu hỏi vận hành trực tiếp hơn: "hôm nay tổng
+ * nhảy/tụt là do máy nào?" — nên mốc so sánh là ĐÚNG số của ngày hôm trước, không phải TB.
+ * Máy chỉ có số 1 trong 2 ngày vẫn được tính (coi ngày thiếu là 0) vì máy dừng hẳn hoặc mới
+ * chạy lại chính là nguyên nhân biến động hay gặp nhất.
+ */
+function dayOverDayRanking_(day, metric, filteredMasterRows){
+  if (day <= 1) return null;
+  const totals = computeDailyTotals_(filteredMasterRows);
+  const cur  = totals.detailByDay[day-1] || [];
+  const prv  = totals.detailByDay[day-2] || [];
+  if (!cur.length && !prv.length) return null;
+
+  const pick = d => metric === 'kwh' ? d.kwh : d.hours;
+  const curMap = new Map(cur.map(d => [d.code, pick(d)]));
+  const prvMap = new Map(prv.map(d => [d.code, pick(d)]));
+
+  const codes = new Set([...curMap.keys(), ...prvMap.keys()]);
+  const rows = [];
+  codes.forEach(code => {
+    const c = curMap.has(code) ? (curMap.get(code) ?? null) : null;
+    const p = prvMap.has(code) ? (prvMap.get(code) ?? null) : null;
+    if (c == null && p == null) return;
+    const cv = c ?? 0, pv = p ?? 0;
+    const delta = Math.round((cv - pv) * 100) / 100;
+    if (delta === 0) return;
+    rows.push({
+      code, cur: c, prev: p, delta,
+      deltaPct: pv > 0 ? Math.round((cv - pv) / pv * 10000) / 100 : null,
+      missingCur: c == null, missingPrev: p == null,
+    });
+  });
+
+  const sorted = rows.slice().sort((a,b) => b.delta - a.delta);
+  const curTotal = cur.reduce((s,d) => s + (pick(d) || 0), 0);
+  const prevTotal = prv.reduce((s,d) => s + (pick(d) || 0), 0);
+
+  return {
+    prevDay: day - 1,
+    curTotal: Math.round(curTotal*100)/100,
+    prevTotal: Math.round(prevTotal*100)/100,
+    totalPct: prevTotal > 0 ? Math.round((curTotal - prevTotal) / prevTotal * 10000) / 100 : null,
+    up:   sorted.filter(r => r.delta > 0).slice(0, 5),
+    down: sorted.filter(r => r.delta < 0).slice(-5).reverse(),
+    nCompared: rows.length,
+  };
+}
+
+/* Bảng nhỏ top tăng / top giảm trong modal chi tiết ngày */
+function dodListHtml_(list, dir, unit){
+  if (!list.length) return `<div style="font-size:10px;color:var(--mu);padding:4px 0">Không có máy nào ${dir==='up'?'tăng':'giảm'}.</div>`;
+  return list.map(r => `
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px dashed var(--bd)">
+      <span class="mm" style="font-size:10px">${esc(r.code)}</span>
+      <span style="font-size:10px;color:var(--mu);font-family:var(--mono)">
+        ${r.prev!=null?r.prev:'—'} → ${r.cur!=null?r.cur:'—'} ${esc(unit)}
+      </span>
+      <span class="b ${dir==='up'?'bg':'br'}" style="white-space:nowrap">
+        ${r.delta>0?'+':''}${r.delta}${r.deltaPct!=null?` · ${r.deltaPct>0?'+':''}${Math.round(r.deltaPct)}%`:''}
+      </span>
+    </div>`).join('');
+}
+
 function openDayDrilldown(day, metric){
   const filteredM = applyAnalysisFilters_(S.master.rows);
   const totals = computeDailyTotals_(filteredM);
@@ -1561,12 +1655,46 @@ function openDayDrilldown(day, metric){
         `<div style="font-size:10px;color:#1e3a8a">• ${esc(a.code)}: ${a.todayVal} (TB riêng ${a.ownAvg.toFixed(1)}) → ${a.devPct>0?'+':''}${Math.round(a.devPct)}%</div>`).join('') : ''}
     </div>` : '';
 
+  const unit = metric==='kwh' ? 'kWh' : 'h';
+  const dod = dayOverDayRanking_(day, metric, filteredM);
+  const isSpike = metric==='kwh' ? !!totals.kwhAnomalyDay[day-1] : !!totals.hoursAnomalyDay[day-1];
+  const bigSwing = dod && dod.totalPct != null && Math.abs(dod.totalPct) > ANALYSIS_DEVIATION_PCT;
+
+  const dodHtml = dod ? `
+    <div class="card" style="margin-bottom:12px;${(isSpike||bigSwing)?'border-left:4px solid var(--amb)':''}">
+      <div class="ch">
+        <h3>So với ngày ${dod.prevDay}</h3>
+        <span class="b ${bigSwing ? (dod.totalPct>0?'bg':'br') : 'bmu'}">
+          ${dod.prevTotal} → ${dod.curTotal} ${unit}${dod.totalPct!=null?` · ${dod.totalPct>0?'+':''}${dod.totalPct}%`:''}
+        </span>
+      </div>
+      <div class="cb">
+        ${(isSpike||bigSwing) ? `<div style="font-size:10px;color:#78350f;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 9px;margin-bottom:8px">
+          ⚠ Ngày này biến động quá ${ANALYSIS_DEVIATION_PCT}% — 5 hệ thống dưới đây là nguồn gây ra phần lớn mức chênh.
+        </div>` : ''}
+        <div class="cg2">
+          <div>
+            <div style="font-size:10px;font-weight:700;color:var(--g);margin-bottom:4px">▲ 5 hệ thống tăng nhiều nhất</div>
+            ${dodListHtml_(dod.up, 'up', unit)}
+          </div>
+          <div>
+            <div style="font-size:10px;font-weight:700;color:var(--red);margin-bottom:4px">▼ 5 hệ thống giảm nhiều nhất</div>
+            ${dodListHtml_(dod.down, 'down', unit)}
+          </div>
+        </div>
+        <div style="font-size:9px;color:var(--mu);margin-top:8px">
+          So sánh trên ${dod.nCompared} máy có thay đổi giữa 2 ngày · máy thiếu số 1 trong 2 ngày được coi là 0.
+        </div>
+      </div>
+    </div>` : '';
+
   openOv(`
     <div class="mh">
-      <div><h2>Chi tiết ngày ${day} · ${label}</h2><p>${dayRows.length} máy · Tổng ${sum.toFixed(metric==='kwh'?0:1)} ${metric==='kwh'?'kWh':'h'}</p></div>
+      <div><h2>Chi tiết ngày ${day} · ${label}</h2><p>${dayRows.length} máy · Tổng ${sum.toFixed(metric==='kwh'?0:1)} ${unit}</p></div>
       <button class="mcl" onclick="closeOv()">✕</button>
     </div>
     <div class="mb">
+      ${dodHtml}
       ${causeHtml}
       <div class="tw" style="max-height:55vh"><table>
         <thead><tr><th>Mã máy</th><th style="text-align:right">Điện phát (kWh)</th><th style="text-align:right">Giờ chạy (h)</th></tr></thead>
@@ -1603,76 +1731,345 @@ function exportAnalysisFullCsv(){
   exportCsv({ headers:['Ngày','Mã máy','Điện phát (kWh)','Giờ chạy (h)'], rows }, 'phan-tich-tong-hop-theo-ngay');
 }
 
-function viewMaster(){
-  const q = (S.filters.master||'').toLowerCase();
-  const st = S.filters.masterStatus || '';
-  let rows = S.master.rows;
-  if (st) rows = rows.filter(r => statusKey(r)===st);
-  if (q)  rows = rows.filter(r => JSON.stringify(r._byLetter).toLowerCase().includes(q));
+/* ============================================================
+ *  TRANG GỘP "DANH SÁCH & ĐỊNH MỨC MÁY"
+ *  ------------------------------------------------------------
+ *  Trước đây tách làm 2 trang: "Danh sách máy" (Sheet 1) và "Định mức thiết kế"
+ *  (Sheet 5 cột A→H). Cùng một mã máy nhưng phải nhảy qua lại 2 chỗ để nhập, và
+ *  không có nơi nào cho biết máy vừa thêm ở Sheet 1 đã có dòng ở Sheet 5 hay chưa
+ *  — đó chính là nguồn gốc của tình trạng thiếu máy trong thống kê.
+ *
+ *  Nay gộp thành 1 trang, 3 tab dùng chung bộ lọc:
+ *    · Thông tin máy       — bảng Sheet 1
+ *    · Định mức thiết kế   — bảng Sheet 5 cột A→H, sửa trực tiếp trên ô
+ *    · Đối soát đồng bộ    — mã nào thiếu/thừa ở sheet nào, kèm nút vá 1 chạm
+ *  Thêm/sửa máy đi qua ĐÚNG 1 form duy nhất (openMachineForm) ghi cùng lúc vào
+ *  Sheet 1 + 2 + 4 + 5 rồi tính lại Sheet 9.
+ * ============================================================ */
 
+/**
+ * ĐỐI SOÁT PHÍA CLIENT — mã máy nào ở Sheet 1 mà thiếu dòng ở sheet khác, và ngược lại.
+ * Tính ngay trên dữ liệu đã bootstrap nên hiện tức thì, không phải gọi server.
+ * Backend có hàm _syncMachines() làm việc vá thật; hàm này chỉ để NHÌN THẤY vấn đề.
+ */
+function machineReconcile_(){
+  const norm = c => String(c||'').trim().toLowerCase();
+  const masterCodes = S.master.rows.map(r => String(r._byLetter[COL.MA]||'').trim()).filter(Boolean);
+  const masterSet = new Set(masterCodes.map(norm));
+
+  const codesOf = (sheet, letter) => new Set(
+    (sheet.rows||[]).map(r => norm(r._byLetter?.[letter||'B'])).filter(Boolean)
+  );
+
+  const sheets = [
+    { key:'tracking',   name:'2. Theo dõi hoạt động bảo dưỡng', have: codesOf(S.tracking) },
+    { key:'efficiency', name:'5. Theo dõi hiệu quả vận hành',   have: codesOf(S.efficiency) },
+    { key:'monthly',    name:'9. Tổng kết hiệu quả tháng',      have: codesOf(S.monthly) },
+  ];
+
+  let totalMissing = 0;
+  sheets.forEach(s => {
+    s.missing = masterCodes.filter(c => !s.have.has(norm(c)));
+    s.orphans = [...s.have].filter(c => !masterSet.has(c));
+    totalMissing += s.missing.length;
+  });
+  return { sheets, totalMissing, nMaster: masterCodes.length };
+}
+
+/* Bộ lọc dùng chung cho cả 3 tab */
+function machineFilterMatch_(code, m){
+  const f = S.filters;
+  const q = String(f.master||'').trim().toLowerCase();
+  if (f.masterStatus && (!m || statusKey(m) !== f.masterStatus)) return false;
+  if (f.machineRegion.size && (!m || !f.machineRegion.has(regionOf(m)))) return false;
+  if (q){
+    const hay = `${code} ${m ? JSON.stringify(m._byLetter) : ''}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+function setMachineTab(t){ S.filters.machineTab = t; renderPage('master'); }
+function toggleMachineRegion(r){
+  const set = S.filters.machineRegion;
+  if (set.has(r)) set.delete(r); else set.add(r);
+  renderPage('master');
+}
+function setMasterStatus(s){ S.filters.masterStatus = s; renderPage('master'); }
+
+function viewMaster(){
+  const tab = S.filters.machineTab || 'info';
+  const all = S.master.rows;
+  const rec = machineReconcile_();
+  const nProblem = designRows_().filter(designProblem_).length;
+
+  const cAct = all.filter(r=>statusKey(r)==='active').length;
+  const cStp = all.filter(r=>statusKey(r)==='stopped').length;
+  const cNi  = all.filter(r=>statusKey(r)==='notinstalled').length;
+  const st = S.filters.masterStatus || '';
   const chip = (val, label, count) => `<button class="fchip ${st===val?'on':''}" onclick="setMasterStatus('${val}')">${label} (${count})</button>`;
-  const cAct = S.master.rows.filter(r=>statusKey(r)==='active').length;
-  const cStp = S.master.rows.filter(r=>statusKey(r)==='stopped').length;
-  const cNi  = S.master.rows.filter(r=>statusKey(r)==='notinstalled').length;
+
+  const regions = ['Miền Bắc','Miền Nam'];
+  const tabBtn = (id, label, badge) => `
+    <button class="fchip ${tab===id?'on':''}" onclick="setMachineTab('${id}')">
+      ${label}${badge ? ` <span class="b ${badge.cls}" style="margin-left:4px">${badge.n}</span>` : ''}
+    </button>`;
 
   return `
-    <div class="ph"><h1>Danh sách máy phát</h1><p>${S.master.rows.length} máy · hiển thị ${rows.length}${st?` · lọc trạng thái: <b>${esc(statusLabelVi(st))}</b>`:''}</p></div>
-    <div class="fbar">
-      <input class="si" id="masterSearch" autocomplete="off" placeholder="🔍 Tìm mã máy, trại, vận hành, khu vực…" value="${esc(q)}" oninput="S.filters.master=this.value;renderPage('master')">
-      <button class="btn bg-g" onclick="openMasterEdit()">+ Thêm máy</button>
-      <button class="btn bg-gr" onclick="exportCsv(S.master,'danh-sach-may')">⤓ CSV</button>
+    <div class="ph">
+      <h1>Danh sách &amp; Định mức máy</h1>
+      <p>${all.length} máy ở sheet "1. Danh sách máy" — đây là <b>bảng gốc</b>: thêm, sửa hay xoá mã máy ở đây
+         thì Sheet 2 · 4 · 5 · 9 đều được cập nhật theo trong cùng một lần lưu.</p>
     </div>
-    <div class="fbar">
-      <span class="mslbl">Trạng thái</span>
-      ${chip('', 'Tất cả', S.master.rows.length)}
-      ${chip('active', 'Đang hoạt động', cAct)}
-      ${chip('stopped', 'Không hoạt động', cStp)}
-      ${chip('notinstalled', 'Chưa lắp đặt', cNi)}
+
+    ${rec.totalMissing ? `
+    <div class="card" style="background:#fffbeb;border-left:4px solid var(--amb)">
+      <div style="padding:12px 16px;font-size:11px;color:#78350f;line-height:1.7;display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <span><b>${rec.totalMissing} chỗ thiếu dòng</b> giữa các sheet — máy có ở "Danh sách máy" nhưng chưa có dòng
+          ở sheet khác sẽ không được cảnh báo bảo dưỡng và không được cộng vào thống kê tháng.</span>
+        <button class="btn bg-g sm" style="flex-shrink:0" onclick="setMachineTab('sync')">Xem &amp; vá ngay →</button>
+      </div>
+    </div>` : ''}
+
+    <div class="msf" style="flex-direction:column;align-items:stretch;gap:10px">
+      <div class="msg">
+        <span class="mslbl">Xem theo</span>
+        ${tabBtn('info','📋 Thông tin máy')}
+        ${tabBtn('design','⚙ Định mức thiết kế', nProblem?{n:nProblem, cls:'ba'}:null)}
+        ${tabBtn('sync','🔗 Đối soát đồng bộ', rec.totalMissing?{n:rec.totalMissing, cls:'br'}:null)}
+      </div>
+      ${tab!=='sync' ? `
+      <div class="msg">
+        <span class="mslbl">Trạng thái</span>
+        ${chip('', 'Tất cả', all.length)}
+        ${chip('active', 'Đang hoạt động', cAct)}
+        ${chip('stopped', 'Không hoạt động', cStp)}
+        ${chip('notinstalled', 'Chưa lắp đặt', cNi)}
+      </div>
+      <div class="msg">
+        <span class="mslbl">Khu vực</span>
+        ${regions.map(r=>`<button class="fchip ${S.filters.machineRegion.has(r)?'on':''}" onclick="toggleMachineRegion('${esc(r)}')">${esc(r)}</button>`).join('')}
+        ${tab==='design' ? `<button class="fchip ${S.filters.machineOnlyProblem?'on':''}"
+            onclick="S.filters.machineOnlyProblem=!S.filters.machineOnlyProblem;renderPage('master')">⚠ Chỉ dòng cần rà lại (${nProblem})</button>` : ''}
+      </div>
+      <div class="msg" style="align-items:center">
+        <input class="si" id="masterSearch" style="max-width:280px" autocomplete="off"
+               placeholder="🔍 Tìm mã máy, trại, đơn vị, vận hành…"
+               value="${esc(S.filters.master||'')}" oninput="onMachineSearch(this.value)">
+        <button class="btn bg-g" onclick="openMachineForm()">+ Thêm máy mới</button>
+        <button class="btn bg-gr sm" onclick="${tab==='design'?'exportDesignCsv()':"exportCsv(S.master,'danh-sach-may')"}">⤓ CSV</button>
+      </div>` : ''}
     </div>
-    <div class="card"><div class="tw" style="max-height:70vh"><table>
-      <thead><tr>
-        <th>Mã máy</th><th>Loại hình</th><th>Đơn vị</th><th>Trại</th>
-        <th>Khu vực</th><th>Tỉnh</th>
-        <th style="text-align:right">CS (kW)</th>
-        <th>Trạng thái</th><th>Vận hành</th><th>SĐT</th><th>Zalo</th><th></th>
-      </tr></thead>
-      <tbody>${rows.map(r=>`<tr>
-        <td><span class="mm">${esc(r._byLetter[COL.MA])}</span></td>
-        <td>${esc(r._byLetter[COL.LOAI])}</td>
-        <td>${esc(r._byLetter[COL.DONVI])}</td>
-        <td>${esc(r._byLetter[COL.TRAI])}</td>
-        <td>${esc(r._byLetter[COL.KHU])}</td>
-        <td>${esc(r._byLetter[COL.TINH])}</td>
-        <td style="text-align:right;font-weight:600">${esc(r._byLetter[COL.KW])}</td>
-        <td>${statusBadge(r._byLetter[COL.TT])}</td>
-        <td>${esc(r._byLetter[COL.VH])}</td>
-        <td>${esc(r._byLetter[COL.SDT])}</td>
-        <td>${r._byLetter[COL.ZALO] ? '<span class="b bg">✓ UID</span>' : '<span class="b bmu">—</span>'}</td>
-        <td><button class="btn bg-b sm" onclick="openMasterEdit('${esc(r._byLetter[COL.MA])}')">✎ Sửa</button></td>
-      </tr>`).join('') || '<tr><td colspan="12"><div class="empty">Không có máy nào khớp.</div></td></tr>'}</tbody>
-    </table></div></div>
+
+    ${tab==='info' ? masterInfoTabHtml_() : (tab==='design' ? masterDesignTabHtml_() : masterSyncTabHtml_())}
   `;
 }
 
-function openMasterEdit(maCode){
-  const row = maCode ? S.master.rows.find(r=>String(r._byLetter.B)===maCode) : null;
+/* Gõ ô tìm: chỉ thay phần thân bảng để không mất con trỏ (renderPage dựng lại cả trang). */
+function onMachineSearch(v){
+  S.filters.master = v;
+  const tb = $('machineTableBody');
+  if (tb) tb.innerHTML = (S.filters.machineTab === 'design') ? designTableRowsHtml_() : masterInfoRowsHtml_();
+  const cnt = $('machineCount');
+  if (cnt) cnt.textContent = machineVisibleCount_();
+}
+
+function machineVisibleCount_(){
+  return (S.filters.machineTab === 'design') ? designFiltered_().length : masterFilteredRows_().length;
+}
+
+/* ---------- TAB 1 · Thông tin máy (Sheet 1) ---------- */
+function masterFilteredRows_(){
+  return S.master.rows.filter(r => machineFilterMatch_(String(r._byLetter[COL.MA]||'').trim(), r));
+}
+
+function masterInfoRowsHtml_(){
+  const rows = masterFilteredRows_();
+  if (!rows.length) return '<tr><td colspan="12"><div class="empty">Không có máy nào khớp bộ lọc.</div></td></tr>';
+  const effCodes = new Set((S.efficiency.rows||[]).map(r => String(r._byLetter?.B||'').trim().toLowerCase()));
+  return rows.map(r=>{
+    const code = String(r._byLetter[COL.MA]||'').trim();
+    const hasDesign = effCodes.has(code.toLowerCase());
+    return `<tr>
+      <td><span class="mm">${esc(code)}</span>${hasDesign?'':' <span class="b br" title="Chưa có dòng ở Sheet 5 · chưa nhập định mức">thiếu định mức</span>'}</td>
+      <td>${esc(r._byLetter[COL.LOAI])}</td>
+      <td>${esc(r._byLetter[COL.DONVI])}</td>
+      <td>${esc(r._byLetter[COL.TRAI])}</td>
+      <td>${esc(r._byLetter[COL.KHU])}</td>
+      <td>${esc(r._byLetter[COL.TINH])}</td>
+      <td style="text-align:right;font-weight:600">${esc(r._byLetter[COL.KW])}</td>
+      <td>${statusBadge(r._byLetter[COL.TT])}</td>
+      <td>${esc(r._byLetter[COL.VH])}</td>
+      <td>${esc(r._byLetter[COL.SDT])}</td>
+      <td>${r._byLetter[COL.ZALO] ? '<span class="b bg">✓ UID</span>' : '<span class="b bmu">—</span>'}</td>
+      <td><button class="btn bg-b sm" onclick="openMachineForm('${esc(code)}')">✎ Sửa</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function masterInfoTabHtml_(){
+  return `
+    <div class="card">
+      <div class="ch"><h3>Thông tin máy · sheet "1. Danh sách máy"</h3>
+        <span class="b bmu"><span id="machineCount">${masterFilteredRows_().length}</span>/${S.master.rows.length} máy</span></div>
+      <div class="tw" style="max-height:70vh"><table>
+        <thead><tr>
+          <th>Mã máy</th><th>Loại hình</th><th>Đơn vị</th><th>Trại</th>
+          <th>Khu vực</th><th>Tỉnh</th>
+          <th style="text-align:right">CS (kW)</th>
+          <th>Trạng thái</th><th>Vận hành</th><th>SĐT</th><th>Zalo</th><th></th>
+        </tr></thead>
+        <tbody id="machineTableBody">${masterInfoRowsHtml_()}</tbody>
+      </table></div>
+    </div>`;
+}
+
+/* ---------- TAB 2 · Định mức thiết kế (Sheet 5 cột A→H) ---------- */
+function masterDesignTabHtml_(){
+  const c = designCols_();
+  if (!c.hMa || !c.hHrTk){
+    return `<div class="card"><div class="cb"><div class="empty"><div class="ei">⚠️</div>
+      Chưa đọc được cột định mức trong sheet "5. Theo dõi hiệu quả vận hành".<br>
+      Cần có cột <b>Mã Máy</b>, <b>Giờ bắt đầu</b>, <b>Giờ kết thúc</b>, <b>Tổng số giờ chạy/ngày</b>,
+      <b>Công suất TK (KW)</b> và <b>Công suất thiết kế phát/ngày</b>.
+    </div></div></div>`;
+  }
+
+  const all = designRows_();
+  const nNum   = all.filter(x => x.numMismatch).length;
+  const nKhung = all.filter(x => x.khungMismatch).length;
+  const nMismatch = all.filter(x => x.numMismatch || x.khungMismatch).length;
+
+  return `
+    <div class="card" style="background:#f0f9ff;border-left:4px solid var(--bl)">
+      <div style="padding:12px 16px;font-size:11px;color:#075985;line-height:1.7">
+        <b>Nhập tay:</b> Giờ bắt đầu · Giờ kết thúc · Công suất TK (KW).
+        <b>Tự tính:</b> Khung giờ chạy chính · Tổng số giờ chạy/ngày · Công suất thiết kế phát/ngày.<br>
+        Tổng số giờ chạy/ngày = giờ kết thúc − giờ bắt đầu; kết thúc sớm hơn bắt đầu thì máy chạy xuyên đêm
+        nên cộng thêm 24h. Khung giờ: hai mốc cách nhau dưới 4 tiếng → <b>Cả ngày</b>;
+        từ 5h và kết thúc trước 23h → <b>Ca ngày</b>; từ 16h và kết thúc trước 9h → <b>Ca đêm</b>.<br>
+        Sửa mã máy thì làm ở tab <b>Thông tin máy</b> để mọi sheet cùng đổi theo.
+      </div>
+    </div>
+
+    ${nMismatch ? `<div class="card" style="background:#fffbeb;border-left:4px solid var(--amb)">
+      <div style="padding:12px 16px;font-size:11px;color:#78350f;line-height:1.7;display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <span>${nNum?`<b>${nNum} dòng</b> có SỐ đang lưu lệch với công thức — mọi đánh giá (% đạt, phân loại
+        hiệu quả, cột C/D Tổng kết tháng) đang chạy trên số sai. `:''}${nKhung?`<b>${nKhung} dòng</b> ghi khung giờ
+        theo cách gọi cũ ("ban ngày", "chạy xuyên đêm"…) thay vì 3 giá trị chuẩn Ca ngày / Ca đêm / Cả ngày.`:''}</span>
+        <button class="btn bg-g sm" style="flex-shrink:0" onclick="syncDesignFormula()">⟳ Đồng bộ ${nMismatch} dòng</button>
+      </div>
+    </div>` : ''}
+
+    <div class="card">
+      <div class="ch"><h3>Định mức thiết kế · sheet "5. Theo dõi hiệu quả vận hành" (cột A→H)</h3>
+        <span class="b bmu"><span id="machineCount">${designFiltered_().length}</span>/${all.length} máy · sửa là ghi thẳng vào đúng ô</span></div>
+      <div class="tw" style="max-height:70vh"><table>
+        <thead><tr>
+          <th style="text-align:right">STT</th>
+          <th>Mã Máy</th>
+          <th style="text-align:center">Giờ bắt đầu ✎</th>
+          <th style="text-align:center">Giờ kết thúc ✎</th>
+          <th style="text-align:center">Khung giờ chạy chính</th>
+          <th style="text-align:right">Tổng số giờ chạy/ngày</th>
+          <th style="text-align:center">Công suất TK (KW) ✎</th>
+          <th style="text-align:right">Công suất thiết kế phát/ngày</th>
+          <th>Đơn vị · Trại</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="machineTableBody">${designTableRowsHtml_()}</tbody>
+      </table></div>
+      <div style="padding:10px 16px;font-size:10px;color:var(--mu);line-height:1.6">
+        Dòng nền vàng = cần rà lại: thiếu giờ bắt đầu/kết thúc, thiếu công suất TK, hoặc số đã lưu lệch với công thức.
+      </div>
+    </div>`;
+}
+
+/* ---------- TAB 3 · Đối soát đồng bộ ---------- */
+function masterSyncTabHtml_(){
+  const rec = machineReconcile_();
+  const box = (s) => `
+    <div class="card">
+      <div class="ch"><h3>${esc(s.name)}</h3>
+        <span class="b ${s.missing.length?'br':'bg'}">${s.missing.length ? s.missing.length+' mã thiếu dòng' : 'Đủ ' + rec.nMaster + ' mã'}</span></div>
+      <div class="cb" style="font-size:11px;line-height:1.8">
+        ${s.missing.length ? `<div style="margin-bottom:6px"><b style="color:var(--red)">Có ở Danh sách máy nhưng thiếu dòng ở đây:</b><br>
+          ${s.missing.map(c=>`<span class="mm" style="margin-right:6px">${esc(c)}</span>`).join('')}</div>` : ''}
+        ${s.orphans.length ? `<div><b style="color:var(--amb)">Có ở đây nhưng không còn trong Danh sách máy:</b><br>
+          ${s.orphans.map(c=>`<span class="mm" style="margin-right:6px">${esc(c)}</span>`).join('')}
+          <div style="font-size:10px;color:var(--mu);margin-top:4px">Không tự xoá — xoá số liệu là việc phải do người quyết định.
+            Nếu máy đã thanh lý thì số liệu cũ nên giữ lại làm lịch sử.</div></div>` : ''}
+        ${(!s.missing.length && !s.orphans.length) ? '<span style="color:var(--g)">✓ Khớp hoàn toàn với Danh sách máy.</span>' : ''}
+      </div>
+    </div>`;
+
+  return `
+    <div class="card" style="background:#f0f9ff;border-left:4px solid var(--bl)">
+      <div style="padding:12px 16px;font-size:11px;color:#075985;line-height:1.7;display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <span>Đối chiếu <b>${rec.nMaster} mã máy</b> ở sheet "1. Danh sách máy" với các sheet còn lại.
+          Bấm "Đồng bộ ngay" để tự thêm dòng còn thiếu — dòng mới được sao chép công thức từ dòng cuối,
+          giờ vận hành và mốc bảo dưỡng khởi tạo bằng 0, bình lọc mặc định Chạy lần 1 / Đã thay thế.</span>
+        <button class="btn bg-g sm" style="flex-shrink:0" onclick="runSyncMachines()">⟳ Đồng bộ ngay</button>
+      </div>
+    </div>
+    ${rec.sheets.map(box).join('')}`;
+}
+
+async function runSyncMachines(){
+  if (!confirm('Thêm dòng còn thiếu cho các mã máy ở Sheet 2 / 4 / 5 và tính lại Tổng kết tháng?')) return;
+  setStatus(true,'Đang đối soát và vá dữ liệu…');
+  try {
+    const res = await apiPost({ action:'syncMachines', user:S.user.name });
+    if (!res.ok) throw new Error(res.error||'Lỗi đồng bộ');
+    const added = Object.entries(res.added||{}).map(([k,v])=>`${k}: ${v.length}`).join(' · ');
+    await reloadAll();
+    toast(added ? `✓ Đã thêm dòng thiếu — ${added}` : '✓ Mọi sheet đã khớp, không cần thêm gì', 'ok');
+    renderPage('master');
+  } catch(e){
+    toast('Lỗi: '+e.message,'err');
+    setStatus(false,'❌ '+e.message,true);
+  }
+}
+
+function afterMaster(){
+  // Ô tìm luôn ở cuối bộ lọc — đặt lại con trỏ nếu người dùng vừa gõ (renderPage đã lo phần chung)
+}
+
+/* ============================================================
+ *  FORM DUY NHẤT ĐỂ THÊM / SỬA 1 MÃ MÁY
+ *  Gộp đủ thông tin của Sheet 1 (danh mục) + Sheet 5 (định mức thiết kế)
+ *  + giá trị khởi tạo của Sheet 2 (bảo dưỡng), gửi lên trong 1 request duy nhất.
+ *  VÌ SAO GỘP: mã máy là khoá liên kết của cả hệ thống. Nếu để người dùng tạo ở
+ *  Sheet 1 rồi mới nhớ sang Sheet 5 nhập định mức, chỉ cần quên một lần là máy đó
+ *  biến mất khỏi mọi thống kê hiệu quả mà không có dấu hiệu gì báo ra.
+ * ============================================================ */
+function openMachineForm(maCode){
+  const row = maCode ? S.master.rows.find(r=>String(r._byLetter.B).trim()===String(maCode).trim()) : null;
   const isNew = !row;
   const v = L => row ? (row._byLetter[L]??'') : '';
   const dd = S.dropdowns;
+
+  // Định mức thiết kế hiện có ở Sheet 5 (nếu máy đã có dòng)
+  const dsg = maCode ? designRows_().find(x => x.code === String(maCode).trim()) : null;
+  const startVal = dsg ? fmtHHMM_(dsg.startMin) : '';
+  const endVal   = dsg ? fmtHHMM_(dsg.endMin)   : '';
+  const ratedVal = dsg && dsg.rated != null ? dsg.rated : '';
 
   openOv(`
     <div class="mh">
       <div>
         <h2>${isNew?'➕ Thêm máy phát mới':'✎ Chỉnh sửa: '+esc(maCode)}</h2>
-        <p>${isNew?'Nhập thông tin cơ bản, hệ thống sẽ tính công suất tự động':'Mọi thay đổi sẽ đồng bộ ngay vào Google Sheet'}</p>
+        <p>${isNew
+          ? 'Một lần lưu sẽ tạo dòng ở Sheet 1 · 2 · 4 · 5 và tính lại Tổng kết tháng'
+          : 'Đổi mã máy ở đây sẽ đổi theo ở tất cả các sheet, giữ nguyên số liệu lịch sử'}</p>
       </div>
       <button class="mcl" onclick="closeOv()">✕</button>
     </div>
     <div class="mb">
       <div class="fsec">
-        <div class="fsh"><div class="fsn">1</div><div class="fst">Thông tin cơ bản</div></div>
+        <div class="fsh"><div class="fsn">1</div><div class="fst">Thông tin cơ bản · Sheet 1</div></div>
         <div class="fgrid fg3">
-          <div class="iw"><div class="il">Mã máy *</div><input class="inp" id="fB" value="${esc(v('B'))}" ${isNew?'':'readonly'} placeholder="VD: NS200KVA18"></div>
+          <div class="iw"><div class="il">Mã máy *</div><input class="inp" id="fB" value="${esc(v('B'))}" placeholder="VD: NS200KVA18"></div>
           <div class="iw">${autoWrap('fC','Loại hình', v('C'), dd.C?.options||['Thuê','Hợp tác','Bán','Tồn kho'])}</div>
           <div class="iw">${autoWrap('fD','Đơn vị hợp tác', v('D'), dd.D?.options||[])}</div>
           <div class="iw"><div class="il">Tên trại / Đơn vị</div><input class="inp" id="fE" value="${esc(v('E'))}"></div>
@@ -1680,6 +2077,7 @@ function openMasterEdit(maCode){
           <div class="iw">${autoWrap('fH','Trạng thái', v('H'), dd.H?.options||['Hđ bình thường','Chưa lắp đặt','Không hoạt động','Chờ thu hồi'])}</div>
         </div>
       </div>
+
       <div class="fsec">
         <div class="fsh"><div class="fsn">2</div><div class="fst">Vị trí</div></div>
         <div class="fgrid fg3">
@@ -1688,16 +2086,68 @@ function openMasterEdit(maCode){
           <div class="iw"><div class="il">Ngày lắp đặt</div><input class="inp" id="fJ" type="date" value="${dateVal(v('J'))}"></div>
         </div>
       </div>
+
       <div class="fsec">
-        <div class="fsh"><div class="fsn">3</div><div class="fst">Vận hành & Liên lạc</div></div>
+        <div class="fsh"><div class="fsn">3</div><div class="fst">Vận hành &amp; Liên lạc</div></div>
         <div class="fgrid fg3">
           <div class="iw"><div class="il">Tên vận hành</div><input class="inp" id="fK" value="${esc(v('K'))}"></div>
           <div class="iw"><div class="il">SĐT vận hành</div><input class="inp" id="fL" value="${esc(v('L'))}" placeholder="09xx.xxx.xxx"></div>
           <div class="iw"><div class="il">Zalo User ID (cho OA)</div><input class="inp" id="fM" value="${esc(v('M'))}" placeholder="UID lấy từ Zalo OA Manager"></div>
         </div>
       </div>
+
       <div class="fsec">
-        <div class="fsh"><div class="fsn">4</div><div class="fst">Ghi chú & Bản đồ</div></div>
+        <div class="fsh" style="background:linear-gradient(90deg,#f0f9ff,#fff)">
+          <div class="fsn" style="background:var(--bl)">4</div>
+          <div class="fst">Định mức thiết kế · Sheet 5</div>
+        </div>
+        <div class="fgrid fg3">
+          <div class="iw"><div class="il">Giờ bắt đầu (24h)</div>
+            <input class="inp tin24" id="fDsgStart" value="${esc(startVal)}" placeholder="HH:mm"
+                   inputmode="numeric" maxlength="5" autocomplete="off" oninput="maskHHMM_(this);previewMachineDesign()"></div>
+          <div class="iw"><div class="il">Giờ kết thúc (24h)</div>
+            <input class="inp tin24" id="fDsgEnd" value="${esc(endVal)}" placeholder="HH:mm"
+                   inputmode="numeric" maxlength="5" autocomplete="off" oninput="maskHHMM_(this);previewMachineDesign()"></div>
+          <div class="iw"><div class="il">Công suất TK (KW)</div>
+            <input class="inp" id="fDsgRated" type="number" step="any" min="0" value="${esc(ratedVal)}" oninput="previewMachineDesign()"></div>
+          <div class="iw"><div class="il">Khung giờ chạy chính — tự tính</div><div id="fDsgKhung" class="dsgcalc">—</div></div>
+          <div class="iw"><div class="il">Tổng số giờ chạy/ngày — tự tính</div><div id="fDsgHr" class="dsgcalc">—</div></div>
+          <div class="iw"><div class="il">CS thiết kế phát/ngày — tự tính</div><div id="fDsgKw" class="dsgcalc">—</div></div>
+        </div>
+      </div>
+
+      ${isNew ? `
+      <div class="fsec">
+        <div class="fsh" style="background:linear-gradient(90deg,#f0fdf4,#fff)">
+          <div class="fsn" style="background:var(--g)">5</div>
+          <div class="fst">Khởi tạo bảo dưỡng · Sheet 2</div>
+        </div>
+        <div class="fgrid fg2">
+          <div class="iw"><div class="il">Tháp lọc số 1</div>
+            <select class="sel" id="fThap1">${THAP_LOC_OPTIONS.map(o=>`<option ${o==='Chạy lần 1'?'selected':''}>${esc(o)}</option>`).join('')}</select></div>
+          <div class="iw"><div class="il">Tháp lọc số 2</div>
+            <select class="sel" id="fThap2">${THAP_LOC_OPTIONS.map(o=>`<option ${o==='Đã thay thế'?'selected':''}>${esc(o)}</option>`).join('')}</select></div>
+        </div>
+        <div style="font-size:10px;color:var(--mu);line-height:1.7;padding:0 2px">
+          Máy mới: <b>số giờ máy chạy và toàn bộ mốc bảo dưỡng khởi tạo bằng 0</b>, các cột công thức
+          "Theo dõi/cảnh báo…" được sao chép từ dòng cuối nên cảnh báo chạy ngay từ giờ đầu tiên.
+        </div>
+      </div>` : `
+      <div class="fsec">
+        <div class="fsh" style="background:linear-gradient(90deg,#f8fafc,#fff)">
+          <div class="fsn" style="background:var(--mu)">5</div>
+          <div class="fst">Bảo dưỡng · Sheet 2 (sửa ở trang Theo dõi bảo dưỡng)</div>
+        </div>
+        <div style="font-size:10px;color:var(--mu);line-height:1.7;padding:2px">
+          Số giờ vận hành và các mốc bảo dưỡng của máy này chỉnh ở trang
+          <b onclick="closeOv();nav('tracking')" style="color:var(--bl);cursor:pointer;text-decoration:underline">Theo dõi bảo dưỡng</b>,
+          trạng thái bình lọc chỉnh ở trang
+          <b onclick="closeOv();nav('filter')" style="color:var(--bl);cursor:pointer;text-decoration:underline">Data thay lọc</b>.
+        </div>
+      </div>`}
+
+      <div class="fsec">
+        <div class="fsh"><div class="fsn">6</div><div class="fst">Ghi chú &amp; Bản đồ</div></div>
         <div class="fgrid fg2">
           <div class="iw full"><div class="il">Link Google Maps</div><input class="inp" id="fN" value="${esc(v('N'))}" placeholder="https://maps.google.com/..."></div>
           <div class="iw full"><div class="il">Ghi chú</div><textarea class="ta" id="fO">${esc(v('O'))}</textarea></div>
@@ -1705,32 +2155,95 @@ function openMasterEdit(maCode){
       </div>
     </div>
     <div class="mf">
+      ${isNew ? '' : `<button class="btn bg-r" style="margin-right:auto" onclick="deleteMachineAll('${esc(maCode)}')">🗑 Xoá máy</button>`}
       <button class="btn bg-gr" onclick="closeOv()">Hủy</button>
-      <button class="btn bg-g" onclick="saveMaster(${isNew})">💾 Lưu vào Google Sheet</button>
+      <button class="btn bg-g" onclick="saveMachineForm(${isNew}, '${esc(maCode||'')}')">💾 Lưu vào Google Sheet</button>
     </div>
   `);
   setTimeout(()=>['fC','fD','fF','fG','fH'].forEach(id=>{ const el=$(id); if (el) attachAutocomplete(el); }), 10);
-  // Bật draft persistence — key riêng cho từng máy (hoặc "new" khi thêm mới)
-  const dk = 'master:'+(maCode||'new');
-  setDraftContext(dk, ['fB','fC','fD','fE','fF','fG','fH','fI','fJ','fK','fL','fM','fN','fO']);
+  previewMachineDesign();
+  const dk = 'machine:'+(maCode||'new');
+  setDraftContext(dk, ['fB','fC','fD','fE','fF','fG','fH','fI','fJ','fK','fL','fM','fN','fO','fDsgStart','fDsgEnd','fDsgRated']);
 }
 
-async function saveMaster(isNew){
+/* 3 ô tự tính trong form — hiện ngay khi gõ, dùng đúng công thức của bảng định mức */
+function previewMachineDesign(){
+  const sMin = parseHHMM_(($('fDsgStart')||{}).value);
+  const eMin = parseHHMM_(($('fDsgEnd')||{}).value);
+  const rated = Number(($('fDsgRated')||{}).value);
+  const hr = runHours_(sMin, eMin);
+  const khung = shiftLabel_(sMin, eMin);
+  const kw = (hr != null && rated > 0) ? Math.round(rated * hr * 100) / 100 : null;
+  if ($('fDsgKhung')) $('fDsgKhung').textContent = khung || '—';
+  if ($('fDsgHr'))    $('fDsgHr').textContent    = hr != null ? String(hr) : '—';
+  if ($('fDsgKw'))    $('fDsgKw').textContent    = kw != null ? String(kw) : '—';
+}
+
+async function saveMachineForm(isNew, oldCode){
   const letters = ['B','C','D','E','F','G','H','I','J','K','L','M','N','O'];
-  const data = {};
-  letters.forEach(L=>{ const el=$('f'+L); if (el) data[L]=el.value; });
-  if (!data.B){ toast('Thiếu mã máy','err'); return; }
+  const master = {};
+  letters.forEach(L=>{ const el=$('f'+L); if (el) master[L]=el.value; });
+  const code = String(master.B||'').trim();
+  if (!code){ toast('Thiếu mã máy','err'); return; }
+
+  const sMin = parseHHMM_(($('fDsgStart')||{}).value);
+  const eMin = parseHHMM_(($('fDsgEnd')||{}).value);
+  const ratedRaw = String((($('fDsgRated')||{}).value)||'').trim();
+  const rated = ratedRaw === '' ? null : Number(ratedRaw.replace(/,/g,'.'));
+  if (ratedRaw !== '' && (isNaN(rated) || rated < 0)){ toast('Công suất TK phải là số không âm','err'); return; }
+  const hr = runHours_(sMin, eMin);
+
+  /* Định mức chỉ gửi khi có ít nhất 1 ô được nhập — tránh việc mở form ra sửa số điện thoại
+   * rồi vô tình ghi rỗng đè lên định mức đang đúng trên Sheet. */
+  const hasDesign = sMin != null || eMin != null || ratedRaw !== '';
+  const design = hasDesign ? {
+    gioBatDau:  sMin != null ? fmtHHMM_(sMin) : '',
+    gioKetThuc: eMin != null ? fmtHHMM_(eMin) : '',
+    khungGio:   shiftLabel_(sMin, eMin) || '',
+    ratedKw:    rated != null ? Math.round(rated*100)/100 : '',
+    designHrDay: hr != null ? hr : '',
+    designKwDay: (rated != null && hr != null) ? Math.round(rated * hr * 100) / 100 : '',
+  } : null;
+
+  const tracking = isNew ? {
+    thap1: ($('fThap1')||{}).value || 'Chạy lần 1',
+    thap2: ($('fThap2')||{}).value || 'Đã thay thế',
+  } : null;
+
+  if (isNew && !hasDesign &&
+      !confirm(`Thêm máy "${code}" mà chưa nhập định mức thiết kế?\n\nMáy sẽ có dòng ở Sheet 5 nhưng chưa đánh giá được % đạt giờ chạy / công suất cho tới khi nhập giờ bắt đầu, giờ kết thúc và công suất TK.`)) return;
+
   setStatus(true,'Đang lưu…');
   try {
-    const res = isNew ? await apiPost({action:'addMachine', data, user:S.user.name}) : await apiPost({action:'updateMaster', maCode:data.B, updates:data, user:S.user.name});
+    const res = await apiPost({ action:'saveMachineAll', isNew, maCode: oldCode||'', master, design, tracking, user:S.user.name });
     if (!res.ok) throw new Error(res.error);
-    clearDraft('master:'+(isNew?'new':data.B));
+    clearDraft('machine:'+(isNew?'new':(oldCode||code)));
     clearDraftContext();
     closeOv();
     await reloadAll();
-    toast('✓ Đã lưu vào Google Sheet','ok');
+    const created = (res.created||[]).length ? ` · đã tạo dòng ở ${res.created.length} sheet` : '';
+    const renamed = res.renamed ? ` · đổi mã ${res.renamed.from} → ${res.renamed.to}` : '';
+    toast(`✓ Đã lưu ${code}${created}${renamed}`,'ok');
+    (res.warnings||[]).forEach(w => toast('⚠ '+w,'err'));
+    renderPage('master');
   } catch(e){ toast('Lỗi lưu: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
 }
+
+async function deleteMachineAll(code){
+  if (!confirm(`Xoá hẳn máy "${code}"?\n\nDòng của máy sẽ bị xoá ở Sheet 1 · 2 · 4 · 5.\nSố liệu đã chốt ở Tổng kết tháng và Tổng hợp theo tháng vẫn được giữ làm lịch sử.`)) return;
+  setStatus(true,'Đang xoá máy…');
+  try {
+    const res = await apiPost({ action:'deleteMachineAll', maCode:code, user:S.user.name });
+    if (!res.ok) throw new Error(res.error);
+    closeOv();
+    await reloadAll();
+    toast(`✓ Đã xoá ${code} khỏi ${(res.removed||[]).length} sheet`,'ok');
+    renderPage('master');
+  } catch(e){ toast('Lỗi xoá: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
+}
+
+/* Giữ tên hàm cũ cho các nút/lối gọi còn sót lại */
+function openMasterEdit(maCode){ openMachineForm(maCode); }
 
 /* ============================================================
  *  THEO DÕI BẢO DƯỠNG — hiển thị theo mã máy
@@ -2239,13 +2752,10 @@ function viewEfficiency(){
 
     ${allMachineCards.length ? allMachineCards.map((x,i)=>ineffCardHtml(x,'eff_'+i)).join('') : `
       <div class="empty"><div class="ei">📈</div>Không có máy kém hiệu quả trong bộ lọc hiện tại.</div>`}
-
-    ${S.efficiency.rows.length ? `
-      <div class="card">
-        <div class="ch"><h3>Bảng chi tiết Sheet 5 · Chỉnh sửa cột nhập tay</h3><span class="b bmu">${filtered.length} máy</span></div>
-        <div class="tw" style="max-height:60vh">${effEditableTable(filtered)}</div>
-      </div>` : ''}
   `;
+  /* Bảng "Chi tiết Sheet 5 · Chỉnh sửa cột nhập tay" đã BỎ theo yêu cầu vận hành:
+   * các cột định mức A→H nay chỉnh ở trang "Danh sách & Định mức máy" (tab Định mức thiết kế),
+   * còn số liệu theo ngày sửa trực tiếp bằng cách bấm vào điểm trên biểu đồ từng máy. */
 }
 
 function toggleEffFilter(setName, val){
@@ -3175,20 +3685,20 @@ function monthlySectionHtml_(){
         <div class="es"><div class="esl">Tổng công suất</div><div class="esv">${fmt2_(selTotal.power)} <span style="font-size:9px;color:var(--mu);font-weight:500">kWh</span></div></div>
         <div class="es"><div class="esl">Tổng số giờ</div><div class="esv">${fmt2_(selTotal.hours)} <span style="font-size:9px;color:var(--mu);font-weight:500">h</span></div></div>
         <div class="es"><div class="esl">Công suất phát TB</div><div class="esv ok">${selTotal.avgKw!=null?fmt2_(selTotal.avgKw):'—'} <span style="font-size:9px;color:var(--mu);font-weight:500">kW = tổng CS ÷ tổng giờ</span></div></div>
-        <div class="es"><div class="esl">Giờ chạy TB 1 máy/ngày</div><div class="esv">${monthlyHrPerMachineDay_(selTotal, machines.length, sel)}</div></div>
+        <div class="es"><div class="esl">Giờ chạy TB 1 máy/ngày</div><div class="esv">${monthlyHrPerMachineDay_(selTotal, machines.length, sel, new Set(machines.map(x=>x.code)))}</div></div>
         <div class="es"><div class="esl">Tổng chỉ số công tơ</div><div class="esv">${fmt2_(selTotal.meter)} <span style="font-size:9px;color:var(--mu);font-weight:500">${selTotal.nMeter||0} máy đã nhập</span></div></div>
       </div></div>
     </div>
 
     <div class="card">
       <div class="ch"><h3>Công suất phát trung bình theo tháng (kW)</h3>
-        <span class="b bmu">Tổng công suất ÷ Tổng số giờ của chính tháng đó · đường xám = trung bình các tháng</span></div>
+        <span class="b bmu">Tổng công suất ÷ Tổng số giờ của chính tháng đó · đường xám = TB các tháng · đường cam = tháng trước</span></div>
       <div class="cb"><div class="cw" style="height:260px"><canvas id="chMonAvgKw"></canvas></div></div>
     </div>
 
     <div class="card">
       <div class="ch"><h3>Giờ chạy trung bình 1 máy/ngày theo tháng (h)</h3>
-        <span class="b bmu">Tổng số giờ ÷ số máy ÷ số ngày của tháng đó</span></div>
+        <span class="b bmu">Tổng số giờ ÷ số máy ÷ số ngày của tháng đó CÓ ghi nhận chỉ số · hết tháng thì lấy trọn số ngày · đường cam = tháng trước</span></div>
       <div class="cb"><div class="cw" style="height:240px"><canvas id="chMonHrPerMachine"></canvas></div></div>
     </div>
 
@@ -3217,12 +3727,94 @@ function daysInMonthLabel_(label){
   return new Date(Number(m[2]), Number(m[1]), 0).getDate();
 }
 
-/* Giờ chạy TB 1 máy/ngày của 1 tháng = tổng giờ ÷ số máy ÷ số ngày trong tháng */
-function monthlyHrPerMachineDay_(t, nMachines, label){
-  const nD = daysInMonthLabel_(label);
+function currentMonthLabel_(){
+  const d = new Date();
+  return ('0'+(d.getMonth()+1)).slice(-2) + '/' + d.getFullYear();
+}
+
+/**
+ * SỐ NGÀY CỦA THÁNG ĐÃ CÓ GHI NHẬN CHỈ SỐ — mẫu số của mọi phép "trung bình theo ngày".
+ *
+ * VÌ SAO KHÔNG DÙNG THẲNG SỐ NGÀY CỦA THÁNG: đang giữa tháng mà chia cho cả 31 ngày thì
+ * 28 ngày chưa tới cũng bị tính là ngày chạy 0 h — chỉ số trung bình bị kéo xuống gần bằng
+ * 0 và biểu đồ tháng hiện tại luôn thấp giả tạo so với các tháng đã đủ dữ liệu (đúng hiện
+ * tượng cột 08/2026 chỉ ra 2.5 h).
+ *
+ * Quy tắc: tháng ĐANG chạy → đếm số ngày thật sự đã có ít nhất 1 máy ghi nhận chỉ số trong
+ * khối cột ngày của Sheet 5. Tháng ĐÃ KẾT THÚC → lấy trọn số ngày của tháng đó (Sheet 5 đã
+ * bị xoá để dùng lại cho tháng mới nên không còn đếm được, và tháng đã đủ ngày nên cũng
+ * không cần đếm).
+ */
+function daysRecordedCurrentMonth_(codes){
+  const eff = S.efficiency || {headers:[], rows:[]};
+  const H = eff.headers.filter(Boolean);
+  if (!H.length) return 0;
+  const hMa = findHeader(H, 'mã.?máy','ma may','^ma$');
+  const { powerCols, hoursCols } = getDailyColSplitForMonth_(H, getDaysInCurrentMonth_());
+  const n = Math.min(powerCols.length, hoursCols.length);
+  let count = 0;
+  for (let i=0; i<n; i++){
+    const has = eff.rows.some(r => {
+      const code = String((hMa?r[hMa]:'')||r._byLetter?.B||'').trim();
+      if (codes && !codes.has(code)) return false;
+      return numOrNull_(r[powerCols[i].header]) != null || numOrNull_(r[hoursCols[i].header]) != null;
+    });
+    if (has) count++;
+  }
+  return count;
+}
+
+/** Mẫu số ngày cho 1 tháng bất kỳ · codes = Set mã máy đang lọc (bỏ trống = tất cả). */
+function daysRecordedForMonth_(label, codes){
+  if (label !== currentMonthLabel_()) return daysInMonthLabel_(label);
+  return daysRecordedCurrentMonth_(codes);
+}
+
+/* Giờ chạy TB 1 máy/ngày của 1 tháng = tổng giờ ÷ số máy ÷ số ngày CÓ GHI NHẬN của tháng đó */
+function monthlyHrPerMachineDay_(t, nMachines, label, codes){
+  const nD = daysRecordedForMonth_(label, codes);
   if (!nMachines || !nD || t.hours == null) return '—';
   const v = t.hours / nMachines / nD;
-  return `${(Math.round(v*100)/100)} <span style="font-size:9px;color:var(--mu);font-weight:500">${fmt2_(t.hours)} h ÷ ${nMachines} máy ÷ ${nD} ngày</span>`;
+  const isCur = label === currentMonthLabel_();
+  return `${(Math.round(v*100)/100)} <span style="font-size:9px;color:var(--mu);font-weight:500">${fmt2_(t.hours)} h ÷ ${nMachines} máy ÷ ${nD} ngày${isCur?' đã ghi nhận':''}</span>`;
+}
+
+/**
+ * CHỈ SỐ TRUNG BÌNH CỦA THÁNG TRƯỚC — dùng làm đường tham chiếu trên các biểu đồ để nhìn
+ * phát ra ngay tháng này đang tốt hơn hay kém hơn tháng trước, thay vì phải nhẩm.
+ * Lấy từ Sheet 9 (nơi duy nhất còn giữ số liệu tháng đã chốt) và chỉ tính trên đúng bộ máy
+ * đang lọc, để đường tham chiếu cùng tập hợp với cột đang xem.
+ */
+function prevMonthStats_(codes){
+  const model = buildMonthlyModel_();
+  if (!model.months.length) return null;
+
+  const cur = currentMonthLabel_();
+  const idx = model.months.findIndex(m => m.label === cur);
+  let prev = null;
+  if (idx > 0) prev = model.months[idx-1];
+  else if (idx < 0) prev = model.months[model.months.length-1];   // Sheet 9 chưa có cột tháng này
+  if (!prev) return null;
+
+  const machines = model.machines.filter(x => !codes || codes.has(x.code));
+  let power = 0, hours = 0, n = 0;
+  machines.forEach(x => {
+    const d = x.byMonth[prev.label] || {};
+    if (d.power != null){ power += d.power; n++; }
+    if (d.hours != null) hours += d.hours;
+  });
+  if (!n) return null;
+
+  const days = daysInMonthLabel_(prev.label);   // tháng trước đã kết thúc → trọn số ngày
+  const nM = machines.length;
+  const r2 = v => Math.round(v*100)/100;
+  return {
+    label: prev.label, days, nMachines: nM, power: r2(power), hours: r2(hours),
+    avgKwhPerDay:     r2(power/days),
+    avgHoursPerDay:   r2(hours/days),
+    avgKw:            hours > 0 ? r2(power/hours) : null,
+    hrPerMachineDay:  nM ? r2(hours/nM/days) : null,
+  };
 }
 
 /* NỘI DUNG 2 — bảng cảnh báo chênh lệch số liệu */
@@ -3364,21 +3956,30 @@ function afterMonthly(){
   if (!withData.length) return;
 
   const labels = totals.map(t=>t.label);
+  const codes = new Set(machines.map(x=>x.code));
+  const prev = prevMonthStats_(codes);
 
   // 1) Công suất phát trung bình từng tháng (kW)
   const avgVals = totals.map(t => t.avgKw || 0);
   const avgNonZero = avgVals.filter(v=>v>0);
   const meanAvg = avgNonZero.length ? avgNonZero.reduce((a,b)=>a+b,0)/avgNonZero.length : 0;
   chartBarClickable('chMonAvgKw', labels, avgVals, '#0d6e3f', null,
-    { mean: meanAvg, xTitle: 'Tháng' });
+    { mean: meanAvg, xTitle: 'Tháng',
+      prev: (prev && prev.avgKw != null) ? { label: prev.label, value: prev.avgKw, decimals: 2 } : null });
 
-  // 2) Giờ chạy TB 1 máy/ngày từng tháng = tổng giờ ÷ số máy ÷ số ngày trong tháng
+  /* 2) Giờ chạy TB 1 máy/ngày từng tháng
+   *    = tổng giờ ÷ số máy (theo bộ lọc) ÷ SỐ NGÀY CÓ GHI NHẬN CHỈ SỐ của chính tháng đó.
+   *    Tháng đã kết thúc thì mẫu số là trọn số ngày của tháng — xem daysRecordedForMonth_. */
   const nM = machines.length;
-  const hrPerMD = totals.map(t => (nM > 0 && t.hours != null)
-    ? Math.round(t.hours / nM / daysInMonthLabel_(t.label) * 100) / 100 : 0);
+  const hrPerMD = totals.map(t => {
+    const nD = daysRecordedForMonth_(t.label, codes);
+    return (nM > 0 && nD > 0 && t.hours != null)
+      ? Math.round(t.hours / nM / nD * 100) / 100 : 0;
+  });
   const hrNonZero = hrPerMD.filter(v => v > 0);
   chartBarClickable('chMonHrPerMachine', labels, hrPerMD, '#7c3aed', null,
-    { mean: hrNonZero.length ? hrNonZero.reduce((a,b)=>a+b,0)/hrNonZero.length : 0, xTitle: 'Tháng' });
+    { mean: hrNonZero.length ? hrNonZero.reduce((a,b)=>a+b,0)/hrNonZero.length : 0, xTitle: 'Tháng',
+      prev: (prev && prev.hrPerMachineDay != null) ? { label: prev.label, value: prev.hrPerMachineDay, decimals: 2 } : null });
 
   // 3) Tổng công suất từng tháng + tô vàng tháng lệch khỏi đường trung bình
   const powVals = totals.map(t=>t.power);
@@ -3654,97 +4255,14 @@ function designRows_(){
   }).filter(Boolean);
 }
 
+/* Bộ lọc của tab "Định mức thiết kế" nay DÙNG CHUNG với tab "Thông tin máy"
+ * (ô tìm, trạng thái, khu vực) — chuyển tab không mất ngữ cảnh đang xem. */
 function designFiltered_(){
-  const f = S.filters.design;
-  const q = (f.q||'').trim().toLowerCase();
   return designRows_().filter(x => {
-    if (f.region.size && !f.region.has(x.khu)) return false;
-    if (f.onlyProblem && !designProblem_(x)) return false;
-    if (q && !`${x.code} ${x.unit} ${x.farm}`.toLowerCase().includes(q)) return false;
+    if (S.filters.machineOnlyProblem && !designProblem_(x)) return false;
+    if (!machineFilterMatch_(x.code, x.master)) return false;
     return true;
   });
-}
-
-function viewDesign(){
-  const c = designCols_();
-  if (!c.hMa || !c.hHrTk){
-    return `<div class="ph"><h1>Định mức thiết kế</h1></div>
-      <div class="card"><div class="cb"><div class="empty"><div class="ei">⚠️</div>
-        Chưa đọc được cột định mức trong sheet "5. Theo dõi hiệu quả vận hành".<br>
-        Cần có cột <b>Mã Máy</b>, <b>Giờ bắt đầu</b>, <b>Giờ kết thúc</b>, <b>Tổng số giờ chạy/ngày</b>,
-        <b>Công suất TK (KW)</b> và <b>Công suất thiết kế phát/ngày</b>.
-      </div></div></div>`;
-  }
-
-  const all = designRows_();
-  const f = S.filters.design;
-  const nProblem  = all.filter(designProblem_).length;
-  const nNum      = all.filter(x => x.numMismatch).length;
-  const nKhung    = all.filter(x => x.khungMismatch).length;
-  const nMismatch = all.filter(x => x.numMismatch || x.khungMismatch).length;
-  const regions = [...new Set(all.map(x=>x.khu).filter(Boolean))].sort();
-
-  return `
-    <div class="ph">
-      <h1>Định mức thiết kế</h1>
-      <p id="designCount">${designFiltered_().length}/${all.length} máy · cột A→H của sheet "5. Theo dõi hiệu quả vận hành" ·
-         sửa là ghi thẳng vào đúng ô tương ứng trên Google Sheet</p>
-    </div>
-
-    <div class="card" style="background:#f0f9ff;border-left:4px solid var(--blu)">
-      <div style="padding:12px 16px;font-size:11px;color:#075985;line-height:1.7">
-        <b>Nhập tay:</b> Mã Máy · Giờ bắt đầu · Giờ kết thúc · Công suất TK (KW).
-        <b>Tự tính:</b> Khung giờ chạy chính · Tổng số giờ chạy/ngày · Công suất thiết kế phát/ngày.<br>
-        Tổng số giờ chạy/ngày = giờ kết thúc − giờ bắt đầu; nếu kết thúc sớm hơn bắt đầu thì máy chạy
-        xuyên đêm nên cộng thêm 24h. Khung giờ: hai mốc cách nhau dưới 4 tiếng → <b>Cả ngày</b>;
-        bắt đầu từ 5h và kết thúc trước 23h → <b>Ca ngày</b>; bắt đầu từ 16h và kết thúc trước 9h → <b>Ca đêm</b>.
-      </div>
-    </div>
-
-    ${nMismatch ? `<div class="card" style="background:#fffbeb;border-left:4px solid var(--amb)">
-      <div style="padding:12px 16px;font-size:11px;color:#78350f;line-height:1.7;display:flex;justify-content:space-between;align-items:center;gap:12px">
-        <span>${nNum?`<b>${nNum} dòng</b> có SỐ đang lưu lệch với công thức — mọi đánh giá (% đạt, phân loại
-        hiệu quả, cột C/D Tổng kết tháng) đang chạy trên số sai. `:''}${nKhung?`<b>${nKhung} dòng</b> ghi khung giờ
-        theo cách gọi cũ ("ban ngày", "chạy xuyên đêm"…) thay vì 3 giá trị chuẩn Ca ngày / Ca đêm / Cả ngày.`:''}</span>
-        <button class="btn bg-g sm" style="flex-shrink:0" onclick="syncDesignFormula()">⟳ Đồng bộ ${nMismatch} dòng</button>
-      </div>
-    </div>` : ''}
-
-    <div class="msf" style="flex-direction:column;align-items:stretch;gap:10px">
-      <div class="msg">
-        <span class="mslbl">Khu vực</span>
-        ${regions.map(r=>`<button class="fchip ${f.region.has(r)?'on':''}" onclick="toggleDesignRegion('${esc(r)}')">${esc(r)}</button>`).join('')}
-        <button class="fchip ${f.onlyProblem?'on':''}" onclick="S.filters.design.onlyProblem=!S.filters.design.onlyProblem;renderPage('design')">⚠ Chỉ dòng cần rà lại (${nProblem})</button>
-      </div>
-      <div class="msg">
-        <input class="si" id="designSearch" style="max-width:240px" autocomplete="off"
-               placeholder="🔍 Tìm mã máy, đơn vị, trại…"
-               value="${esc(f.q||'')}" oninput="onDesignSearch(this.value)">
-        <button class="btn bg-g sm" onclick="openAddDesignRow()">+ Thêm mã máy</button>
-        <button class="btn bg-gr sm" onclick="exportDesignCsv()">⤓ CSV</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="tw" style="max-height:72vh"><table>
-        <thead><tr>
-          <th style="text-align:right">STT</th>
-          <th>Mã Máy ✎</th>
-          <th style="text-align:center">Giờ bắt đầu ✎</th>
-          <th style="text-align:center">Giờ kết thúc ✎</th>
-          <th style="text-align:center">Khung giờ chạy chính</th>
-          <th style="text-align:right">Tổng số giờ chạy/ngày</th>
-          <th style="text-align:center">Công suất TK (KW) ✎</th>
-          <th style="text-align:right">Công suất thiết kế phát/ngày</th>
-          <th>Đơn vị · Trại</th>
-          <th></th>
-        </tr></thead>
-        <tbody id="designTableBody">${designTableRowsHtml_()}</tbody>
-      </table></div>
-      <div style="padding:10px 16px;font-size:10px;color:var(--mu);line-height:1.6">
-        Dòng nền vàng = cần rà lại: thiếu giờ bắt đầu/kết thúc, thiếu công suất TK, hoặc số đã lưu lệch với công thức.
-      </div>
-    </div>`;
 }
 
 function designTableRowsHtml_(){
@@ -3757,9 +4275,7 @@ function designTableRowsHtml_(){
     const r = x.row._row;
     return `<tr style="${prob?'background:#fffbeb':''}">
       <td style="text-align:right;font-family:var(--mono);color:var(--mu)">${esc(x.stt ?? '')}</td>
-      <td><input class="inp mm" style="min-width:118px;font-weight:700"
-                 value="${esc(x.code)}"
-                 onchange="saveDesignCell(${r},'code',this.value)"></td>
+      <td><span class="mm">${esc(x.code)}</span>${x.inMaster?'':' <span class="b br" title="Không có trong sheet 1. Danh sách máy">mồ côi</span>'}</td>
       <td style="text-align:center">
         <input class="inp tin24" value="${fmtHHMM_(x.startMin)}" placeholder="HH:mm"
                inputmode="numeric" maxlength="5" autocomplete="off"
@@ -3784,18 +4300,9 @@ function designTableRowsHtml_(){
         (x.kwStored!=null && x.kwCalc!=null && Math.abs(x.kwStored-x.kwCalc)>0.01)
           ? ` <span class="b ba" title="Sheet đang lưu: ${x.kwStored}">≠ ${x.kwStored}</span>` : ''}</td>
       <td style="font-size:10px;color:var(--mu)">${esc(x.unit||'—')}${x.farm?' · '+esc(x.farm):''}</td>
-      <td><button class="btn bg-r sm" onclick="deleteDesignRow('${esc(x.code)}')">🗑</button></td>
+      <td><button class="btn bg-b sm" title="Mở form đầy đủ của máy này" onclick="openMachineForm('${esc(x.code)}')">✎</button></td>
     </tr>`;
   }).join('');
-}
-
-/* Gõ vào ô tìm: chỉ thay phần thân bảng, giữ nguyên thẻ input nên con trỏ không bị mất. */
-function onDesignSearch(v){
-  S.filters.design.q = v;
-  const tb = $('designTableBody');
-  if (tb) tb.innerHTML = designTableRowsHtml_();
-  const cnt = $('designCount');
-  if (cnt) cnt.innerHTML = cnt.innerHTML.replace(/^\s*\d+\/\d+ máy/, `${designFiltered_().length}/${designRows_().length} máy`);
 }
 
 /* Số ngày quy đổi thiết kế/ngày → thiết kế/tháng. PHẢI khớp MONTHLY_DESIGN_DAYS bên Code.gs. */
@@ -3806,12 +4313,6 @@ function designProblem_(x){
   if (x.rated == null || x.rated <= 0) return true;
   if (x.numMismatch) return true;                             // Sheet đang giữ SỐ khác công thức
   return false;                                               // lệch nhãn khung giờ không tính là lỗi
-}
-
-function toggleDesignRegion(r){
-  const set = S.filters.design.region;
-  if (set.has(r)) set.delete(r); else set.add(r);
-  renderPage('design');
 }
 
 /**
@@ -3831,24 +4332,17 @@ async function saveDesignCell(rowId, which, value){
   let startMin = x.startMin, endMin = x.endMin, rated = x.rated;
 
   if (which === 'code'){
-    const code = String(value||'').trim();
-    if (!code){ toast('Mã máy không được để trống','err'); renderPage('design'); return; }
-    if (code !== x.code && designRows_().some(r => r.code.toLowerCase() === code.toLowerCase())){
-      toast('Mã máy "'+code+'" đã tồn tại trong Sheet 5','err'); renderPage('design'); return;
-    }
-    if (code === x.code) return;
-    if (!confirm(`Đổi mã máy "${x.code}" → "${code}"?\n\nSố liệu các tháng đã chốt của máy này ở Tổng kết tháng sẽ được chuyển sang mã mới.`)){
-      renderPage('design'); return;
-    }
-    updates[c.hMa] = code;
-    await saveEffCellMulti_(rowId, updates);
-    renderPage('design');
+    /* Đổi mã máy KHÔNG đi đường này nữa. Đường cũ chỉ ghi Sheet 5 + Sheet 9, để lại
+     * Sheet 1 · 2 · 4 giữ mã cũ — đúng kiểu lỗi mà lần sửa này đang dẹp. Mã máy nay chỉ
+     * đổi trong form gộp (saveMachineAll) để mọi sheet cùng đổi trong 1 request. */
+    toast('Đổi mã máy ở form "✎ Sửa" của máy để mọi sheet cùng cập nhật','info');
+    openMachineForm(x.code);
     return;
   }
 
   if (which === 'start' || which === 'end'){
     const min = value === '' ? null : parseHHMM_(value);
-    if (value !== '' && min == null){ toast('Giờ phải ở dạng 24h, ví dụ 07:30','err'); renderPage('design'); return; }
+    if (value !== '' && min == null){ toast('Giờ phải ở dạng 24h, ví dụ 07:30','err'); renderPage('master'); return; }
     if (which === 'start'){ startMin = min; updates[c.hStart] = min == null ? '' : fmtHHMM_(min); }
     else                  { endMin   = min; updates[c.hEnd]   = min == null ? '' : fmtHHMM_(min); }
   }
@@ -3858,7 +4352,7 @@ async function saveDesignCell(rowId, which, value){
     if (raw === '') rated = null;
     else {
       const n = Number(raw.replace(/,/g,'.'));
-      if (isNaN(n) || n < 0){ toast('Công suất TK phải là số không âm','err'); renderPage('design'); return; }
+      if (isNaN(n) || n < 0){ toast('Công suất TK phải là số không âm','err'); renderPage('master'); return; }
       rated = Math.round(n * 100) / 100;
     }
     updates[c.hRated] = rated == null ? '' : rated;
@@ -3873,7 +4367,7 @@ async function saveDesignCell(rowId, which, value){
   if (c.hKwTk)  updates[c.hKwTk]  = kw;
 
   await saveEffCellMulti_(rowId, updates);
-  renderPage('design');
+  renderPage('master');
 }
 
 /* Ghi nhiều ô của cùng 1 dòng trong 1 request — dùng chung đường updateEfficiency
@@ -3914,103 +4408,7 @@ async function syncDesignFormula(){
     (await saveEffCellMulti_(x.row._row, u)) ? ok++ : fail++;
   }
   toast(`Đồng bộ xong: ${ok} dòng${fail?` · ${fail} lỗi`:''}`, fail?'err':'ok');
-  renderPage('design');
-}
-
-function openAddDesignRow(){
-  openOv(`
-    <div class="mh"><div><h2>+ Thêm mã máy vào Sheet 5</h2>
-      <p>Dòng mới thêm vào "5. Theo dõi hiệu quả vận hành" · khối dữ liệu ngày để trống cho Smartgen điền dần</p></div>
-      <button class="mcl" onclick="closeOv()">✕</button></div>
-    <div class="mb">
-      <div class="iw"><div class="il">Mã Máy *</div>
-        <input class="inp" id="dsgCode" placeholder="VD: NS200KVA20"></div>
-      <div class="iw"><div class="il">Giờ bắt đầu * (24h)</div>
-        <input class="inp tin24" id="dsgStart" placeholder="HH:mm" inputmode="numeric" maxlength="5"
-               autocomplete="off" oninput="maskHHMM_(this);previewDesignCalc()"></div>
-      <div class="iw"><div class="il">Giờ kết thúc * (24h)</div>
-        <input class="inp tin24" id="dsgEnd" placeholder="HH:mm" inputmode="numeric" maxlength="5"
-               autocomplete="off" oninput="maskHHMM_(this);previewDesignCalc()"></div>
-      <div class="iw"><div class="il">Công suất TK (KW) *</div>
-        <input class="inp" id="dsgRated" type="number" step="any" min="0" oninput="previewDesignCalc()"></div>
-      <div class="iw"><div class="il">Khung giờ chạy chính — tự tính</div>
-        <div id="dsgKhungPreview" class="dsgcalc">—</div></div>
-      <div class="iw"><div class="il">Tổng số giờ chạy/ngày — tự tính</div>
-        <div id="dsgHrPreview" class="dsgcalc">—</div></div>
-      <div class="iw"><div class="il">Công suất thiết kế phát/ngày — tự tính</div>
-        <div id="dsgKwPreview" class="dsgcalc">—</div></div>
-    </div>
-    <div class="mf">
-      <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
-      <button class="btn bg-g" onclick="submitAddDesignRow()">Thêm vào Sheet 5</button>
-    </div>`);
-}
-
-/* 3 ô tự tính trong modal — hiện ngay khi gõ, đúng công thức dùng ở bảng chính */
-function previewDesignCalc(){
-  const sMin = parseHHMM_(($('dsgStart')||{}).value);
-  const eMin = parseHHMM_(($('dsgEnd')||{}).value);
-  const rated = Number(($('dsgRated')||{}).value);
-  const hr = runHours_(sMin, eMin);
-  const khung = shiftLabel_(sMin, eMin);
-  const kw = (hr != null && rated > 0) ? Math.round(rated * hr * 100) / 100 : null;
-  if ($('dsgKhungPreview')) $('dsgKhungPreview').textContent = khung || '—';
-  if ($('dsgHrPreview'))    $('dsgHrPreview').textContent    = hr != null ? String(hr) : '—';
-  if ($('dsgKwPreview'))    $('dsgKwPreview').textContent    = kw != null ? String(kw) : '—';
-}
-
-async function submitAddDesignRow(){
-  const code = ($('dsgCode').value||'').trim();
-  if (!code){ toast('Phải nhập mã máy','err'); return; }
-  if (designRows_().some(x => x.code.toLowerCase() === code.toLowerCase())){
-    toast('Mã máy "'+code+'" đã có trong Sheet 5','err'); return;
-  }
-  const sMin = parseHHMM_($('dsgStart').value);
-  const eMin = parseHHMM_($('dsgEnd').value);
-  const rated = ($('dsgRated').value||'').trim();
-  if (sMin == null || eMin == null){ toast('Phải nhập giờ bắt đầu và giờ kết thúc','err'); return; }
-  if (rated === ''){ toast('Phải nhập Công suất TK (KW)','err'); return; }
-
-  const hr = runHours_(sMin, eMin);
-  setStatus(true,'Đang thêm mã máy…');
-  try {
-    const res = await apiPost({ action:'addEfficiencyRow', user:S.user.name, data:{
-      maCode: code,
-      gioBatDau: fmtHHMM_(sMin),
-      gioKetThuc: fmtHHMM_(eMin),
-      khungGio: shiftLabel_(sMin, eMin),
-      ratedKw: rated,
-      designHrDay: hr,
-      designKwDay: Math.round(Number(rated) * hr * 100) / 100,
-    }});
-    if (!res.ok) throw new Error(res.error||'Lỗi thêm dòng');
-    if (res.efficiency) S.efficiency = res.efficiency;
-    closeOv();
-    refreshAlerts(); updateSidebarBadges();
-    setStatus(false,`Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
-    toast('✓ Đã thêm '+code+' vào Sheet 5','ok');
-    renderPage('design');
-  } catch(e){
-    toast('Lỗi: '+e.message,'err');
-    setStatus(false,'❌ '+e.message,true);
-  }
-}
-
-async function deleteDesignRow(code){
-  if (!confirm(`Xoá hẳn dòng của máy "${code}" khỏi Sheet 5?\n\nToàn bộ dữ liệu ngày của máy này trong tháng cũng mất theo. Số liệu đã chốt ở các tháng trước trong Tổng kết tháng vẫn được giữ.`)) return;
-  setStatus(true,'Đang xoá dòng…');
-  try {
-    const res = await apiPost({ action:'deleteEfficiencyRow', maCode:code, user:S.user.name });
-    if (!res.ok) throw new Error(res.error||'Lỗi xoá dòng');
-    if (res.efficiency) S.efficiency = res.efficiency;
-    refreshAlerts(); updateSidebarBadges();
-    setStatus(false,`Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
-    toast('✓ Đã xoá '+code+' khỏi Sheet 5','ok');
-    renderPage('design');
-  } catch(e){
-    toast('Lỗi: '+e.message,'err');
-    setStatus(false,'❌ '+e.message,true);
-  }
+  renderPage('master');
 }
 
 function exportDesignCsv(){
