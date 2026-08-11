@@ -547,6 +547,55 @@ async function apiPost(body){
   return (await fetch(API_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(body) })).json();
 }
 
+/* Khoá so sánh mã máy — bỏ khoảng trắng thừa và không phân biệt hoa/thường. */
+function normCode_(v){ return String(v==null?'':v).trim().toUpperCase(); }
+
+/**
+ * CHUẨN HOÁ MÃ MÁY NGAY SAU KHI TẢI DỮ LIỆU — sửa tận gốc một lớp lỗi im lặng.
+ *
+ * TÌNH HUỐNG THẬT: Sheet 1 ghi "NS250KVA19" còn Sheet 5 ghi "NS250kva19". Với mắt người
+ * đó là một máy; với code thì là hai chuỗi khác nhau. Hậu quả dây chuyền: máy bị gắn nhãn
+ * "mồ côi" ở bảng định mức, bị loại khỏi mọi biểu đồ Phân tích (vì lọc theo Set mã của
+ * Sheet 1), và Smartgen ghi số liệu ngày vào Sheet 5 không tìm ra dòng nên bỏ qua luôn —
+ * máy vẫn hiện đầy đủ trên Danh sách máy nên không ai ngờ nó đang bị bỏ rơi.
+ *
+ * Thay vì đi sửa hàng chục chỗ so sánh chuỗi rải rác, quy về MỘT điểm: lấy cách viết ở
+ * Sheet 1 làm chuẩn, đổi lại mã ở các sheet khác ngay trong bộ nhớ. Từ đó mọi so sánh
+ * `===` sẵn có đều đúng. Bản thân Google Sheet cũng được sửa lại khi chạy "Đồng bộ ngay"
+ * ở tab Đối soát (backend _normalizeCodesToMaster_).
+ */
+function normalizeCodesInState_(){
+  const canon = new Map();
+  (S.master.rows||[]).forEach(r => {
+    const c = String(r._byLetter?.B||'').trim();
+    if (c) canon.set(normCode_(c), c);
+  });
+  if (!canon.size) return 0;
+
+  let fixed = 0;
+  [S.tracking, S.efficiency, S.monthly, S.filter].forEach(sheet => {
+    if (!sheet || !sheet.rows) return;
+    const H = (sheet.headers||[]).filter(Boolean);
+    const idx = (sheet.headers||[]).findIndex(h => /mã\s*máy/i.test(String(h||'')));
+    const letter = idx >= 0 ? colLetter_(idx) : 'B';
+    const headerName = idx >= 0 ? String(sheet.headers[idx]) : null;
+    sheet.rows.forEach(r => {
+      const raw = (headerName && r[headerName] != null && r[headerName] !== '')
+        ? r[headerName] : r._byLetter?.[letter];
+      const key = normCode_(raw);
+      if (!key) return;
+      const good = canon.get(key);
+      // So với chuỗi GỐC (chưa trim): mã thừa khoảng trắng như " M2 " cũng phải được sửa,
+      // vì các phép so sánh khác trong code không phải chỗ nào cũng trim.
+      if (!good || good === String(raw)) return;
+      if (r._byLetter) r._byLetter[letter] = good;
+      if (headerName) r[headerName] = good;
+      fixed++;
+    });
+  });
+  return fixed;
+}
+
 async function reloadAll(){
   setStatus(true, 'Đang tải…');
   try {
@@ -559,6 +608,7 @@ async function reloadAll(){
       monthly: d.monthly || { headers:[], rows:[] },
       dropdowns:d.dropdowns, alerts:d.alerts
     });
+    normalizeCodesInState_();   // PHẢI chạy trước mọi tính toán — xem chú thích của hàm
     refreshAlerts();     // luôn tính lại cảnh báo phía client từ Sheet 2
 
     $('nb-master').textContent = S.master.rows.length;
@@ -1986,8 +2036,40 @@ function masterDesignTabHtml_(){
 }
 
 /* ---------- TAB 3 · Đối soát đồng bộ ---------- */
+/**
+ * MÁY ĐANG HOẠT ĐỘNG MÀ THIẾU ĐỊNH MỨC THIẾT KẾ.
+ * Có dòng ở Sheet 5 chưa đủ: thiếu 1 trong 3 số (giờ bắt đầu, giờ kết thúc, công suất TK)
+ * là mọi phép tính % đạt của máy đó ra rỗng, nên nó lặng lẽ biến mất khỏi bảng đánh giá
+ * hiệu quả trong khi vẫn chạy và vẫn có số liệu ngày.
+ */
+function machinesMissingDesign_(){
+  const byCode = new Map(designRows_().map(x => [normCode_(x.code), x]));
+  const out = [];
+  S.master.rows.forEach(m => {
+    if (statusKey(m) !== 'active') return;
+    const code = String(m._byLetter[COL.MA]||'').trim();
+    if (!code) return;
+    const d = byCode.get(normCode_(code));
+    const missing = [];
+    if (!d) missing.push('chưa có dòng ở Sheet 5');
+    else {
+      if (d.startMin == null) missing.push('giờ bắt đầu');
+      if (d.endMin == null)   missing.push('giờ kết thúc');
+      if (!(d.rated > 0))     missing.push('công suất TK');
+    }
+    if (missing.length) out.push({
+      code, missing,
+      unit: String(m._byLetter[COL.DONVI]||'').trim(),
+      farm: String(m._byLetter[COL.TRAI]||'').trim(),
+      region: regionOf(m),
+    });
+  });
+  return out;
+}
+
 function masterSyncTabHtml_(){
   const rec = machineReconcile_();
+  const noDesign = machinesMissingDesign_();
   const box = (s) => `
     <div class="card">
       <div class="ch"><h3>${esc(s.name)}</h3>
@@ -2012,6 +2094,30 @@ function masterSyncTabHtml_(){
         <button class="btn bg-g sm" style="flex-shrink:0" onclick="runSyncMachines()">⟳ Đồng bộ ngay</button>
       </div>
     </div>
+
+    ${noDesign.length ? `
+    <div class="card" style="border-left:4px solid var(--amb)">
+      <div class="ch"><h3>Máy đang hoạt động nhưng thiếu định mức thiết kế</h3>
+        <span class="b ba">${noDesign.length} máy</span></div>
+      <div class="cb">
+        <div style="font-size:11px;color:var(--mu);line-height:1.7;margin-bottom:8px">
+          Có dòng ở Sheet 5 chưa đủ — thiếu giờ bắt đầu / giờ kết thúc / công suất TK thì
+          <b>không tính được % đạt giờ chạy và % đạt công suất</b>, nên máy vắng mặt khỏi
+          đánh giá hiệu quả dù vẫn chạy và vẫn có số liệu ngày.
+          Công suất TK được lấy sẵn từ Danh sách máy; giờ vận hành phải nhập tay vì đó là số thật của từng trại.
+        </div>
+        <div class="tw" style="max-height:40vh"><table>
+          <thead><tr><th>Mã máy</th><th>Đơn vị · Trại</th><th>Khu vực</th><th>Còn thiếu</th><th></th></tr></thead>
+          <tbody>${noDesign.map(x=>`<tr>
+            <td><span class="mm">${esc(x.code)}</span></td>
+            <td>${esc(x.unit||'—')}${x.farm?' · '+esc(x.farm):''}</td>
+            <td>${esc(x.region||'—')}</td>
+            <td>${x.missing.map(m=>`<span class="b ba" style="margin-right:4px">${esc(m)}</span>`).join('')}</td>
+            <td><button class="btn bg-b sm" onclick="openMachineForm('${esc(x.code)}')">✎ Nhập ngay</button></td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+      </div>
+    </div>` : ''}
     ${rec.sheets.map(box).join('')}`;
 }
 
@@ -2022,8 +2128,12 @@ async function runSyncMachines(){
     const res = await apiPost({ action:'syncMachines', user:S.user.name });
     if (!res.ok) throw new Error(res.error||'Lỗi đồng bộ');
     const added = Object.entries(res.added||{}).map(([k,v])=>`${k}: ${v.length}`).join(' · ');
+    const nNorm = (res.normalized||[]).length;
     await reloadAll();
     toast(added ? `✓ Đã thêm dòng thiếu — ${added}` : '✓ Mọi sheet đã khớp, không cần thêm gì', 'ok');
+    if (nNorm) toast(`✓ Đã thống nhất cách viết ${nNorm} mã máy theo Danh sách máy`, 'ok');
+    const nMiss = (res.missingDesign||[]).length;
+    if (nMiss) toast(`⚠ ${nMiss} máy đang chạy còn thiếu định mức thiết kế — xem bảng bên dưới`, 'err');
     renderPage('master');
   } catch(e){
     toast('Lỗi: '+e.message,'err');
@@ -2044,16 +2154,18 @@ function afterMaster(){
  *  biến mất khỏi mọi thống kê hiệu quả mà không có dấu hiệu gì báo ra.
  * ============================================================ */
 function openMachineForm(maCode){
-  const row = maCode ? S.master.rows.find(r=>String(r._byLetter.B).trim()===String(maCode).trim()) : null;
+  const row = maCode ? S.master.rows.find(r=>normCode_(r._byLetter.B)===normCode_(maCode)) : null;
   const isNew = !row;
   const v = L => row ? (row._byLetter[L]??'') : '';
   const dd = S.dropdowns;
 
   // Định mức thiết kế hiện có ở Sheet 5 (nếu máy đã có dòng)
-  const dsg = maCode ? designRows_().find(x => x.code === String(maCode).trim()) : null;
+  const dsg = maCode ? designRows_().find(x => normCode_(x.code) === normCode_(maCode)) : null;
   const startVal = dsg ? fmtHHMM_(dsg.startMin) : '';
   const endVal   = dsg ? fmtHHMM_(dsg.endMin)   : '';
-  const ratedVal = dsg && dsg.rated != null ? dsg.rated : '';
+  /* Công suất TK để trống thì mồi bằng số đã có ở Danh sách máy (cột I) — cùng một đại
+   * lượng, bắt nhập lại lần nữa chỉ tạo cơ hội gõ lệch giữa 2 sheet. */
+  const ratedVal = (dsg && dsg.rated != null) ? dsg.rated : (row ? (row._byLetter[COL.KW] ?? '') : '');
 
   openOv(`
     <div class="mh">
@@ -2073,7 +2185,7 @@ function openMachineForm(maCode){
           <div class="iw">${autoWrap('fC','Loại hình', v('C'), dd.C?.options||['Thuê','Hợp tác','Bán','Tồn kho'])}</div>
           <div class="iw">${autoWrap('fD','Đơn vị hợp tác', v('D'), dd.D?.options||[])}</div>
           <div class="iw"><div class="il">Tên trại / Đơn vị</div><input class="inp" id="fE" value="${esc(v('E'))}"></div>
-          <div class="iw"><div class="il">Công suất TK (kW)</div><input class="inp" id="fI" type="number" step="1" value="${esc(v('I'))}" placeholder="VD: 80"></div>
+          <div class="iw"><div class="il">Công suất TK (kW)</div><input class="inp" id="fI" type="number" step="1" value="${esc(v('I'))}" placeholder="VD: 80" oninput="syncRatedToDesign()"></div>
           <div class="iw">${autoWrap('fH','Trạng thái', v('H'), dd.H?.options||['Hđ bình thường','Chưa lắp đặt','Không hoạt động','Chờ thu hồi'])}</div>
         </div>
       </div>
@@ -2164,6 +2276,18 @@ function openMachineForm(maCode){
   previewMachineDesign();
   const dk = 'machine:'+(maCode||'new');
   setDraftContext(dk, ['fB','fC','fD','fE','fF','fG','fH','fI','fJ','fK','fL','fM','fN','fO','fDsgStart','fDsgEnd','fDsgRated']);
+}
+
+/* Gõ Công suất TK ở phần Thông tin cơ bản thì ô định mức lấy theo luôn khi còn trống —
+ * hai ô này là cùng một đại lượng, để lệch nhau là nguồn sai số liệu về sau. */
+function syncRatedToDesign(){
+  const src = $('fI'), dst = $('fDsgRated');
+  if (!src || !dst) return;
+  if (String(dst.value||'').trim() === '' || dst.dataset.autofill === '1'){
+    dst.value = src.value;
+    dst.dataset.autofill = '1';
+    previewMachineDesign();
+  }
 }
 
 /* 3 ô tự tính trong form — hiện ngay khi gõ, dùng đúng công thức của bảng định mức */
@@ -4210,11 +4334,12 @@ function designCols_(){
 
 function designRows_(){
   const c = designCols_();
-  const mByCode = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA]||'').trim(), m]));
+  // Tra theo khoá chuẩn hoá — lệch hoa/thường không được biến máy thật thành "mồ côi"
+  const mByCode = new Map(S.master.rows.map(m => [normCode_(m._byLetter[COL.MA]), m]));
   return (S.efficiency.rows || []).map((r, i) => {
     const code = String((c.hMa ? r[c.hMa] : '') || r._byLetter?.B || '').trim();
     if (!code) return null;
-    const m = mByCode.get(code);
+    const m = mByCode.get(normCode_(code));
 
     const startMin = parseHHMM_(c.hStart ? r[c.hStart] : null);
     const endMin   = parseHHMM_(c.hEnd   ? r[c.hEnd]   : null);
