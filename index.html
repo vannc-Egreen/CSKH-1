@@ -290,7 +290,7 @@ td{padding:9px 12px;vertical-align:middle}
 
       <div class="sfooter">
         eGreen Genset v1.0<br>
-        © 2025 · <span id="ftTime">—</span>
+        © 2025 · <span id="ftTime">—</span><br><span id="ftSync" style="opacity:.75">Smartgen: —</span>
       </div>
     </div>
 
@@ -661,7 +661,7 @@ function setStatus(loading, msg, err){
  * ============================================================ */
 const SMARTGEN_TASKS = [
   { id: 'syncSmartGenDaily', label: 'Đồng bộ Smartgen', icon: '⚡',
-    hint: 'Lấy Số giờ máy chạy (Sheet 2) + điện phát ra/giờ chạy theo ngày (Sheet 5) từ Smartgen Cloud' },
+    hint: 'Quét cả tháng: điền vào MỌI ô ngày còn trống ở Sheet 5, giữ nguyên ô đã có số. Tự chạy 1 lần/ngày khi mở web.' },
   // Thêm task mới ở đây khi phát triển tiếp, ví dụ:
   // { id: 'syncSmartGenAlarms', label: 'Đồng bộ cảnh báo máy', icon: '🚨',
   //   hint: 'Lấy danh sách cảnh báo/lỗi từ Smartgen Cloud' },
@@ -712,11 +712,21 @@ async function runSmartGenTask(taskId, extraParams){
   try {
     const res = await apiPost(Object.assign({ action: 'smartgenRun', task: taskId }, extraParams || {}));
     if (!res.ok) throw new Error(res.error || 'Lỗi không xác định từ Apps Script');
-    const r = res.result || {};
+    /* Nút bấm tay nay đi qua smartgenAutoSyncIfNeeded_(force) nên kết quả nằm lồng thêm
+     * một lớp: {ok, ran, result:{…}}. Bóc cả 2 dạng để không phụ thuộc vào task nào. */
+    const outer = res.result || {};
+    const r = outer.result || outer;
     const nOk = Array.isArray(r.ok) ? r.ok.length : (r.ok ?? '—');
     const nWritten = Array.isArray(r.writtenSheet2) ? r.writtenSheet2.length : '—';
     const nErr = Array.isArray(r.errors) ? r.errors.length : 0;
-    toast(`✓ Smartgen xong · ${nOk} máy · ghi Sheet2: ${nWritten} · lỗi: ${nErr}`, nErr ? 'err' : 'ok');
+    const bf = r.backfill || {};
+    toast(`✓ Smartgen xong · ${nOk} máy · Sheet 2: ${nWritten} · Sheet 5 điền mới ${bf.filled||0} ô, giữ nguyên ${bf.kept||0} ô · lỗi: ${nErr}`,
+          nErr ? 'err' : 'ok');
+    if (r.rollover && r.rollover.rolled)
+      toast(`✓ Đã chốt tháng ${r.rollover.from} và bắt đầu tháng ${r.rollover.to}`,'ok');
+    if (r.rollover && r.rollover.error) toast('⚠ '+r.rollover.error,'err');
+    setSyncFooter_(outer);
+    try { localStorage.setItem('egreen_autosync_day', new Date().toISOString().slice(0,10)); } catch(e){}
     await reloadAll();  // tải lại Sheet để web hiện ngay số liệu mới
   } catch(e){
     toast('Lỗi đồng bộ Smartgen: ' + e.message, 'err');
@@ -5204,7 +5214,73 @@ function doLogin(){
   $('app').style.display = 'flex';
   loadDrafts();                 // khôi phục bản nháp chưa lưu (nếu có)
   renderSmartGenMenu();          // sinh nút/menu Smartgen ở topbar
-  reloadAll();                  // auto-upload 2 chiều khi đăng nhập
+  reloadAll().then(autoSyncOnLogin);   // tải dữ liệu trước, rồi mới xét có cần đồng bộ không
+}
+
+/**
+ * TỰ ĐỘNG ĐỒNG BỘ SMARTGEN KHI MỞ WEB — mỗi ngày đúng 1 lần.
+ *
+ * Thay cho việc phải nhớ bấm nút mỗi sáng. Người đầu tiên vào trong ngày sẽ kích hoạt;
+ * những người vào sau nhận về skipped và không phải chờ.
+ *
+ * KHÔNG CHẶN GIAO DIỆN: dữ liệu Google Sheet đã hiện xong trước khi hàm này chạy, nên người
+ * dùng làm việc bình thường trong lúc chờ. Với 79 máy × 2 lần gọi API, việc này mất vài phút
+ * — bắt nhìn màn hình trắng suốt thời gian đó là không chấp nhận được.
+ *
+ * Cờ ở localStorage chỉ để một máy tính không gọi lại nhiều lần khi F5 liên tục. Quyết định
+ * cuối cùng vẫn nằm ở server (PropertiesService + LockService), vì nhiều người dùng chung
+ * một bảng tính thì localStorage của từng máy không biết gì về nhau.
+ */
+async function autoSyncOnLogin(){
+  const today = new Date().toISOString().slice(0,10);
+  const flagKey = 'egreen_autosync_day';
+  try { if (localStorage.getItem(flagKey) === today) return; } catch(e){}
+
+  let st = null;
+  try { st = await apiPost({ action:'smartgenStatus' }); } catch(e){ return; }
+  if (!st || !st.ok) return;
+
+  if (!st.needsSync){
+    try { localStorage.setItem(flagKey, today); } catch(e){}
+    setSyncFooter_(st);
+    return;
+  }
+
+  toast('Đang tự động lấy dữ liệu Smartgen cho hôm nay…','info');
+  setStatus(true, '⚡ Đang đồng bộ Smartgen (tự động)…');
+  try {
+    const res = await apiPost({ action:'smartgenAutoSync' });
+    try { localStorage.setItem(flagKey, today); } catch(e){}
+
+    if (res && res.skipped){
+      setSyncFooter_(res);
+      setStatus(false, `Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
+      return;
+    }
+    if (!res || !res.ok) throw new Error((res && res.error) || 'Lỗi đồng bộ tự động');
+
+    const r = res.result || {};
+    const bf = r.backfill || {};
+    await reloadAll();
+    setSyncFooter_(res);
+    toast(bf.filled ? `✓ Đồng bộ xong · điền mới ${bf.filled} ô còn trống của tháng ${bf.month||''}`
+                    : '✓ Đồng bộ xong · dữ liệu tháng này đã đủ, không phải điền thêm', 'ok');
+    if (r.rollover && r.rollover.rolled)
+      toast(`✓ Đã chốt tháng ${r.rollover.from} và bắt đầu tháng ${r.rollover.to}`,'ok');
+    if (r.rollover && r.rollover.error) toast('⚠ '+r.rollover.error,'err');
+    (r.errors||[]).slice(0,2).forEach(e => toast('⚠ '+e,'err'));
+  } catch(e){
+    setStatus(false, '❌ Đồng bộ tự động lỗi: '+e.message, true);
+    toast('Đồng bộ tự động lỗi — có thể bấm nút Đồng bộ Smartgen để thử lại','err');
+  }
+}
+
+/* Ghi thời điểm đồng bộ gần nhất xuống chân trang để biết số liệu đang cũ tới đâu */
+function setSyncFooter_(st){
+  const el = $('ftSync');
+  if (!el) return;
+  const at = st.lastSyncAt || (st.result && st.result.lastSyncAt);
+  el.textContent = at ? ('Smartgen: ' + at) : 'Smartgen: chưa đồng bộ';
 }
 function doLogout(){
   $('app').style.display = 'none';
