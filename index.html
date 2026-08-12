@@ -109,6 +109,30 @@ body{background:var(--bg);color:var(--s);min-height:100vh;font-size:14px;overflo
 .effstats .es{padding:6px 9px;background:#f8fafc;border-radius:7px;border:1px solid var(--bd)}
 .effstats .esl{font-size:9px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.4px}
 .effstats .esv{font-size:13px;font-weight:700;color:var(--s);margin-top:1px}
+
+/* ===== QLVT — Vật tư & Bảo dưỡng ===================================== */
+.qcard.hot{border-left:3px solid var(--red)}
+.qgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
+.qcell{border:1px solid var(--bd);border-radius:9px;padding:9px 10px;cursor:pointer;background:#fff;
+  transition:border-color .12s ease,transform .12s ease,box-shadow .12s ease}
+.qcell:hover{border-color:var(--g);transform:translateY(-1px);box-shadow:var(--sh)}
+.qcell.bad{border-color:#fecaca;background:#fef2f2}
+.qcell.warn{border-color:#fde68a;background:#fffbeb}
+.qcell.ok{border-color:#bbf7d0}
+.qcell.muted{background:#f8fafc;cursor:default;opacity:.7}
+.qcell.muted:hover{transform:none;box-shadow:none;border-color:var(--bd)}
+.qct{font-size:11px;font-weight:700;color:var(--s);margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qcbar{height:5px;border-radius:99px;background:#e2e8f0;overflow:hidden;margin-bottom:5px}
+.qcbar i{display:block;height:100%;background:var(--g);border-radius:99px}
+.qcell.warn .qcbar i{background:var(--amb)}
+.qcell.bad .qcbar i{background:var(--red)}
+.qcs{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;color:var(--mu)}
+.qcs b{font-size:11px;color:var(--s)}
+.qcf{display:flex;align-items:center;gap:5px;margin-top:5px;flex-wrap:wrap}
+.qcd{font-size:9px;color:var(--mu)}
+.qmat th{white-space:nowrap;font-size:9px;line-height:1.3}
+.qmat td.qtd{cursor:pointer}
+.qmat td.qtd:hover{background:#ecfdf5}
 .effstats .esv.warn{color:var(--amb)}.effstats .esv.bad{color:var(--red)}.effstats .esv.ok{color:var(--g)}
 /* Ô tóm tắt phân loại công suất ở trang Phân tích — bấm được để lọc nhanh bảng bên dưới */
 .effstats .es.capsum{cursor:pointer;transition:border-color .12s ease, box-shadow .12s ease, transform .12s ease}
@@ -284,6 +308,20 @@ td{padding:9px 12px;vertical-align:middle}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l3-3 4 4 6-6"/></svg>Hiệu quả vận hành<span class="nbadge am" id="nb-eff">0</span>
       </div>
 
+      <div class="nsec">Vật tư &amp; Bảo dưỡng</div>
+      <div class="nitem" data-page="bdcounter" onclick="nav('bdcounter')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Bộ đếm bảo dưỡng<span class="nbadge rd" id="nb-bd">0</span>
+      </div>
+      <div class="nitem" data-page="stock" onclick="nav('stock')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/></svg>Kho vật tư tại trại<span class="nbadge am" id="nb-stock">0</span>
+      </div>
+      <div class="nitem" data-page="matcost" onclick="nav('matcost')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>Chi phí vật tư
+      </div>
+      <div class="nitem" data-page="sim" onclick="nav('sim')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>SIM &amp; Cảnh báo máy<span class="nbadge am" id="nb-sim">0</span>
+      </div>
+
       <div class="nsec">Danh mục</div>
       <div class="nitem" data-page="master" onclick="nav('master')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3h-8M12 3v4"/></svg>Danh sách &amp; Định mức máy<span class="nbadge am" id="nb-master">0</span>
@@ -307,6 +345,10 @@ td{padding:9px 12px;vertical-align:middle}
       <div id="pg-efficiency" class="page"></div>
       <div id="pg-master" class="page"></div>
       <div id="pg-spec" class="page"></div>
+      <div id="pg-bdcounter" class="page"></div>
+      <div id="pg-stock" class="page"></div>
+      <div id="pg-matcost" class="page"></div>
+      <div id="pg-sim" class="page"></div>
     </div>
   </div>
 </div>
@@ -646,6 +688,10 @@ async function reloadAll(){
     setStatus(false, `Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
     renderCurrent();
     toast('Đã tải dữ liệu từ Google Sheet', 'ok');
+
+    /* Module vật tư tải RIÊNG và im lặng: nếu Apps Script chưa cài QLVT.gs thì
+     * app cũ vẫn chạy đủ, 4 trang mới chỉ hiện hướng dẫn cài thay vì văng lỗi. */
+    loadQlvt(true).then(ok => { if (ok) renderCurrent(); });
   } catch(e){
     setStatus(false, '❌ ' + e.message, true);
     toast(e.message, 'err');
@@ -840,6 +886,10 @@ function _renderPageInner_(p, el){
     case 'efficiency': el.innerHTML = viewEfficiency(); afterEfficiency(); break;
     case 'master':   el.innerHTML = viewMaster(); afterMaster(); break;
     case 'spec':     el.innerHTML = viewSpec(); break;
+    case 'bdcounter':el.innerHTML = viewBdCounter(); break;
+    case 'stock':    el.innerHTML = viewStock(); break;
+    case 'matcost':  el.innerHTML = viewMatCost(); afterMatCost(); break;
+    case 'sim':      el.innerHTML = viewSim(); break;
   }
 }
 
@@ -5623,6 +5673,669 @@ function clearDraft(key){
   if (S.drafts[key]){ delete S.drafts[key]; saveDrafts(); }
 }
 function clearDraftContext(){ _currentDraftKey = null; _currentDraftFields = []; }
+
+/* ==== QLVT MODULE ==== */
+/* ============================================================================
+ *  QLVT — VẬT TƯ · BẢO DƯỠNG · SIM · CẢNH BÁO MÁY
+ * ----------------------------------------------------------------------------
+ *  Dữ liệu lấy từ action 'qlvtBootstrap' của Apps Script. Các sheet 11/13/14/16
+ *  là dạng NGANG (1 dòng = 1 máy), cột đặt tên "{Tên vật tư} · {thuộc tính}".
+ *  Hàm qv_() bên dưới là chỗ duy nhất bóc tên cột đó ra — mọi nơi khác gọi qua
+ *  nó, nên sau này đổi dấu ngăn chỉ phải sửa 1 chỗ.
+ * ========================================================================== */
+
+const QSEP = ' · ';
+
+const Q = {
+  loaded:false, perm:{ viewPrice:false, editPrice:false, editNorm:false, role:'' },
+  catalog:{ headers:[], rows:[] }, norms:{ headers:[], rows:[] },
+  counters:{ headers:[], rows:[] }, stock:{ headers:[], rows:[] },
+  sim:{ headers:[], rows:[] }, alarmDict:{ headers:[], rows:[] }, contacts:{ headers:[], rows:[] },
+  maintLog:{ headers:[], rows:[], total:0 }, moveLog:{ headers:[], rows:[], total:0 },
+  alarmLog:{ headers:[], rows:[], total:0 },
+  alerts:{ maintenance:[], stock:[], sim:[], oil:[], config:[] },
+  cfg:{},
+  matCost:null,
+  f:{
+    bd:'', bdStatus:'',           // ô tìm · '' | 'overdue' | 'duesoon'
+    bdRegion:new Set(),
+    stock:'', stockOnlyShort:false,
+    sim:'', simOnlyDue:true,
+    costMonth:'',
+  },
+};
+
+/** Lấy giá trị 1 thuộc tính của 1 vật tư trên dòng ngang. */
+function qv_(row, ten, prop){ return row ? row[ten + QSEP + prop] : undefined; }
+
+/** Danh sách vật tư theo giờ (có bộ đếm) — thứ tự theo Sheet 10. */
+function qItems_(onlyHour){
+  return (Q.catalog.rows || [])
+    .filter(r => String(r['Đang dùng']||'TRUE').toUpperCase() !== 'FALSE')
+    .filter(r => !onlyHour || String(r['Theo giờ']||'').toUpperCase() !== 'FALSE')
+    .map(r => ({ vt:String(r['Mã VT']||'').trim().toUpperCase(),
+                 ten:String(r['Tên vật tư']||'').trim(),
+                 dvt:String(r['Đơn vị tính']||'').trim(),
+                 nhom:String(r['Nhóm']||'').trim() }))
+    .filter(v => v.vt && v.ten);
+}
+
+/** Tải dữ liệu QLVT. Gọi sau reloadAll() — CỐ Ý tách riêng request để nếu module
+ *  vật tư chưa cài trên Apps Script thì app cũ vẫn chạy bình thường, chỉ ẩn 4 trang. */
+async function loadQlvt(silent){
+  try {
+    const url = new URL(API_URL);
+    url.searchParams.set('action','qlvtBootstrap');
+    url.searchParams.set('user', (S.user && S.user.name) || 'admin');
+    const d = await (await fetch(url.toString())).json();
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Chưa cài module vật tư trên Apps Script');
+    Object.assign(Q, {
+      loaded:true, perm:d.perm||Q.perm, catalog:d.catalog, norms:d.norms,
+      counters:d.counters, stock:d.stock, sim:d.sim, alarmDict:d.alarmDict,
+      contacts:d.contacts, maintLog:d.maintLog, moveLog:d.moveLog, alarmLog:d.alarmLog,
+      alerts:d.alerts||Q.alerts, cfg:d.cfg||{},
+    });
+    qUpdateBadges_();
+    return true;
+  } catch(e){
+    Q.loaded = false;
+    if (!silent) toast('Vật tư: ' + e.message, 'err');
+    return false;
+  }
+}
+
+function qUpdateBadges_(){
+  const set = (id,v,show) => { const el=$(id); if(!el) return;
+    el.textContent = v; el.style.display = show ? '' : 'none'; };
+  const nBd = (Q.alerts.maintenance||[]).length;
+  const nSt = (Q.alerts.stock||[]).length;
+  const nSim= (Q.alerts.sim||[]).length;
+  set('nb-bd', nBd, nBd>0);
+  set('nb-stock', nSt, nSt>0);
+  set('nb-sim', nSim, nSim>0);
+}
+
+/** Màn hình chờ dùng chung khi chưa tải được dữ liệu vật tư. */
+function qNotReady_(what){
+  return `<div class="ph"><h1>${what}</h1></div>
+    <div class="empty"><div class="ei">📦</div>
+      Chưa đọc được dữ liệu vật tư từ Google Sheet.<br>
+      Kiểm tra: đã dán <b>QLVT.gs</b> vào Apps Script, đã chạy <b>setupQLVT</b>, và đã <b>deploy version mới</b> chưa.
+      <div style="margin-top:12px"><button class="btn bg-gr" onclick="loadQlvt().then(()=>renderCurrent())">↻ Thử lại</button></div>
+    </div>`;
+}
+
+/* ============================================================================
+ *  TRANG 1 · BỘ ĐẾM BẢO DƯỠNG
+ * ----------------------------------------------------------------------------
+ *  Bố cục soi theo cách các app quản lý đội xe hiển thị lịch bảo dưỡng: mỗi máy
+ *  1 dòng, mỗi hạng mục 1 viên "pill" có thanh tiến độ % chu kỳ. Nhìn 1 giây là
+ *  biết máy nào sắp phải đụng tới, không phải đọc số.
+ * ========================================================================== */
+function viewBdCounter(){
+  if (!Q.loaded) return qNotReady_('Bộ đếm bảo dưỡng');
+  const items = qItems_(true);
+  const q = (Q.f.bd||'').toLowerCase();
+  const rSet = Q.f.bdRegion;
+
+  let rows = (Q.counters.rows||[]).filter(r => {
+    if (rSet.size && !rSet.has(String(r['Khu vực']||''))) return false;
+    if (q){
+      const hay = `${r['Mã máy']} ${r['Đơn vị']} ${r['Trại']} ${r['Khu vực']}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (Q.f.bdStatus){
+      const want = Q.f.bdStatus === 'overdue' ? 'Quá hạn' : 'Sắp đến hạn';
+      return items.some(v => String(qv_(r, v.ten, 'Trạng thái')||'') === want);
+    }
+    return true;
+  });
+
+  const cntBy = st => (Q.counters.rows||[]).reduce((s,r) =>
+    s + items.filter(v => String(qv_(r,v.ten,'Trạng thái')||'')===st).length, 0);
+  const nOver = cntBy('Quá hạn'), nSoon = cntBy('Sắp đến hạn');
+  const nMissCfg = (Q.alerts.config||[]).length;
+
+  const chip = (key,label,n,cls) => `<button class="fchip ${Q.f.bdStatus===key?'on':''}"
+      onclick="Q.f.bdStatus=(Q.f.bdStatus==='${key}'?'':'${key}');renderPage('bdcounter')">${label} · ${n}</button>`;
+  const rchip = v => `<button class="fchip ${rSet.has(v)?'on':''}"
+      onclick="qToggle(Q.f.bdRegion,'${v}');renderPage('bdcounter')">${v}</button>`;
+
+  return `
+    <div class="ph">
+      <h1>Bộ đếm bảo dưỡng theo giờ vận hành</h1>
+      <p>${(Q.counters.rows||[]).length} máy · ${items.length} hạng mục theo giờ ·
+        <b style="color:var(--red)">${nOver} quá hạn</b> · <b style="color:var(--amb)">${nSoon} sắp đến hạn</b>
+        ${nMissCfg?` · <b style="color:var(--mu)">${nMissCfg} cảnh báo cấu hình</b>`:''}
+        <br><span style="font-size:11px;color:var(--mu)">Bộ đếm = ODO hiện tại − ODO tại lần thay gần nhất. Báo đã thay → bộ đếm về 0.</span></p>
+    </div>
+
+    ${nMissCfg ? `<div class="card" style="border-left:3px solid var(--mu)"><div class="cb" style="padding:10px 14px">
+      <b style="font-size:12px">⚙ Cần bổ sung cấu hình</b>
+      <ul style="margin:6px 0 0 18px;font-size:11px;color:var(--mu);line-height:1.7">
+        ${(Q.alerts.config||[]).slice(0,6).map(w=>`<li>${esc(w.message)}</li>`).join('')}
+      </ul></div></div>` : ''}
+
+    <div class="msf" style="flex-direction:column;align-items:stretch;gap:10px">
+      <div class="msg">
+        <span class="mslbl">Trạng thái</span>
+        ${chip('overdue','⛔ Quá hạn',nOver)}
+        ${chip('duesoon','⚠ Sắp đến hạn',nSoon)}
+        <span class="mslbl" style="margin-left:14px">Khu vực</span>
+        ${rchip('Miền Bắc')}${rchip('Miền Nam')}
+      </div>
+      <div class="msg">
+        <input class="si" style="flex:1" placeholder="🔍 Tìm mã máy, đơn vị, trại…" value="${esc(Q.f.bd)}"
+               oninput="Q.f.bd=this.value;renderPage('bdcounter')">
+        <button class="btn bg-gr sm" onclick="Q.f.bd='';Q.f.bdStatus='';Q.f.bdRegion.clear();renderPage('bdcounter')">↺ Bỏ lọc</button>
+        <button class="btn bg-gr sm" onclick="qRebuild()">⟳ Tính lại</button>
+      </div>
+    </div>
+
+    ${rows.map(r=>qMachineCard_(r, items)).join('') ||
+      '<div class="empty"><div class="ei">✅</div>Không có máy nào khớp bộ lọc.</div>'}
+  `;
+}
+
+/** Một thẻ máy: header + lưới hạng mục có thanh tiến độ. */
+function qMachineCard_(r, items){
+  const code = String(r['Mã máy']||'');
+  const odo = r['ODO hiện tại (h)'];
+  const bad = items.filter(v=>{
+    const st=String(qv_(r,v.ten,'Trạng thái')||''); return st==='Quá hạn'||st==='Sắp đến hạn'; }).length;
+
+  const cell = v => {
+    const st = String(qv_(r,v.ten,'Trạng thái')||'');
+    const cyc = num2_(qv_(r,v.ten,'Chu kỳ (h)'));
+    const used = num2_(qv_(r,v.ten,'Đã chạy (h)'));
+    const rem = num2_(qv_(r,v.ten,'Còn lại (h)'));
+    const tc = String(qv_(r,v.ten,'Tồn/Cần')||'');
+    const last = String(qv_(r,v.ten,'Ngày thay gần nhất')||'');
+    const who = String(qv_(r,v.ten,'Người thay')||'');
+
+    if (st==='Thiếu giờ chạy' || st==='Chưa có định mức' || cyc===null){
+      return `<div class="qcell muted">
+        <div class="qct">${esc(v.ten)}</div>
+        <div class="qcs">${esc(st||'Chưa cấu hình')}</div></div>`;
+    }
+    const pct = cyc>0 ? Math.min(100, Math.round(used/cyc*100)) : 0;
+    const cls = st==='Quá hạn' ? 'bad' : (st==='Sắp đến hạn' ? 'warn' : 'ok');
+    // Tồn/Cần chỉ tô đỏ khi ĐANG sắp/quá hạn — còn 3000h nữa mà bắt trại giữ hàng là tồn kho chết
+    const p = tc.split('/'); const have=Number(p[0]||0), need=p.length>1?Number(p[1]):null;
+    const short = need!=null && have<need && st!=='Bình thường';
+
+    return `<div class="qcell ${cls}" onclick="qOpenService('${esc(code)}','${esc(v.vt)}')" title="Bấm để báo đã thay">
+      <div class="qct">${esc(v.ten)}</div>
+      <div class="qcbar"><i style="width:${pct}%"></i></div>
+      <div class="qcs">
+        <b>${rem!==null?(rem<=0?'quá '+Math.abs(rem):'còn '+rem)+' h':'—'}</b>
+        <span>${used!==null?used:'—'}/${cyc} h</span>
+      </div>
+      <div class="qcf">
+        ${tc?`<span class="b ${short?'br':'bmu'}">kho ${esc(tc)}</span>`:''}
+        ${last?`<span class="qcd">${esc(last)}${who?' · '+esc(who):''}</span>`:'<span class="qcd">chưa thay lần nào</span>'}
+      </div>
+    </div>`;
+  };
+
+  return `<div class="card qcard ${bad?'hot':''}">
+    <div class="ch">
+      <div>
+        <h3><span class="mm">${esc(code)}</span>
+          ${bad?`<span class="b br" style="margin-left:6px">${bad} việc</span>`:'<span class="b bg" style="margin-left:6px">ổn</span>'}
+        </h3>
+        <div style="font-size:11px;color:var(--mu);margin-top:2px">
+          ${esc(String(r['Đơn vị']||''))}${r['Trại']?' · '+esc(String(r['Trại'])):''} · ${esc(String(r['Khu vực']||''))}
+          · dòng ${esc(String(r['Dòng máy']||''))} · ODO <b>${odo!==''&&odo!=null?fmt2_(odo):'—'} h</b>
+        </div>
+      </div>
+      <button class="btn bg-b sm" onclick="qOpenService('${esc(code)}','')">✎ Báo đã bảo dưỡng</button>
+    </div>
+    <div class="cb"><div class="qgrid">${items.map(cell).join('')}</div></div>
+  </div>`;
+}
+
+function qToggle(set, v){ if (set.has(v)) set.delete(v); else set.add(v); }
+
+/* ---------- Modal báo đã thay ------------------------------------------- */
+function qOpenService(code, presetVt){
+  const r = (Q.counters.rows||[]).find(x=>String(x['Mã máy']||'')===code);
+  if (!r){ toast('Không tìm thấy máy '+code,'err'); return; }
+  const items = qItems_(true).filter(v => {
+    const st = String(qv_(r,v.ten,'Trạng thái')||'');
+    return st!=='Chưa có định mức';       // chưa có chu kỳ thì không có gì để reset
+  });
+  const odo = r['ODO hiện tại (h)'];
+
+  const row = v => {
+    const st = String(qv_(r,v.ten,'Trạng thái')||'');
+    const rem = num2_(qv_(r,v.ten,'Còn lại (h)'));
+    const norm = qNormOf_(String(r['Dòng máy']||''), v.ten);
+    const checked = presetVt && v.vt===presetVt ? 'checked' : '';
+    const cls = st==='Quá hạn'?'br':(st==='Sắp đến hạn'?'ba':'bmu');
+    return `<tr>
+      <td><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" class="qsv" data-vt="${esc(v.vt)}" ${checked}>
+        <span>${esc(v.ten)}</span></label></td>
+      <td><span class="b ${cls}">${rem!==null?(rem<=0?'quá '+Math.abs(rem)+' h':'còn '+rem+' h'):'—'}</span></td>
+      <td style="text-align:right"><input class="inp qsl" data-vt="${esc(v.vt)}" style="width:70px;text-align:right"
+             value="${norm.sl!=null?norm.sl:1}"></td>
+      <td style="font-size:11px;color:var(--mu)">${esc(v.dvt)}</td>
+    </tr>`;
+  };
+
+  openOv(`
+    <div class="mh"><div>
+      <h2>Báo đã bảo dưỡng · ${esc(code)}</h2>
+      <p>Chọn hạng mục đã thay. Bộ đếm của hạng mục đó sẽ về 0 và tự trừ kho tại trại.</p>
+    </div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div class="fgrid fg2" style="margin-bottom:10px">
+        <div class="iw"><div class="il">Giờ ODO khi thay</div>
+          <input class="inp" id="qsOdo" value="${odo!==''&&odo!=null?odo:''}">
+          <div class="ilh">Mặc định lấy số giờ hiện tại ở Sheet 2. Sửa lại nếu thay từ hôm trước.</div></div>
+        <div class="iw"><div class="il">Ngày thực hiện</div>
+          <input class="inp" id="qsDate" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+      </div>
+      <div class="iw" style="margin-bottom:10px"><div class="il">Người thực hiện</div>
+        <input class="inp" id="qsWho" value="${esc((S.user&&S.user.name)||'')}" placeholder="Tên kỹ thuật viên"></div>
+
+      <div class="tw" style="max-height:42vh"><table>
+        <thead><tr><th>Hạng mục</th><th>Hiện tại</th><th style="text-align:right">SL dùng</th><th>ĐVT</th></tr></thead>
+        <tbody>${items.map(row).join('') || '<tr><td colspan="4"><div class="empty">Dòng máy này chưa điền định mức ở Sheet 11.</div></td></tr>'}</tbody>
+      </table></div>
+
+      <div class="iw" style="margin-top:10px"><div class="il">Ghi chú</div>
+        <input class="inp" id="qsNote" placeholder="VD: thay kèm vệ sinh két nước"></div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
+      <button class="btn bg-g" onclick="qSubmitService('${esc(code)}')">✓ Ghi nhận &amp; đếm lại</button>
+    </div>
+  `);
+}
+
+/** Tra định mức của 1 vật tư theo dòng máy, đọc Sheet 11 dạng ngang. */
+function qNormOf_(model, ten){
+  const r = (Q.norms.rows||[]).find(x=>String(x['Dòng máy']||'').trim().toUpperCase()===String(model).trim().toUpperCase());
+  if (!r) return { chuKy:null, sl:null, min:null, gia:null };
+  return {
+    chuKy: num2_(r[ten+QSEP+'Chu kỳ (h)']),
+    sl:    num2_(r[ten+QSEP+'SL/lần thay']),
+    min:   num2_(r[ten+QSEP+'Tồn tối thiểu']),
+    gia:   num2_(r[ten+QSEP+'Đơn giá (đ)']),
+  };
+}
+
+async function qSubmitService(code){
+  const items = [];
+  document.querySelectorAll('.qsv').forEach(cb => {
+    if (!cb.checked) return;
+    const vt = cb.getAttribute('data-vt');
+    const slEl = document.querySelector(`.qsl[data-vt="${vt}"]`);
+    items.push({ vt, sl: slEl ? slEl.value : '' });
+  });
+  if (!items.length){ toast('Chưa chọn hạng mục nào','err'); return; }
+
+  const payload = {
+    maCode: code, items,
+    odo: ($('qsOdo')||{}).value || '',
+    ngay: ($('qsDate')||{}).value || '',
+    nguoi: ($('qsWho')||{}).value || '',
+    ghiChu: ($('qsNote')||{}).value || '',
+  };
+  toast('Đang ghi nhận…');
+  const d = await apiPost({ action:'logMaintenance', payload, user:(S.user&&S.user.name)||'admin' });
+  if (!d || !d.ok){ toast((d&&d.error)||'Ghi nhận thất bại','err'); return; }
+  closeOv();
+  await loadQlvt();
+  renderPage('bdcounter');
+  toast(`Đã ghi ${items.length} hạng mục cho ${code} · bộ đếm về 0`,'ok');
+}
+
+async function qRebuild(){
+  toast('Đang tính lại…');
+  const d = await apiPost({ action:'qlvtRebuild', user:(S.user&&S.user.name)||'admin' });
+  if (!d || !d.ok){ toast((d&&d.error)||'Lỗi','err'); return; }
+  await loadQlvt(); renderCurrent(); toast('Đã tính lại bộ đếm và tồn kho','ok');
+}
+
+/* ============================================================================
+ *  TRANG 2 · KHO VẬT TƯ TẠI TRẠI
+ *  Ma trận máy × vật tư — đúng hình dáng Sheet 14 để đối chiếu 1-1.
+ * ========================================================================== */
+function viewStock(){
+  if (!Q.loaded) return qNotReady_('Kho vật tư tại trại');
+  const items = qItems_(false);
+  const q = (Q.f.stock||'').toLowerCase();
+
+  let rows = (Q.stock.rows||[]).filter(r => {
+    if (Q.f.stockOnlyShort && !(Number(r['Số vật tư thiếu'])>0)) return false;
+    if (!q) return true;
+    return `${r['Mã máy']} ${r['Đơn vị']} ${r['Trại']} ${r['Khu vực']}`.toLowerCase().includes(q);
+  });
+
+  const nShort = (Q.stock.rows||[]).filter(r=>Number(r['Số vật tư thiếu'])>0).length;
+  const urgent = (Q.alerts.stock||[]).filter(a=>a.severity==='high');
+
+  const cellOf = (r,v) => {
+    const ton = num2_(qv_(r,v.ten,'Tồn'));
+    const min = num2_(qv_(r,v.ten,'Tối thiểu'));
+    const short = min!=null && ton!=null && ton<min;
+    return `<td style="text-align:right;${short?'background:#fef2f2':''}"
+      onclick="qOpenMove('${esc(String(r['Mã máy']||''))}','${esc(v.vt)}')"
+      title="${esc(v.ten)} — bấm để nhập/xuất" class="qtd">
+      <b style="${short?'color:var(--red)':''}">${ton!=null?ton:0}</b>
+      ${min!=null?`<span style="font-size:9px;color:var(--mu)">/${min}</span>`:''}
+    </td>`;
+  };
+
+  return `
+    <div class="ph">
+      <h1>Kho vật tư gửi tại trại</h1>
+      <p>${(Q.stock.rows||[]).length} máy · ${items.length} loại vật tư ·
+        <b style="color:var(--red)">${nShort} máy đang thiếu</b>
+        ${Q.perm.viewPrice?` · tổng giá trị tồn <b>${fmtVnd_((Q.stock.rows||[]).reduce((s,r)=>s+(Number(r['Tổng giá trị tồn (đ)'])||0),0))}</b>`:''}
+        <br><span style="font-size:11px;color:var(--mu)">Ô hiển thị <b>tồn/tối thiểu</b> · bấm vào ô để lập phiếu Nhập / Xuất / Kiểm kê</span></p>
+    </div>
+
+    ${urgent.length?`<div class="card" style="border-left:3px solid var(--red)"><div class="cb" style="padding:10px 14px">
+      <b style="font-size:12px;color:var(--red)">⚠ Cần cấp gấp — sắp tới hạn thay mà trại không đủ vật tư</b>
+      <div class="tw" style="max-height:170px;margin-top:6px"><table>
+        <thead><tr><th>Mã máy</th><th>Vật tư</th><th style="text-align:right">Còn (h)</th><th style="text-align:right">Tồn/Cần</th><th>Trại</th></tr></thead>
+        <tbody>${urgent.slice(0,20).map(a=>`<tr>
+          <td><span class="mm">${esc(a.maCode)}</span></td><td>${esc(a.field)}</td>
+          <td style="text-align:right">${a.remain!=null?fmt2_(a.remain):'—'}</td>
+          <td style="text-align:right"><span class="b br">${a.have}/${a.need}</span></td>
+          <td style="font-size:11px">${esc(a.site||'')}</td></tr>`).join('')}</tbody>
+      </table></div></div></div>`:''}
+
+    <div class="msf">
+      <input class="si" style="flex:1" placeholder="🔍 Tìm mã máy, trại…" value="${esc(Q.f.stock)}"
+             oninput="Q.f.stock=this.value;renderPage('stock')">
+      <button class="fchip ${Q.f.stockOnlyShort?'on':''}"
+        onclick="Q.f.stockOnlyShort=!Q.f.stockOnlyShort;renderPage('stock')">Chỉ máy đang thiếu · ${nShort}</button>
+      <button class="btn bg-b sm" onclick="qOpenMove('','')">+ Lập phiếu</button>
+      <button class="btn bg-gr sm" onclick="exportCsv(Q.stock,'ton-kho-vat-tu')">⤓ CSV</button>
+    </div>
+
+    <div class="card"><div class="tw" style="max-height:66vh"><table class="qmat">
+      <thead><tr>
+        <th style="position:sticky;left:0;background:#f8fafc;z-index:3">Mã máy</th>
+        <th>Trại</th>
+        ${items.map(v=>`<th style="text-align:right" title="${esc(v.ten)}">${esc(v.ten)}<br><span style="font-weight:400;color:var(--mu)">${esc(v.dvt)}</span></th>`).join('')}
+      </tr></thead>
+      <tbody>${rows.map(r=>`<tr>
+        <td style="position:sticky;left:0;background:#fff;z-index:2"><span class="mm">${esc(String(r['Mã máy']||''))}</span>
+          ${Number(r['Số vật tư thiếu'])>0?`<span class="b br" style="margin-left:4px">${r['Số vật tư thiếu']}</span>`:''}</td>
+        <td style="font-size:11px">${esc(String(r['Trại']||''))}</td>
+        ${items.map(v=>cellOf(r,v)).join('')}
+      </tr>`).join('') || '<tr><td colspan="99"><div class="empty">Không có máy nào khớp bộ lọc.</div></td></tr>'}</tbody>
+    </table></div></div>
+  `;
+}
+
+function qOpenMove(code, vt){
+  const machines = (Q.stock.rows||[]).map(r=>String(r['Mã máy']||''));
+  const items = qItems_(false);
+  openOv(`
+    <div class="mh"><div><h2>Phiếu vật tư</h2>
+      <p>Mọi thay đổi tồn kho đều đi qua phiếu — nhờ vậy cuối tháng truy được đã dùng gì, hết bao nhiêu tiền.</p>
+    </div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div class="fgrid fg2">
+        <div class="iw"><div class="il">Mã máy</div>
+          <select class="sel" id="qmCode">${machines.map(c=>`<option ${c===code?'selected':''}>${esc(c)}</option>`).join('')}</select></div>
+        <div class="iw"><div class="il">Vật tư</div>
+          <select class="sel" id="qmVt">${items.map(v=>`<option value="${esc(v.vt)}" ${v.vt===vt?'selected':''}>${esc(v.ten)} (${esc(v.dvt)})</option>`).join('')}</select></div>
+        <div class="iw"><div class="il">Loại phiếu</div>
+          <select class="sel" id="qmType">
+            <option value="Nhập">Nhập — cấp hàng về trại</option>
+            <option value="Xuất">Xuất — dùng/mang đi</option>
+            <option value="Kiểm kê">Kiểm kê — đặt lại đúng số đếm thực tế</option>
+          </select>
+          <div class="ilh">Kiểm kê sẽ GHI ĐÈ tồn về số vừa nhập, dùng khi sổ sách lệch thực tế.</div></div>
+        <div class="iw"><div class="il">Số lượng</div><input class="inp" id="qmQty" value="1"></div>
+        ${Q.perm.editPrice?`<div class="iw"><div class="il">Đơn giá (đ)</div><input class="inp" id="qmPrice" placeholder="Bỏ trống = lấy theo định mức"></div>`:''}
+        <div class="iw"><div class="il">Người thực hiện</div><input class="inp" id="qmWho" value="${esc((S.user&&S.user.name)||'')}"></div>
+      </div>
+      <div class="iw"><div class="il">Lý do / ghi chú</div><input class="inp" id="qmNote" placeholder="VD: cấp bổ sung đợt tháng 8"></div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
+      <button class="btn bg-g" onclick="qSubmitMove()">✓ Ghi phiếu</button>
+    </div>
+  `);
+}
+
+async function qSubmitMove(){
+  const payload = {
+    maCode: ($('qmCode')||{}).value, vt: ($('qmVt')||{}).value,
+    loai: ($('qmType')||{}).value, sl: ($('qmQty')||{}).value,
+    donGia: ($('qmPrice')||{}).value || '',
+    nguoi: ($('qmWho')||{}).value, lyDo: ($('qmNote')||{}).value,
+  };
+  if (!payload.maCode || !payload.vt){ toast('Thiếu mã máy hoặc vật tư','err'); return; }
+  toast('Đang ghi phiếu…');
+  const d = await apiPost({ action:'stockMove', payload, user:(S.user&&S.user.name)||'admin' });
+  if (!d || !d.ok){ toast((d&&d.error)||'Lỗi ghi phiếu','err'); return; }
+  closeOv(); await loadQlvt(); renderPage('stock');
+  toast('Đã ghi phiếu ' + payload.loai,'ok');
+}
+
+/* ============================================================================
+ *  TRANG 3 · CHI PHÍ VẬT TƯ (đ/kWh)
+ *  So từng máy với TRUNG BÌNH CỦA CHÍNH DÒNG MÁY ĐÓ — so với TB toàn hệ thống
+ *  là vô nghĩa vì NS300KVA đương nhiên tốn hơn NS100KVA.
+ * ========================================================================== */
+function viewMatCost(){
+  if (!Q.loaded) return qNotReady_('Chi phí vật tư');
+  if (!Q.perm.viewPrice){
+    return `<div class="ph"><h1>Chi phí vật tư</h1></div>
+      <div class="empty"><div class="ei">🔒</div>
+        Tài khoản của bạn không có quyền xem thông tin giá.<br>
+        <span style="font-size:11px">Liên hệ quản trị để bật cột "Xem giá" ở Sheet 20 · Phân quyền.</span></div>`;
+  }
+  const now = new Date();
+  const cur = Q.f.costMonth || `${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+  const d = Q.matCost;
+
+  const months = [];
+  for (let i=0;i<12;i++){
+    const t = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    months.push(`${String(t.getMonth()+1).padStart(2,'0')}/${t.getFullYear()}`);
+  }
+
+  const head = `
+    <div class="ph">
+      <h1>Phân tích chi phí vật tư</h1>
+      <p>Tiền vật tư đã dùng ÷ điện phát ra = đ/kWh · so với trung bình cùng dòng máy ·
+        lệch quá ±${(Q.cfg&&Q.cfg.USAGE_DEVIATION_PCT)||30}% thì cần soi kỹ thuật</p>
+    </div>
+    <div class="msf">
+      <span class="mslbl">Tháng</span>
+      <select class="si" style="max-width:150px" onchange="Q.f.costMonth=this.value;Q.matCost=null;renderPage('matcost')">
+        ${months.map(m=>`<option ${m===cur?'selected':''}>${m}</option>`).join('')}
+      </select>
+      <button class="btn bg-gr sm" onclick="Q.matCost=null;afterMatCost()">↻ Tính lại</button>
+      ${d&&d.ok?`<button class="btn bg-gr sm" onclick="qExportCost()">⤓ CSV</button>`:''}
+    </div>`;
+
+  if (!d) return head + '<div class="empty"><div class="ei">⏳</div>Đang tính…</div>';
+  if (!d.ok) return head + `<div class="empty"><div class="ei">⚠</div>${esc(d.error||'Không tính được')}</div>`;
+
+  const withCost = d.rows.filter(r=>r.costPerKwh!=null);
+  const over = withCost.filter(r=>r.flag==='Vượt trung bình');
+  const under = withCost.filter(r=>r.flag==='Thấp bất thường');
+
+  return head + `
+    <div class="krow r1">
+      <div class="kcard"><div class="klbl">Tổng chi phí vật tư</div><div class="kval">${fmtVnd_(d.totalCost)}</div><div class="ksub">tháng ${esc(d.monthLabel)}</div></div>
+      <div class="kcard"><div class="klbl">Tổng điện phát</div><div class="kval">${fmt2_(d.totalKwh)}</div><div class="ksub">kWh</div></div>
+      <div class="kcard rd"><div class="klbl">Vượt trung bình</div><div class="kval">${over.length}</div><div class="ksub">máy cần kiểm tra</div></div>
+      <div class="kcard tl"><div class="klbl">Thấp bất thường</div><div class="kval">${under.length}</div><div class="ksub">soát lại ghi chép</div></div>
+    </div>
+
+    <div class="card"><div class="ch"><h3>Trung bình theo dòng máy</h3></div><div class="cb">
+      <div class="effstats">${d.avgByModel.map(a=>`<div class="es">
+        <div class="esl">${esc(a.model)}</div>
+        <div class="esv">${fmt2_(a.avgCostPerKwh)} <span style="font-size:9px;color:var(--mu);font-weight:500">đ/kWh · ${a.n} máy</span></div>
+      </div>`).join('') || '<div class="empty">Chưa đủ dữ liệu.</div>'}</div>
+    </div></div>
+
+    <div class="card"><div class="ch"><h3>Chi tiết theo máy</h3>
+      <span class="b bmu">Sắp xếp: lệch nhiều nhất lên đầu</span></div>
+      <div class="tw" style="max-height:56vh"><table>
+        <thead><tr><th>Mã máy</th><th>Dòng máy</th><th>Trại</th>
+          <th style="text-align:right">Chi phí VT (đ)</th><th style="text-align:right">Điện phát (kWh)</th>
+          <th style="text-align:right">đ/kWh</th><th style="text-align:right">TB dòng máy</th>
+          <th style="text-align:right">Lệch</th><th>Đánh giá</th><th>Vật tư đã dùng</th></tr></thead>
+        <tbody>${d.rows.map(r=>{
+          const cls = r.flag==='Vượt trung bình'?'br':(r.flag==='Thấp bất thường'?'bb':(r.flag?'bg':'bmu'));
+          const det = Object.keys(r.detail||{}).map(k=>`${k}: ${r.detail[k]}`).join(' · ');
+          return `<tr>
+            <td><span class="mm">${esc(r.code)}</span></td>
+            <td>${esc(r.model)}</td>
+            <td style="font-size:11px">${esc(r.site||'')}</td>
+            <td style="text-align:right">${fmtVnd_(r.cost)}</td>
+            <td style="text-align:right">${fmt2_(r.kwh)}</td>
+            <td style="text-align:right"><b>${r.costPerKwh!=null?fmt2_(r.costPerKwh):'—'}</b></td>
+            <td style="text-align:right">${r.modelAvg!=null?fmt2_(r.modelAvg):'—'}</td>
+            <td style="text-align:right">${r.devPct!=null?`<span class="b ${cls}">${r.devPct>0?'+':''}${fmt2_(r.devPct)}%</span>`:'—'}</td>
+            <td>${r.flag?`<span class="b ${cls}">${esc(r.flag)}</span>`:'—'}</td>
+            <td style="font-size:10px;color:var(--mu);max-width:260px">${esc(det||'—')}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div></div>
+  `;
+}
+
+async function afterMatCost(){
+  if (!Q.loaded || !Q.perm.viewPrice || Q.matCost) return;
+  const now = new Date();
+  const ml = Q.f.costMonth || `${String(now.getMonth()+1).padStart(2,'0')}/${now.getFullYear()}`;
+  const d = await apiPost({ action:'materialCost', monthLabel:ml, user:(S.user&&S.user.name)||'admin' });
+  Q.matCost = d || { ok:false, error:'Không gọi được API' };
+  if ((document.querySelector('.page.on')||{}).id==='pg-matcost') renderPage('matcost');
+}
+
+function qExportCost(){
+  const d = Q.matCost; if (!d || !d.ok) return;
+  exportCsv({
+    headers:['Mã máy','Dòng máy','Trại','Chi phí VT (đ)','Điện phát (kWh)','đ/kWh','TB dòng máy','Lệch %','Đánh giá'],
+    rows: d.rows.map(r=>({ 'Mã máy':r.code,'Dòng máy':r.model,'Trại':r.site,
+      'Chi phí VT (đ)':r.cost,'Điện phát (kWh)':r.kwh,'đ/kWh':r.costPerKwh??'',
+      'TB dòng máy':r.modelAvg??'','Lệch %':r.devPct??'','Đánh giá':r.flag })),
+  }, 'chi-phi-vat-tu-'+String(d.monthLabel).replace('/','-'));
+}
+
+/* ============================================================================
+ *  TRANG 4 · SIM & CẢNH BÁO MÁY
+ * ========================================================================== */
+function viewSim(){
+  if (!Q.loaded) return qNotReady_('SIM & Cảnh báo máy');
+  const q = (Q.f.sim||'').toLowerCase();
+  const alerts = Q.alerts.sim||[];
+  const due = new Set(alerts.map(a=>a.maCode+'|'+a.simKind));
+
+  let rows = (Q.sim.rows||[]).filter(r=>{
+    if (q && !`${r['Mã máy']} ${r['Trại']} ${r['Người phụ trách']}`.toLowerCase().includes(q)) return false;
+    if (Q.f.simOnlyDue) return due.has(String(r['Mã máy'])+'|SIM truyền thông') || due.has(String(r['Mã máy'])+'|SIM camera');
+    return true;
+  });
+
+  const kinds = ['SIM truyền thông','SIM camera'];
+  const cell = (r,k) => {
+    const han = String(r[k+QSEP+'Ngày hết hạn']||'');
+    const days = num2_(r[k+QSEP+'Còn (ngày)']);
+    const so = String(r[k+QSEP+'Số thuê bao']||'');
+    const cls = days==null ? 'bmu' : (days<0 ? 'br' : (days<=5 ? 'ba' : (days<=15 ? 'bb' : 'bg')));
+    return `<td>
+      <div style="font-size:11px">${so?esc(so):'<span style="color:var(--mu)">chưa nhập</span>'}</div>
+      <div style="margin-top:2px">${han?`<span class="b ${cls}">${esc(han)}${days!=null?' · '+(days<0?'quá '+Math.abs(days)+'n':days+'n'):''}</span>`:'—'}</div>
+      <div style="font-size:10px;color:var(--mu);margin-top:2px">${esc(String(r[k+QSEP+'Nhà mạng']||''))} ${esc(String(r[k+QSEP+'Chu kỳ đóng']||''))}</div>
+      ${han?`<button class="btn bg-b sm" style="margin-top:4px" onclick="qPaySim('${esc(String(r['Mã máy']||''))}','${k}')">✓ Đã đóng</button>`:''}
+    </td>`;
+  };
+
+  const alarmLog = (Q.alarmLog && Q.alarmLog.rows || []).slice().reverse().slice(0,40);
+
+  return `
+    <div class="ph">
+      <h1>SIM truyền thông &amp; Cảnh báo từ máy</h1>
+      <p>${(Q.sim.rows||[]).length} máy · <b style="color:var(--red)">${alerts.filter(a=>a.days<0).length} quá hạn</b>
+        · <b style="color:var(--amb)">${alerts.filter(a=>a.days>=0).length} sắp tới hạn</b>
+        · nhắc trước ${(Q.cfg&&Q.cfg.SIM_WARN_DAYS)||15} ngày</p>
+    </div>
+
+    <div class="msf">
+      <input class="si" style="flex:1" placeholder="🔍 Tìm mã máy, trại, người phụ trách…" value="${esc(Q.f.sim)}"
+             oninput="Q.f.sim=this.value;renderPage('sim')">
+      <button class="fchip ${Q.f.simOnlyDue?'on':''}"
+        onclick="Q.f.simOnlyDue=!Q.f.simOnlyDue;renderPage('sim')">Chỉ SIM tới hạn · ${alerts.length}</button>
+      <button class="btn bg-gr sm" onclick="exportCsv(Q.sim,'quan-ly-sim')">⤓ CSV</button>
+    </div>
+
+    <div class="card"><div class="ch"><h3>Hạn đóng tiền SIM</h3>
+      <span class="b bmu">Bấm "Đã đóng" → hạn tự đẩy sang kỳ kế tiếp, tính từ hạn cũ nên đóng trễ không làm trôi mốc</span></div>
+      <div class="tw" style="max-height:50vh"><table>
+        <thead><tr><th>Mã máy</th><th>Trại</th><th>Phụ trách</th>
+          ${kinds.map(k=>`<th>${esc(k)}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map(r=>`<tr>
+          <td><span class="mm">${esc(String(r['Mã máy']||''))}</span></td>
+          <td style="font-size:11px">${esc(String(r['Trại']||''))}<br><span style="color:var(--mu)">${esc(String(r['Khu vực']||''))}</span></td>
+          <td style="font-size:11px">${esc(String(r['Người phụ trách']||''))}</td>
+          ${kinds.map(k=>cell(r,k)).join('')}
+        </tr>`).join('') || '<tr><td colspan="5"><div class="empty">Không có SIM nào khớp bộ lọc.</div></td></tr>'}</tbody>
+      </table></div></div>
+
+    <div class="card"><div class="ch"><h3>Cảnh báo Smartgen gần đây</h3>
+      <div style="display:flex;gap:6px">
+        <span class="b bmu">${(Q.alarmLog&&Q.alarmLog.total)||0} bản ghi</span>
+        <button class="btn bg-gr sm" onclick="qScanAlarms()">⟳ Quét ngay</button>
+      </div></div>
+      <div class="tw" style="max-height:40vh"><table>
+        <thead><tr><th>Thời gian</th><th>Mã máy</th><th>Cảnh báo</th><th>Mức độ</th><th>Zalo</th><th>Xử lý</th></tr></thead>
+        <tbody>${alarmLog.map(a=>{
+          const md = String(a['Mức độ']||'');
+          const cls = /nguy hiểm/i.test(md)?'br':(/cảnh báo/i.test(md)?'ba':'bmu');
+          return `<tr>
+            <td style="font-size:11px">${esc(String(a['Thời gian ghi nhận']||''))}</td>
+            <td><span class="mm">${esc(String(a['Mã máy']||''))}</span></td>
+            <td style="font-size:11px">${esc(String(a['Nội dung gốc']||''))}</td>
+            <td><span class="b ${cls}">${esc(md)}</span></td>
+            <td>${String(a['Đã gửi Zalo']||'').toUpperCase()==='TRUE'?'<span class="b bg">đã gửi</span>':'<span class="b bmu">—</span>'}</td>
+            <td style="font-size:11px">${esc(String(a['Trạng thái xử lý']||''))}</td>
+          </tr>`;
+        }).join('') || '<tr><td colspan="6"><div class="empty">Chưa có cảnh báo nào được ghi nhận.<br><span style="font-size:11px">Cấu hình danh sách cảnh báo nguy hiểm ở Sheet 17 rồi bấm "Quét ngay".</span></div></td></tr>'}</tbody>
+      </table></div></div>
+  `;
+}
+
+async function qPaySim(code, kind){
+  if (!confirm(`Xác nhận đã đóng tiền ${kind} của máy ${code}?\nHạn sẽ được đẩy sang kỳ kế tiếp.`)) return;
+  const d = await apiPost({ action:'paySim',
+    payload:{ maCode:code, simKind:kind, nguoi:(S.user&&S.user.name)||'' },
+    user:(S.user&&S.user.name)||'admin' });
+  if (!d || !d.ok){ toast((d&&d.error)||'Lỗi','err'); return; }
+  await loadQlvt(); renderPage('sim');
+  toast(`Đã cập nhật · hạn mới ${d.nextDue}`,'ok');
+}
+
+async function qScanAlarms(){
+  toast('Đang quét cảnh báo Smartgen…');
+  const d = await apiPost({ action:'scanAlarms', user:(S.user&&S.user.name)||'admin' });
+  if (!d || !d.ok){ toast((d&&d.error)||'Lỗi quét','err'); return; }
+  await loadQlvt(); renderPage('sim');
+  toast(`Quét ${d.scanned} máy · khớp ${d.matched} · gửi Zalo ${d.notified}`,'ok');
+}
+
+/* ---------- Tiện ích ------------------------------------------------------ */
+function fmtVnd_(n){
+  const v = Number(n); if (isNaN(v)) return '—';
+  return v.toLocaleString('vi-VN') + ' đ';
+}
+
 </script>
 </body>
 </html>
