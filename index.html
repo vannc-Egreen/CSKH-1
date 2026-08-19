@@ -299,7 +299,7 @@ td{padding:9px 12px;vertical-align:middle}
 
       <div class="nsec">Vận hành</div>
       <div class="nitem" data-page="tracking" onclick="nav('tracking')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>Theo dõi bảo dưỡng<span class="nbadge" id="nb-track">0</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>Theo dõi bảo dưỡng<span class="nbadge rd" id="nb-track">0</span>
       </div>
       <div class="nitem" data-page="filter" onclick="nav('filter')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>Data thay lọc<span class="nbadge" id="nb-filter">0</span>
@@ -309,9 +309,6 @@ td{padding:9px 12px;vertical-align:middle}
       </div>
 
       <div class="nsec">Vật tư &amp; Bảo dưỡng</div>
-      <div class="nitem" data-page="bdcounter" onclick="nav('bdcounter')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Bộ đếm bảo dưỡng<span class="nbadge rd" id="nb-bd">0</span>
-      </div>
       <div class="nitem" data-page="stock" onclick="nav('stock')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/></svg>Kho vật tư tại trại<span class="nbadge am" id="nb-stock">0</span>
       </div>
@@ -345,7 +342,6 @@ td{padding:9px 12px;vertical-align:middle}
       <div id="pg-efficiency" class="page"></div>
       <div id="pg-master" class="page"></div>
       <div id="pg-spec" class="page"></div>
-      <div id="pg-bdcounter" class="page"></div>
       <div id="pg-stock" class="page"></div>
       <div id="pg-matcost" class="page"></div>
       <div id="pg-sim" class="page"></div>
@@ -381,6 +377,12 @@ const S = {
     machineRegion:new Set(),
     machineOnlyProblem:false,
     tracking:'',
+    /* Trang gộp "Theo dõi bảo dưỡng" — 2 tab dùng chung ô tìm.
+     *   'sheet'   : bảng ngang đúng như Sheet 2 (mặc định — xem được cả khi web sập)
+     *   'counter' : bộ đếm theo giờ vận hành, dạng thẻ có thanh tiến độ */
+    trackingTab:'sheet',
+    trackingOnlyWarn:false,   // Bảng theo dõi: chỉ hiện máy có hạng mục ≤ 500 h
+    showGaps:false,     // Trang Phân tích: đã bấm "xem hết" bảng ô trống chưa
     filter:'',
     filterStatus:'',   // '', 'overdue', 'duesoon', 'ok'
     alerts:'all',      // '', 'all', 'overdue', 'due-soon', 'oil-high'
@@ -727,6 +729,8 @@ function setStatus(loading, msg, err){
 const SMARTGEN_TASKS = [
   { id: 'syncSmartGenDaily', label: 'Đồng bộ Smartgen', icon: '⚡',
     hint: 'Quét cả tháng: điền vào MỌI ô ngày còn trống ở Sheet 5, giữ nguyên ô đã có số. Tự chạy 1 lần/ngày khi mở web.' },
+  { id: 'cleanupSheet5', label: 'Dọn ô ngày chưa tới', icon: '🧹',
+    hint: 'Xoá số còn sót của tháng trước ở các cột ngày chưa tới, và đếm lại ô còn trống. Không gọi Smartgen nên chạy vài giây.' },
   // Thêm task mới ở đây khi phát triển tiếp, ví dụ:
   // { id: 'syncSmartGenAlarms', label: 'Đồng bộ cảnh báo máy', icon: '🚨',
   //   hint: 'Lấy danh sách cảnh báo/lỗi từ Smartgen Cloud' },
@@ -785,8 +789,16 @@ async function runSmartGenTask(taskId, extraParams){
     const nWritten = Array.isArray(r.writtenSheet2) ? r.writtenSheet2.length : '—';
     const nErr = Array.isArray(r.errors) ? r.errors.length : 0;
     const bf = r.backfill || {};
-    toast(`✓ Smartgen xong · ${nOk} máy · Sheet 2: ${nWritten} · Sheet 5 điền mới ${bf.filled||0} ô, giữ nguyên ${bf.kept||0} ô · lỗi: ${nErr}`,
-          nErr ? 'err' : 'ok');
+    const sc = r.staleCleanup || {};
+    const hl = r.holes || {};
+    if (taskId === 'cleanupSheet5'){
+      toast(`✓ Đã dọn ${sc.cleared||0} ô rác${sc.fromDay?` (từ ngày ${sc.fromDay})`:''} · còn ${hl.holes||0} ô trống ở ${hl.machines||0} máy`, 'ok');
+    } else {
+      toast(`✓ Smartgen xong · ${nOk} máy · Sheet 2: ${nWritten} · Sheet 5 điền mới ${bf.filled||0} ô, giữ nguyên ${bf.kept||0} ô · lỗi: ${nErr}`,
+            nErr ? 'err' : 'ok');
+      if (sc.cleared) toast(`🧹 Đã dọn ${sc.cleared} ô của tháng trước còn sót từ ngày ${sc.fromDay} trở đi`,'ok');
+      if (hl.holes) toast(`⚠ Sheet 5 còn ${hl.holes} ô trống ở ${hl.machines} máy — Smartgen không có dữ liệu cho những ngày đó`,'err');
+    }
     if (r.rollover && r.rollover.rolled)
       toast(`✓ Đã chốt tháng ${r.rollover.from} và bắt đầu tháng ${r.rollover.to}`,'ok');
     if (r.rollover && r.rollover.error) toast('⚠ '+r.rollover.error,'err');
@@ -815,8 +827,30 @@ let _autoRunning = false;
 function startAutoRefresh(){ /* noop — tự đồng bộ theo sự kiện, không tick 20s nữa */ }
 function stopAutoRefresh(){ clearInterval(_autoTimer); _autoTimer = null; }
 async function silentReload(){ /* noop */ }
+/* Số việc đang chờ của BỘ ĐẾM bảo dưỡng (tab thứ 2 của trang "Theo dõi bảo dưỡng").
+ * Dữ liệu vật tư nạp bằng một lượt gọi riêng (loadQlvt), có thể xong trước hoặc sau
+ * bootstrap, nên giữ ở đây để bên nào xong trước cũng cập nhật được badge chung. */
+let _qBdAlertCount = 0;
+
 function updateSidebarBadges(){
-  const track$  = $('nb-track');  if (track$)  track$.textContent  = S.tracking.rows.length;
+  /* Badge "Theo dõi bảo dưỡng" = SỐ VIỆC CẦN XỬ LÝ, không phải tổng số máy.
+   * Trước đây badge này hiện 79 — tổng số dòng Sheet 2 — một con số gần như không bao giờ
+   * đổi nên không ai nhìn. Nay nó cộng: số hạng mục ở Sheet 2 đã tới ngưỡng (≤ 500 h) và số
+   * cảnh báo của bộ đếm theo giờ. Hai nguồn này giờ nằm chung 1 trang nên phải chung 1 số;
+   * để riêng thì lại quay về đúng cảnh 2 chỗ nói 2 kiểu mà việc gộp muốn dẹp. */
+  const trackHeaders = (S.tracking.headers||[]).filter(h=>h && /theo dõi[\s\/]*cảnh báo/i.test(h));
+  const trackWarn = S.tracking.rows.reduce((s,r)=>{
+    return s + trackHeaders.reduce((k,h)=>{
+      const n = Number(String(r[h]??'').replace(/,/g,'.'));
+      return k + ((!isNaN(n) && n<=500) ? 1 : 0);
+    },0);
+  },0);
+  const track$  = $('nb-track');
+  if (track$){
+    const n = trackWarn + _qBdAlertCount;
+    track$.textContent = n;
+    track$.style.display = n>0 ? '' : 'none';
+  }
   const alerts$ = $('nb-alerts'); if (alerts$) alerts$.textContent = S.alerts.total;
   const filterWarn = S.tracking.rows.reduce((s,r)=>{
     const n = Number(r._byLetter?.L);
@@ -838,6 +872,9 @@ function updateSidebarBadges(){
 function nav(page){
   // Trang "Định mức thiết kế" đã gộp vào "Danh sách & Định mức máy" — mọi lối vào cũ đổi hướng
   if (page === 'design'){ S.filters.machineTab = 'design'; page = 'master'; }
+  /* "Bộ đếm bảo dưỡng" đã gộp vào "Theo dõi bảo dưỡng" thành tab thứ 2. Giữ lối vào cũ để
+   * mọi nút/link đang trỏ tới 'bdcounter' ở nơi khác trong app vẫn chạy, không phải sửa lan. */
+  if (page === 'bdcounter'){ S.filters.trackingTab = 'counter'; page = 'tracking'; }
   document.querySelectorAll('.nitem').forEach(n => n.classList.toggle('on', n.dataset.page===page));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   const el = $('pg-'+page); if (!el) return;
@@ -886,7 +923,6 @@ function _renderPageInner_(p, el){
     case 'efficiency': el.innerHTML = viewEfficiency(); afterEfficiency(); break;
     case 'master':   el.innerHTML = viewMaster(); afterMaster(); break;
     case 'spec':     el.innerHTML = viewSpec(); break;
-    case 'bdcounter':el.innerHTML = viewBdCounter(); break;
     case 'stock':    el.innerHTML = viewStock(); break;
     case 'matcost':  el.innerHTML = viewMatCost(); afterMatCost(); break;
     case 'sim':      el.innerHTML = viewSim(); break;
@@ -1325,6 +1361,7 @@ function computeDailyTotals_(filteredMasterRows){
   const codes = new Set(filteredMasterRows.map(r => String(r._byLetter.B||'').trim()));
 
   const nDays = Math.min(powerCols.length, hoursCols.length);
+  const maxValidDay = maxValidDayOfMonth_();
   const kwhByDay = Array(nDays).fill(0);
   const hoursByDay = Array(nDays).fill(0);
   const detailByDay = Array.from({length:nDays}, () => []);
@@ -1336,6 +1373,11 @@ function computeDailyTotals_(filteredMasterRows){
     designKwhPerDay += num(effRow[hKwTk]) || 0;
     designHoursPerDay += num(effRow[hHrTk]) || 0;
     for (let i=0;i<nDays;i++){
+      /* BỎ QUA NGÀY CHƯA TỚI. Cột của ngày mai trở đi mà vẫn có số thì đó là rác của tháng
+       * trước chưa được dọn — cộng vào sẽ thổi phồng "số ngày đã có dữ liệu" và kéo lệch mọi
+       * đường trung bình. Backend đã có clearStaleSheet5Cells_ dọn việc này, nhưng nó chỉ chạy
+       * lúc đồng bộ; chặn thêm ở đây để biểu đồ đúng ngay cả trong khoảng chờ giữa 2 lần chạy. */
+      if (i+1 > maxValidDay) continue;
       const p = num(effRow[powerCols[i].header]);
       const h = num(effRow[hoursCols[i].header]);
       if (p!=null) kwhByDay[i] += p;
@@ -1548,6 +1590,95 @@ function analysisComparisonHtml(totals, nMachines){
     </div>`;
 }
 
+/* ============================================================================
+ *  PHÁT HIỆN Ô TRỐNG TRONG SHEET 5
+ * ----------------------------------------------------------------------------
+ *  Điền bù chỉ vá được chỗ nào Smartgen có dữ liệu. Chỗ Smartgen cũng không có — máy mất
+ *  kết nối, sai unitId, mã máy lệch, máy mới lắp giữa tháng — thì im lặng trống. Tổng tháng
+ *  ở Sheet 9 vì thế thấp hơn thực tế mà không có dấu hiệu nào trên màn hình.
+ *
+ *  Bảng này biến chỗ trống đó thành con số nhìn thấy được, ngay cạnh biểu đồ mà nó làm sai
+ *  lệch. Chỉ tính tới HÔM NAY: ngày chưa tới không phải lỗ hổng.
+ * ========================================================================== */
+function scanDataGaps_(filteredMasterRows){
+  const eff = S.efficiency || {headers:[], rows:[]};
+  const H = eff.headers.filter(Boolean);
+  const hMa = findHeader(H, 'mã.?máy','ma may','^ma$');
+  const { powerCols, hoursCols } = getDailyColSplitForMonth_(H, getDaysInCurrentMonth_());
+  const maxDay = maxValidDayOfMonth_();
+  const nDays = Math.min(powerCols.length, hoursCols.length, maxDay);
+  const codes = new Set(filteredMasterRows.map(r => String(r._byLetter.B||'').trim()));
+
+  const isBlank = v => v === '' || v === null || v === undefined;
+  const rows = [];
+  let totalCells = 0;
+
+  eff.rows.forEach(effRow => {
+    const code = String(effRow[hMa]||effRow._byLetter?.B||'').trim();
+    if (!code || !codes.has(code)) return;
+    const missKwh = [], missHours = [];
+    for (let i=0;i<nDays;i++){
+      if (isBlank(effRow[powerCols[i].header])) missKwh.push(i+1);
+      if (isBlank(effRow[hoursCols[i].header])) missHours.push(i+1);
+    }
+    if (missKwh.length || missHours.length){
+      totalCells += missKwh.length + missHours.length;
+      rows.push({ code, missKwh, missHours });
+    }
+  });
+
+  // Máy thiếu nhiều nhất lên đầu — đó là chỗ đáng đi kiểm tra trước
+  rows.sort((a,b) => (b.missKwh.length+b.missHours.length) - (a.missKwh.length+a.missHours.length));
+  return { rows, totalCells, nDays, fullyMissing: rows.filter(r=>r.missKwh.length>=nDays).length };
+}
+
+/* Gom [1,2,3,7,9,10] thành "1-3, 7, 9-10" — đọc nhanh hơn nhiều so với liệt kê thô. */
+function rangeLabel_(days){
+  if (!days.length) return '—';
+  const parts = []; let s = days[0], p = days[0];
+  for (let i=1;i<=days.length;i++){
+    if (i<days.length && days[i] === p+1){ p = days[i]; continue; }
+    parts.push(s===p ? String(s) : `${s}-${p}`);
+    s = p = days[i];
+  }
+  return parts.join(', ');
+}
+
+function dataGapPanelHtml(filteredM){
+  const g = scanDataGaps_(filteredM);
+  if (!g.totalCells){
+    return `<div class="card" style="border-left:3px solid var(--grn)"><div class="cb" style="padding:10px 14px;font-size:12px">
+      ✅ Không có ô trống nào từ ngày 1 đến ngày ${g.nDays} — dữ liệu tháng này đã đủ.</div></div>`;
+  }
+  const show = S.filters.showGaps ? g.rows : g.rows.slice(0, 8);
+  return `
+    <div class="card" style="border-left:3px solid var(--amb)">
+      <div class="ch">
+        <h3>⚠ Ô còn trống trong Sheet 5 · tính tới ngày ${g.nDays}</h3>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span class="b ba">${g.totalCells} ô · ${g.rows.length} máy${g.fullyMissing?` · ${g.fullyMissing} máy trống cả tháng`:''}</span>
+          <button class="btn bg-gr sm" onclick="runSmartGenTask('syncSmartGenDaily')">⚡ Đồng bộ điền bù ngay</button>
+        </div>
+      </div>
+      <div class="cb">
+        <p style="font-size:11px;color:var(--mu);margin:0 0 8px">
+          Đồng bộ quét cả tháng và điền vào mọi ô trống, nhưng chỉ điền được khi Smartgen có số.
+          Máy trống cả tháng thường là do sai <b>Unit ID smartgen</b> ở Sheet 2 hoặc máy chưa kết nối.
+        </p>
+        <div class="tw" style="max-height:40vh"><table>
+          <thead><tr><th>Mã máy</th><th>Ngày thiếu điện phát</th><th>Ngày thiếu giờ chạy</th></tr></thead>
+          <tbody>${show.map(r=>`<tr>
+            <td><span class="mm">${esc(r.code)}</span></td>
+            <td style="font-size:11px">${r.missKwh.length?`<span class="b ba">${r.missKwh.length}</span> ${esc(rangeLabel_(r.missKwh))}`:'<span style="color:var(--mu)">đủ</span>'}</td>
+            <td style="font-size:11px">${r.missHours.length?`<span class="b ba">${r.missHours.length}</span> ${esc(rangeLabel_(r.missHours))}`:'<span style="color:var(--mu)">đủ</span>'}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+        ${g.rows.length > show.length ? `<button class="btn bg-gr sm" style="margin-top:8px"
+           onclick="S.filters.showGaps=true;renderPage('analysis')">Xem hết ${g.rows.length} máy</button>` : ''}
+      </div>
+    </div>`;
+}
+
 function viewAnalysis(){
   const filteredM = applyAnalysisFilters_(S.master.rows);
   const totals = computeDailyTotals_(filteredM);
@@ -1599,6 +1730,8 @@ function viewAnalysis(){
     </div>
 
     ${analysisComparisonHtml(totals, filteredM.length)}
+
+    ${dataGapPanelHtml(filteredM)}
 
     <div class="card">
       <div class="ch">
@@ -2663,7 +2796,35 @@ function openMasterEdit(maCode){ openMachineForm(maCode); }
  *  Chỉ đọc trên bảng · click ✎ Cập nhật để mở form nhập "Thời điểm…"
  *  Hao nhớt (cột AE, header có chứa "hao nhớt") · so với Sheet 4 cột K
  * ============================================================ */
+/* ============================================================================
+ *  THEO DÕI BẢO DƯỠNG — trang gộp
+ * ----------------------------------------------------------------------------
+ *  Trước đây có 2 trang riêng cho cùng một việc: "Theo dõi bảo dưỡng" đọc thẳng Sheet 2, và
+ *  "Bộ đếm bảo dưỡng" dựng thẻ từ ODO. Cùng một câu hỏi — máy nào sắp phải thay gì — mà phải
+ *  mở 2 chỗ, và 2 chỗ có thể nói khác nhau.
+ *
+ *  Nay gộp thành 1 trang 2 tab. Tab mặc định là BẢNG SHEET 2, vì đó là bảng ngang mỗi máy 1
+ *  dòng: khi web sập thì mở thẳng Google Sheet vẫn đọc được y hệt, không phụ thuộc trang này.
+ *  Tab bộ đếm giữ nguyên dạng thẻ, dùng khi cần nhìn thanh tiến độ % chu kỳ.
+ *
+ *  Nút "Báo đã bảo dưỡng" có mặt ở CẢ HAI tab và gọi cùng một hàm, nên dù đứng ở đâu cũng
+ *  ghi nhận được — không còn phải nhớ "việc này làm ở trang nào".
+ * ========================================================================== */
 function viewTracking(){
+  const tab = S.filters.trackingTab || 'sheet';
+  const tabBtn = (id, label, hint) => `<button class="fchip ${tab===id?'on':''}"
+      title="${esc(hint)}" onclick="S.filters.trackingTab='${id}';renderPage('tracking')">${label}</button>`;
+
+  const tabs = `
+    <div class="msg" style="margin-bottom:12px">
+      ${tabBtn('sheet','📋 Bảng theo dõi · Sheet 2','Bảng ngang mỗi máy 1 dòng, giống hệt Google Sheet — xem được cả khi web sập')}
+      ${tabBtn('counter','⏱ Bộ đếm theo giờ','Thẻ từng máy có thanh tiến độ % chu kỳ, tính từ ODO')}
+    </div>`;
+
+  return tabs + (tab === 'counter' ? viewBdCounter() : viewTrackingSheet());
+}
+
+function viewTrackingSheet(){
   const q = (S.filters.tracking||'').toLowerCase();
   const headers = S.tracking.headers.filter(x=>x);
   const warnHeaders = headers.filter(h=>/theo dõi[\s\/]*cảnh báo/i.test(h));
@@ -2687,13 +2848,24 @@ function viewTracking(){
     });
   });
 
+  /* HIỆN ĐỦ MỌI HẠNG MỤC, KHÔNG CẮT CÒN 4.
+   * Bản cũ dùng warnHeaders.slice(0,4) nên 6-7 hạng mục còn lại chỉ xem được bằng cách mở
+   * modal từng máy — đúng chỗ khiến việc "đọc tổng các mục trong 1 mã máy" trở nên khó.
+   * Bảng rộng hơn nhưng cuộn ngang được, và quan trọng hơn: nó khớp 1-1 với Sheet 2, nên
+   * thứ nhìn trên web và thứ nhìn trên Google Sheet là cùng một thứ. */
+  const shortName = h => h.replace(/theo dõi[\s\/]*cảnh báo/i,'').replace(/\s+/g,' ').trim();
+  const stat = n => n<=0 ? 'br' : (n<=500 ? 'ba' : 'bg');
+
   return `
     <div class="ph">
       <h1>Theo dõi hoạt động bảo dưỡng</h1>
-      <p>${S.tracking.rows.length} máy · ${warnHeaders.length} hạng mục cảnh báo · <b style="color:var(--red)">${warnCount.overdue}</b> quá hạn · <b style="color:var(--amb)">${warnCount.duesoon}</b> sắp đến hạn</p>
+      <p>${S.tracking.rows.length} máy · ${warnHeaders.length} hạng mục cảnh báo · <b style="color:var(--red)">${warnCount.overdue}</b> quá hạn · <b style="color:var(--amb)">${warnCount.duesoon}</b> sắp đến hạn
+        <br><span style="font-size:11px;color:var(--mu)">Số trong ô = số giờ máy chạy còn lại trước khi đến hạn · ≤ 0 là quá hạn · ≤ 500 h là sắp đến hạn</span></p>
     </div>
     <div class="fbar">
       <input class="si" id="trackingSearch" autocomplete="off" placeholder="🔍 Tìm mã máy, đơn vị, trại…" value="${esc(q)}" oninput="S.filters.tracking=this.value;renderPage('tracking')">
+      <button class="fchip ${S.filters.trackingOnlyWarn?'on':''}"
+        onclick="S.filters.trackingOnlyWarn=!S.filters.trackingOnlyWarn;renderPage('tracking')">⚠ Chỉ máy cần xử lý</button>
       <button class="btn bg-gr" onclick="exportCsv(roundedSheet_(S.tracking),'theo-doi-bao-duong')">⤓ CSV</button>
     </div>
     <div class="card"><div class="tw" style="max-height:70vh"><table>
@@ -2701,7 +2873,7 @@ function viewTracking(){
         <th>Mã máy</th>
         <th>Đơn vị · Trại</th>
         <th>Khu vực</th>
-        ${warnHeaders.slice(0,4).map(h=>`<th style="text-align:right">${esc(h.replace(/theo dõi[\s\/]*cảnh báo/i,'').trim())}</th>`).join('')}
+        ${warnHeaders.map(h=>`<th style="text-align:right" title="${esc(h)}">${esc(shortName(h))}</th>`).join('')}
         ${oilHeader?`<th style="text-align:right">${esc(oilHeader)}</th>`:''}
         <th></th>
       </tr></thead>
@@ -2709,11 +2881,13 @@ function viewTracking(){
         const code = String(r._byLetter[COL.MA]||'').trim();
         const m = mByCode.get(code);
         // Số đọc từ Google Sheet luôn hiển thị làm tròn 2 chữ số sau dấu phẩy (num2_)
-        const cells = warnHeaders.slice(0,4).map(h=>{
-          const n = num2_(r[h]);
-          if (n === null) return `<td style="text-align:right">${esc(r[h])}</td>`;
-          const cls = n<=0 ? 'br' : (n<=500 ? 'ba' : 'bg');
-          return `<td style="text-align:right"><span class="b ${cls}">${n} h</span></td>`;
+        const nums = warnHeaders.map(h => num2_(r[h]));
+        const worst = nums.filter(n=>n!==null).reduce((a,b)=>Math.min(a,b), Infinity);
+        if (S.filters.trackingOnlyWarn && !(worst <= 500)) return '';
+        const cells = warnHeaders.map((h,i)=>{
+          const n = nums[i];
+          if (n === null) return `<td style="text-align:right;color:var(--mu)">${esc(r[h])||'—'}</td>`;
+          return `<td style="text-align:right"><span class="b ${stat(n)}">${n}</span></td>`;
         }).join('');
         return `<tr>
           <td><span class="mm">${esc(code)}</span></td>
@@ -2721,7 +2895,11 @@ function viewTracking(){
           <td>${esc(m?(m._byLetter[COL.KHU]||''):'')}</td>
           ${cells}
           ${oilHeader?`<td style="text-align:right">${fmt2_(r[oilHeader])}</td>`:''}
-          <td><button class="btn bg-b sm" onclick="openTrackingEdit(${r._row})">✎ Cập nhật</button></td>
+          <td style="white-space:nowrap">
+            <button class="btn bg-b sm" onclick="openTrackingEdit(${r._row})">✎ Cập nhật</button>
+            <button class="btn bg-g sm" title="Ghi nhận đã bảo dưỡng — bộ đếm hạng mục đó về 0 và tự trừ kho tại trại"
+                    onclick="qOpenService('${esc(code)}','')">✓ Báo đã thay</button>
+          </td>
         </tr>`;
       }).join('') || '<tr><td colspan="99"><div class="empty">Không có bản ghi.</div></td></tr>'}</tbody>
     </table></div></div>
@@ -3613,6 +3791,13 @@ function numOrNull_(v){
 function getDaysInCurrentMonth_(){
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+}
+/* NGÀY CUỐI CÙNG TRONG THÁNG ĐƯỢC PHÉP CÓ SỐ LIỆU = hôm nay.
+ * Ngày mai trở đi chưa xảy ra, nên bất kỳ số nào nằm ở đó đều là dữ liệu tháng trước còn sót.
+ * Hôm nay vẫn tính vì vận hành có thể nhập tay trước khi Smartgen chốt lúc gần nửa đêm. */
+function maxValidDayOfMonth_(){
+  const now = new Date();
+  return Math.min(now.getDate(), getDaysInCurrentMonth_());
 }
 function getDailyColSplitForMonth_(headers, daysInMonth){
   const { powerCols, hoursCols } = getDailyColSplit_(headers);
@@ -5750,7 +5935,14 @@ function qUpdateBadges_(){
   const nBd = (Q.alerts.maintenance||[]).length;
   const nSt = (Q.alerts.stock||[]).length;
   const nSim= (Q.alerts.sim||[]).length;
-  set('nb-bd', nBd, nBd>0);
+  /* Badge "Bộ đếm bảo dưỡng" cũ đã không còn mục riêng trên sidebar. Số việc của bộ đếm nay
+   * cộng vào badge "Theo dõi bảo dưỡng" — cùng một trang thì phải cùng một con số, nếu để
+   * riêng thì lại quay về đúng cái cảnh 2 chỗ nói 2 kiểu mà việc gộp này muốn dẹp. */
+  _qBdAlertCount = nBd;
+  /* loadQlvt() chạy song song với bootstrap và có thể xong TRƯỚC. Lúc đó S.master còn rỗng
+   * nên các hàm thống kê bên trong updateSidebarBadges có thể ném lỗi — nuốt lại ở đây, vì
+   * badge sai một nhịp là chuyện nhỏ, còn ném lỗi giữa chừng sẽ chặn 2 badge phía dưới. */
+  try { updateSidebarBadges(); } catch (e) { /* bootstrap chưa xong — lần gọi sau sẽ đúng */ }
   set('nb-stock', nSt, nSt>0);
   set('nb-sim', nSim, nSim>0);
 }
@@ -5797,9 +5989,9 @@ function viewBdCounter(){
   const nMissCfg = (Q.alerts.config||[]).length;
 
   const chip = (key,label,n,cls) => `<button class="fchip ${Q.f.bdStatus===key?'on':''}"
-      onclick="Q.f.bdStatus=(Q.f.bdStatus==='${key}'?'':'${key}');renderPage('bdcounter')">${label} · ${n}</button>`;
+      onclick="Q.f.bdStatus=(Q.f.bdStatus==='${key}'?'':'${key}');renderPage('tracking')">${label} · ${n}</button>`;
   const rchip = v => `<button class="fchip ${rSet.has(v)?'on':''}"
-      onclick="qToggle(Q.f.bdRegion,'${v}');renderPage('bdcounter')">${v}</button>`;
+      onclick="qToggle(Q.f.bdRegion,'${v}');renderPage('tracking')">${v}</button>`;
 
   return `
     <div class="ph">
@@ -5826,8 +6018,8 @@ function viewBdCounter(){
       </div>
       <div class="msg">
         <input class="si" style="flex:1" placeholder="🔍 Tìm mã máy, đơn vị, trại…" value="${esc(Q.f.bd)}"
-               oninput="Q.f.bd=this.value;renderPage('bdcounter')">
-        <button class="btn bg-gr sm" onclick="Q.f.bd='';Q.f.bdStatus='';Q.f.bdRegion.clear();renderPage('bdcounter')">↺ Bỏ lọc</button>
+               oninput="Q.f.bd=this.value;renderPage('tracking')">
+        <button class="btn bg-gr sm" onclick="Q.f.bd='';Q.f.bdStatus='';Q.f.bdRegion.clear();renderPage('tracking')">↺ Bỏ lọc</button>
         <button class="btn bg-gr sm" onclick="qRebuild()">⟳ Tính lại</button>
       </div>
     </div>
@@ -5989,7 +6181,7 @@ async function qSubmitService(code){
   if (!d || !d.ok){ toast((d&&d.error)||'Ghi nhận thất bại','err'); return; }
   closeOv();
   await loadQlvt();
-  renderPage('bdcounter');
+  renderPage('tracking');
   toast(`Đã ghi ${items.length} hạng mục cho ${code} · bộ đếm về 0`,'ok');
 }
 
