@@ -587,6 +587,7 @@ function computeClientAlerts(){
   const hdrs = S.tracking.headers.filter(Boolean);
   const warnHeaders = hdrs.filter(h => /theo dõi[\s\/]*cảnh báo/i.test(h));
   const oilHeader   = hdrs.find(h => /hao nhớt/i.test(h));
+  const hatLoc      = bdHatLocItem_();
 
   // Xây map Mã máy → thông tin master (đơn vị, trại, khu vực, vận hành, SĐT)
   const mByCode = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA]||'').trim(), m]));
@@ -650,6 +651,23 @@ function computeClientAlerts(){
         row: r._row, remain: st.remain, bdMa: it.ma, used: st.n, cycle: st.cyc
       });
     });
+
+    /* HOÀN NGUYÊN / THAY HẠT LỌC — ngưỡng riêng từng máy ở cột J, không phải Sheet 3. */
+    if (hatLoc){
+      const hl = bdHatLoc_(r);
+      if (hl.kind === 'overdue' || hl.kind === 'soon'){
+        alerts.push({
+          type: hl.kind === 'overdue' ? 'overdue' : 'due-soon',
+          maCode:code, region, site, operator:oper, phone,
+          field: hatLoc.ten, bdMa: BD_MA_HATLOC,
+          message: hl.kind === 'overdue'
+            ? `Đã chạy ${fmt2_(hl.n)} h / thời hạn ${nfd_(hl.limit)} h — quá ${fmt2_(Math.abs(hl.remain))} h`
+            : `Đã chạy ${fmt2_(hl.n)} h / thời hạn ${nfd_(hl.limit)} h — còn ${fmt2_(hl.remain)} h`,
+          severity: hl.kind === 'overdue' ? 'high' : 'med',
+          row: r._row, remain: hl.remain, used: hl.n, cycle: hl.limit
+        });
+      }
+    }
 
     // Cảnh báo hao nhớt
     if (oilHeader){
@@ -1277,7 +1295,9 @@ function alertFieldKey_(a){
 function alertFieldCatalog_(){
   const out = BD.items().filter(it => it.dangDung)
     .map(it => ({ key: it.ma, label: it.ten, ma: it.ma }));
-  out.push({ key:'__HATLOC__', label:'Hoàn nguyên hạt lọc', ma:'(Sheet 4)' });
+  const hl = bdHatLocItem_();
+  out.push({ key:BD_MA_HATLOC, label: hl ? hl.ten : 'Hoàn nguyên / thay hạt lọc',
+             ma:'ngưỡng riêng từng máy · cột J Sheet 2 + "4. Data thay lọc"' });
   out.push({ key:'__OIL__',    label:'Hao nhớt',            ma:'(Sheet 2 · cột hao nhớt)' });
   return out;
 }
@@ -1615,7 +1635,13 @@ function machineAlertCard(group){
   const region = a.region || '';
   const kinds = new Set(items.map(i => i.kind || 'tracking'));
   const actions = [];
-  if (kinds.has('tracking')) actions.push(`<button class="btn bg-g sm" onclick="openTrackingEdit(${a.row})">Xử lý bảo dưỡng</button>`);
+  /* "Xử lý bảo dưỡng" mở modal BÁO ĐÃ LÀM (ghi nhật ký Sheet 12 + trừ kho), không mở
+   * form sửa ô thô nữa: sửa ô là thao tác của người biết mình đang sửa cái gì, còn từ
+   * trang cảnh báo thì việc cần làm là ghi nhận đã xử lý. Nút sửa mốc vẫn còn ngay
+   * cạnh cho trường hợp cần chỉnh tay. */
+  if (kinds.has('tracking')) actions.push(
+    `<button class="btn bg-g sm" onclick="bdOpenService('${esc(a.maCode)}')">✓ Xử lý bảo dưỡng</button>`,
+    `<button class="btn bg-gr sm" onclick="openTrackingEdit(${a.row})">✎ Sửa mốc</button>`);
   if (kinds.has('efficiency')) actions.push(`<button class="btn bg-b sm" onclick="openEfficiencyEditByCode('${esc(a.maCode)}')">✎ Sửa dữ liệu ngày</button>`);
   return `
     <div class="alist ${hasHigh?'high':''}" style="align-items:stretch">
@@ -3360,6 +3386,36 @@ function bdHatLoc_(t){
   if (n >= limit - truoc) return { kind:'soon', n, limit, remain };
   return { kind:'ok', n, limit, remain };
 }
+/* ----------------------------------------------------------------------------
+ *  HẠNG MỤC ẢO "__HATLOC__"
+ * ----------------------------------------------------------------------------
+ *  Hoàn nguyên/thay hạt lọc KHÔNG nằm ở "3. Định mức bảo dưỡng" và cố ý không nên
+ *  nằm ở đó: chu kỳ của nó suy từ lưu lượng khí (m³) nên MỖI MÁY MỘT SỐ, còn Sheet 3
+ *  chỉ có một chu kỳ cho mỗi hạng mục. Ngưỡng riêng đã nằm sẵn ở cột J của từng dòng
+ *  Sheet 2.
+ *
+ *  Nhưng "không nằm trong sổ hạng mục" đã bị hiểu nhầm thành "không phải việc bảo
+ *  dưỡng": 34 máy quá hạn hoàn nguyên nằm im ở trang Data thay lọc, không lọt vào
+ *  Cảnh báo, không có trong modal xử lý. Người vận hành phải nhớ mở thêm một trang
+ *  nữa mới thấy — mà thứ phải nhớ mới thấy thì sớm muộn cũng quên.
+ *
+ *  Hàm này dựng một hạng mục ẢO mang đủ hình dáng của item Sheet 3, để mọi nơi
+ *  (cảnh báo, modal xử lý, chip lọc) dùng chung một đường đi. chuKy để null vì nó
+ *  nằm ở từng dòng, không phải một hằng số — bdHatLoc_() lo phần so ngưỡng.
+ * -------------------------------------------------------------------------- */
+const BD_MA_HATLOC = '__HATLOC__';
+function bdHatLocItem_(){
+  const H = S.tracking.headers.filter(Boolean);
+  const colJ = H.find(h => /th[ờo]i\s*h[ạa]n/i.test(h)      && /ho[àa]n\s*nguy[êe]n/i.test(h));
+  const colT = H.find(h => /th[ờo]i\s*[đd]i[ểe]m/i.test(h)  && /ho[àa]n\s*nguy[êe]n/i.test(h));
+  const colW = H.find(h => /theo\s*d[õo]i/i.test(h)         && /ho[àa]n\s*nguy[êe]n/i.test(h));
+  const thap = H.filter(h => /th[áa]p\s*l[ọo]c/i.test(h));
+  if (!colT || !colW) return null;
+  return { ma:BD_MA_HATLOC, ten:'Hoàn nguyên / thay hạt lọc', nhom:'Tháp lọc',
+           colJ, colT, colW, thap, vt:'', sl:null,
+           chuKy:null, canhBao:null, apDung:'*', dangDung:true, batBuoc:false, thuTu:900 };
+}
+
 /** Đếm số máy cần xử lý hoàn nguyên — dùng cho badge "Data thay lọc". */
 function bdHatLocWarnCount_(){
   return S.tracking.rows.reduce((s, t) => {
@@ -7399,6 +7455,53 @@ function bdOpenService(code){
   const odo = row ? bdN_(row[odoH]) : null;
   const items = BD.active().filter(it => BD.applies(it, code));
 
+  /* Hạt lọc đứng cùng chỗ với các hạng mục khác, không tách sang trang riêng: người
+   * đi trại làm một lượt thì phải ghi được một lượt. Nó có thêm 2 ô trạng thái tháp
+   * lọc vì "hoàn nguyên" và "thay mới" là hai việc khác nhau về chi phí, mà cột
+   * "Thời điểm…" thì không phân biệt được — trạng thái tháp mới là chỗ ghi điều đó. */
+  const hatLoc = bdHatLocItem_();
+  const hlSt = (hatLoc && row) ? bdHatLoc_(row) : { kind:'na', n:null, limit:null, remain:null };
+  const hlChip = (() => {
+    if (!hatLoc) return '';
+    if (hlSt.kind === 'overdue') return `<span class="b br">quá ${nfd_(Math.abs(hlSt.remain))} h</span>`;
+    if (hlSt.kind === 'soon')    return `<span class="b ba">còn ${nfd_(hlSt.remain)} h</span>`;
+    if (hlSt.kind === 'ok')      return `<span class="b bg">còn ${nfd_(hlSt.remain)} h</span>`;
+    if (hlSt.kind === 'nobase')  return '<span class="b bmu">chưa có mốc</span>';
+    if (hlSt.kind === 'nocycle') return '<span class="b bmu">chưa có thời hạn (cột J)</span>';
+    return '<span class="b bmu">—</span>';
+  })();
+  const hlSel = (n) => {
+    const h = hatLoc && hatLoc.thap[n-1];
+    const cur = (h && row) ? String(row[h]||'').trim() : '';
+    return `<select class="sel" id="bd_thap${n}" style="width:100%">
+        <option value="">— giữ nguyên${cur?' ('+esc(cur)+')':''} —</option>
+        ${THAP_LOC_OPTIONS.map(o=>`<option value="${esc(o)}">${esc(o)}${cur.toLowerCase()===o.toLowerCase()?' · đang là trạng thái này':''}</option>`).join('')}
+      </select>`;
+  };
+  const hlBlock = !hatLoc ? '' : `
+      <div class="fsec">
+        <div class="fsh" style="background:linear-gradient(90deg,#eff6ff,#fff)">
+          <div class="fsn" style="background:var(--bl)">3</div>
+          <div class="fst">Hoàn nguyên / thay hạt lọc · ngưỡng riêng của máy này</div>
+        </div>
+        <div style="padding:8px 10px;border-bottom:1px solid var(--bd)">
+          <label style="display:flex;gap:10px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="bd_it_${BD_MA_HATLOC}" ${hlSt.kind==='overdue'?'checked':''}>
+            <div style="flex:1">
+              <div style="font-size:12px;font-weight:600">Đã hoàn nguyên / thay hạt lọc ${hlChip}</div>
+              <div style="font-size:10px;color:var(--mu)">
+                ${hlSt.n!=null?`đã chạy ${nfd_(hlSt.n)} h`:'chưa có số liệu'}${hlSt.limit?` · thời hạn ${nfd_(hlSt.limit)} h`:''}
+                · tích vào đây thì mốc ở cột “${esc(hatLoc.colT)}” nhảy lên bằng ODO
+              </div>
+            </div>
+          </label>
+        </div>
+        <div class="fgrid fg2" style="padding:10px">
+          <div class="iw"><div class="il">${esc(hatLoc.thap[0]||'Tháp lọc số 1')}</div>${hlSel(1)}</div>
+          <div class="iw"><div class="il">${esc(hatLoc.thap[1]||'Tháp lọc số 2')}</div>${hlSel(2)}</div>
+        </div>
+      </div>`;
+
   openOv(`
     <div class="mh">
       <div><h2>✓ Báo đã bảo dưỡng · ${codeFarmLine_(code)}</h2>
@@ -7438,8 +7541,9 @@ function bdOpenService(code){
           }).join('') || '<div class="empty">Không có hạng mục nào áp dụng cho máy này.</div>'}
         </div>
       </div>
+      ${hlBlock}
       <div class="fsec">
-        <div class="fsh"><div class="fsn">3</div><div class="fst">Ghi chú</div></div>
+        <div class="fsh"><div class="fsn">${hatLoc?4:3}</div><div class="fst">Ghi chú</div></div>
         <div class="iw"><input class="inp" id="bd_ghichu" placeholder="VD: thay kèm gioăng, nhớt còn đen…"></div>
       </div>
     </div>
@@ -7448,6 +7552,7 @@ function bdOpenService(code){
       <button class="btn bg-g" onclick="bdSaveService('${esc(code)}')">💾 Ghi nhận</button>
     </div>`);
   window._bdServiceItems = items.map(it => it.ma);
+  window._bdHasHatLoc = !!hatLoc;
 }
 
 async function bdSaveService(code){
@@ -7456,6 +7561,21 @@ async function bdSaveService(code){
     .map(ma => ({ ma,
       sl: $('bd_sl_'+ma) ? $('bd_sl_'+ma).value : '',
       loai: $('bd_loai_'+ma) ? $('bd_loai_'+ma).value : 'Bảo dưỡng định kỳ' }));
+
+  /* Hạt lọc đi cùng lô, không gửi request riêng: hai request thì có thể cái trước
+   * thành công cái sau hỏng, và người dùng không biết mình đang ở trạng thái nào. */
+  if (window._bdHasHatLoc){
+    const el = $('bd_it_'+BD_MA_HATLOC);
+    const t1 = $('bd_thap1') ? $('bd_thap1').value : '';
+    const t2 = $('bd_thap2') ? $('bd_thap2').value : '';
+    if (el && el.checked){
+      picked.push({ ma:BD_MA_HATLOC, loai:'Thay thế', thap1:t1, thap2:t2 });
+    } else if (t1 || t2){
+      toast('Đã chọn trạng thái tháp lọc — hãy tích ô “Đã hoàn nguyên / thay hạt lọc” để ghi nhận','err');
+      return;
+    }
+  }
+
   if (!picked.length){ toast('Chưa chọn hạng mục nào','err'); return; }
   await bdPostService_(code, picked, 'web:bao-da-bao-duong');
 }
