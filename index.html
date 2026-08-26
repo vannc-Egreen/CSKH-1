@@ -1323,6 +1323,9 @@ function viewAlerts(){
        ${dim&&!on?'style="opacity:.45"':''} onclick="${onclick}">${esc(label)}${cnt!=null?` (${nint_(cnt)})`:''}</button>`;
 
   const TYPES = [['overdue','Quá hạn'],['due-soon','Sắp đến hạn'],['oil-high','Hao nhớt'],['data-anomaly','Dữ liệu bất thường']];
+  /* Ô đã xác nhận KHÔNG còn được đếm là cảnh báo, nhưng phải vào tra cứu được —
+   * nếu chip về 0 mà không nói gì thì người dùng tưởng dữ liệu biến mất. */
+  const nOkAll = ((Q.anomalyOk && Q.anomalyOk.keys) || []).length;
   const fields = alertFieldCatalog_();
   const nFilters = fT.size + fR.size + fF.size + fC.size;
   const showAnomalyTable = fT.size === 1 && fT.has('data-anomaly');
@@ -1344,7 +1347,8 @@ function viewAlerts(){
     <div class="fbar">
       <span class="mslbl">Loại</span>
       ${chip(!fT.size,'Tất cả', all.filter(a=>inRegion(a)&&inField(a)&&inCat(a)).length, "clearAlertSet('alerts')")}
-      ${TYPES.map(([id,lb]) => chip(fT.has(id), lb, cType(id), `toggleAlertSet('alerts','${id}')`)).join('')}
+      ${TYPES.map(([id,lb]) => chip(fT.has(id), lb, cType(id), `toggleAlertSet('alerts','${id}')`,
+          id==='data-anomaly' && nOkAll ? nOkAll + ' ô đã xác nhận đúng — không tính là cảnh báo, bấm vào để tra cứu' : '')).join('')}
       ${nFilters ? `<button class="btn bg-gr sm" style="margin-left:8px" onclick="resetAlertFilters()">↺ Bỏ hết bộ lọc</button>` : ''}
     </div>
 
@@ -1406,11 +1410,21 @@ function effMonthKey_(){
   const n = new Date();
   return n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0');
 }
+/** 'yyyy-MM' — bản sao của _thangKey_() ở QLVT.gs. Xem giải thích ở đó (Sheets tự
+ *  đổi "2026-08" thành ngày 01/08/2026, đọc lên là Date chứ không phải chuỗi). */
+function _thangKey_(v){
+  if (v instanceof Date) return v.getFullYear() + '-' + String(v.getMonth()+1).padStart(2,'0');
+  const s = String(v == null ? '' : v).trim();
+  const m = /^(\d{4})[-\/.](\d{1,2})/.exec(s);
+  return m ? (m[1] + '-' + m[2].padStart(2,'0')) : s;
+}
 /** Khoá 1 ô bất thường — BẢN SAO của anomalyKey_() trong QLVT.gs. Sửa 1 phải sửa 2. */
 function anomalyKey_(code, thang, ngay, chiSo, giaTri){
   const n = numOrNull_(giaTri);
   const g = (n === null) ? '' : String(Math.round(n*100)/100);
-  return [String(code||'').trim().toUpperCase(), String(thang||''), String(ngay||''), String(chiSo||''), g].join('|');
+  const d = numOrNull_(ngay);
+  return [String(code||'').trim().toUpperCase(), _thangKey_(thang),
+          (d === null ? '' : String(d)), String(chiSo||''), g].join('|');
 }
 /** Giá trị hiện tại của ô mà cảnh báo đang trỏ tới. */
 function anomalyValue_(a){
@@ -1471,7 +1485,9 @@ function dataAnomalyTableHtml(list){
     </div>`;
 
   if (!rows.length) return head + `<div class="empty"><div class="ei">✅</div>${
-    showOk ? 'Chưa xác nhận mục nào.' : 'Không có cảnh báo dữ liệu bất thường.'}</div>`;
+    showOk ? 'Chưa xác nhận mục nào.'
+           : 'Không còn cảnh báo dữ liệu bất thường nào cần xử lý.' +
+             (nOk ? `<div style="font-size:11px;color:var(--mu);margin-top:6px">${nint_(nOk)} ô đã được xác nhận là đúng thực tế — bấm nút phía trên để tra cứu hoặc bỏ xác nhận.</div>` : '')}</div>`;
 
   const sorted = rows.slice().sort((a,b)=>
     (a.severity==='high'?0:1)-(b.severity==='high'?0:1) || String(a.maCode).localeCompare(String(b.maCode)) || a.day-b.day);
