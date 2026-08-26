@@ -456,6 +456,15 @@ function nfmt_(v, dec){
   const d = (dec === undefined || dec === null) ? NUM_DECIMALS : dec;
   return n.toLocaleString('en-US', { minimumFractionDigits:d, maximumFractionDigits:d });
 }
+/* SỐ ĐẾM — luôn nguyên, không bao giờ có phần thập phân.
+ * nfmt_() mặc định 2 số lẻ vì nó sinh ra để hiển thị GIỜ CHẠY (246,3 h). Đem dùng
+ * cho số đếm thì ra "169.00 cảnh báo" — vô nghĩa, vì không có 0,5 cái cảnh báo.
+ * Tách riêng hàm này để chỗ nào đếm thì gọi đúng hàm, khỏi phải nhớ truyền dec=0. */
+function nint_(v){
+  const n = (typeof v === 'number') ? v : Number(String(v == null ? '' : v).trim().replace(/,/g,'.'));
+  if (!isFinite(n)) return '0';
+  return Math.round(n).toLocaleString('en-US');
+}
 /* Số + gạch ngang khi không có dữ liệu — dạng dùng nhiều nhất trong ô bảng. */
 function nfd_(v, dec, dash){
   const s = nfmt_(v, dec);
@@ -1311,7 +1320,7 @@ function viewAlerts(){
 
   const chip = (on, label, cnt, onclick, title, dim) =>
     `<button class="fchip ${on?'on':''}" ${title?`title="${esc(title)}"`:''}
-       ${dim&&!on?'style="opacity:.45"':''} onclick="${onclick}">${esc(label)}${cnt!=null?` (${nfmt_(cnt)})`:''}</button>`;
+       ${dim&&!on?'style="opacity:.45"':''} onclick="${onclick}">${esc(label)}${cnt!=null?` (${nint_(cnt)})`:''}</button>`;
 
   const TYPES = [['overdue','Quá hạn'],['due-soon','Sắp đến hạn'],['oil-high','Hao nhớt'],['data-anomaly','Dữ liệu bất thường']];
   const fields = alertFieldCatalog_();
@@ -1327,7 +1336,7 @@ function viewAlerts(){
 
   return `
     <div class="ph"><h1>Cảnh báo bảo dưỡng</h1>
-      <p>Tổng ${nfmt_(all.length)} cảnh báo · lọc: ${nfmt_(list.length)} · <b>${nfmt_(machineList.length)}</b> máy
+      <p>Tổng ${nint_(all.length)} cảnh báo · lọc: ${nint_(list.length)} · <b>${nint_(machineList.length)}</b> máy
         ${tomTat ? '<br><span style="font-size:11px">' + tomTat + '</span>' : ''}
         <br><span style="font-size:11px;color:var(--mu)">Chọn được nhiều mục trong cùng một hàng — bấm lại để bỏ chọn.</span></p>
     </div>
@@ -1370,11 +1379,11 @@ function anomalyCatChipsHtml_(pool){
   const chips = ANOMALY_CATS
     .map(c => `<button class="fchip ${cur.has(c.id)?'on':''}" title="${esc(c.hint)}"
         ${cnt(c.id)===0&&!cur.has(c.id)?'style="opacity:.45"':''}
-        onclick="toggleAlertSet('anomalyCat','${esc(c.id)}')">${esc(c.label)} (${nfmt_(cnt(c.id))})</button>`)
+        onclick="toggleAlertSet('anomalyCat','${esc(c.id)}')">${esc(c.label)} (${nint_(cnt(c.id))})</button>`)
     .join('');
   return `<div class="fbar">
     <span class="mslbl">Nhóm lỗi</span>
-    <button class="fchip ${!cur.size?'on':''}" onclick="clearAlertSet('anomalyCat')">Tất cả (${nfmt_(pool.length)})</button>
+    <button class="fchip ${!cur.size?'on':''}" onclick="clearAlertSet('anomalyCat')">Tất cả (${nint_(pool.length)})</button>
     ${chips}
   </div>`;
 }
@@ -1432,17 +1441,31 @@ function dataAnomalyTableHtml(list){
     : list;
 
   const nOk = ((Q.anomalyOk && Q.anomalyOk.keys) || []).length;
+
+  /* MỘT Ô CÓ THỂ SINH NHIỀU DÒNG CẢNH BÁO. Ngày 2 của NS150KVA7 vừa "vượt 150%
+   * thiết kế" vừa "đột biến so với ngày trước" → 2 dòng, nhưng chỉ là 1 ô số liệu.
+   * Xác nhận là xác nhận CON SỐ, nên 2 dòng đó dùng chung 1 khoá và tắt cùng lúc.
+   * Vì vậy nút phải đếm theo Ô, không theo dòng — bản trước ghi "Chọn hết (169)"
+   * rồi nút duyệt hiện 163, người dùng tưởng mất 6 dòng.
+   *
+   * Danh sách khoá lấy từ ĐÚNG rows đang hiển thị, nên "Chọn hết" tôn trọng cả bộ
+   * lọc khu vực lẫn nhóm lỗi đang bật — không quét bừa toàn bộ cảnh báo. */
+  const keysShown = [...new Set(rows.map(anomalyKeyOf_))];
+  window._anomalyKeysShown = keysShown;
+  const nPickShown = keysShown.filter(k => pick.has(k)).length;
+
   const head = `<div class="fbar" style="justify-content:space-between">
       <div>
         <button class="fchip ${showOk?'on':''}" onclick="S.filters.anomalyShowOk=!S.filters.anomalyShowOk;S.filters.anomalyPick.clear();renderPage('alerts')">
-          ${showOk?'← Về danh sách cần xử lý':`👁 Xem ${nfmt_(nOk)} mục đã xác nhận`}</button>
+          ${showOk?'← Về danh sách cần xử lý':`👁 Xem ${nint_(nOk)} ô đã xác nhận`}</button>
+        ${rows.length ? `<span style="font-size:11px;color:var(--mu);margin-left:10px">${nint_(rows.length)} dòng cảnh báo · ${nint_(keysShown.length)} ô số liệu${rows.length!==keysShown.length?' (một ô có thể vướng nhiều lỗi)':''}</span>`:''}
       </div>
       <div>
         ${rows.length ? `
-          <button class="btn bg-gr sm" onclick="anomalyPickAll(${showOk})">${pick.size?'Bỏ chọn hết':'Chọn hết ('+nfmt_(rows.length)+')'}</button>
+          <button class="btn bg-gr sm" onclick="anomalyPickAll()">${nPickShown?'Bỏ chọn hết':'Chọn hết ('+nint_(keysShown.length)+' ô)'}</button>
           ${showOk
-            ? `<button class="btn bg-r sm" ${pick.size?'':'disabled'} onclick="anomalySubmit(true)">↩ Bỏ xác nhận (${nfmt_(pick.size)})</button>`
-            : `<button class="btn bg-g sm" ${pick.size?'':'disabled'} onclick="anomalySubmit(false)">✓ Xác nhận đúng (${nfmt_(pick.size)})</button>`}
+            ? `<button class="btn bg-r sm" ${nPickShown?'':'disabled'} onclick="anomalySubmit(true)">↩ Bỏ xác nhận (${nint_(nPickShown)} ô)</button>`
+            : `<button class="btn bg-g sm" ${nPickShown?'':'disabled'} onclick="anomalySubmit(false)">✓ Xác nhận đúng (${nint_(nPickShown)} ô)</button>`}
         ` : ''}
       </div>
     </div>`;
@@ -1510,14 +1533,12 @@ function anomalyTogglePick(k){
   if (s.has(k)) s.delete(k); else s.add(k);
   renderPage('alerts');
 }
-function anomalyPickAll(showOk){
+/** Chọn / bỏ chọn đúng những ô ĐANG HIỂN THỊ (đã qua mọi bộ lọc). */
+function anomalyPickAll(){
   const s = S.filters.anomalyPick;
-  if (s.size){ s.clear(); renderPage('alerts'); return; }
-  const ok = anomalyOkSet_();
-  const src = showOk
-    ? computeDataAnomalies({ includeApproved:true }).filter(a => ok.has(anomalyKeyOf_(a)))
-    : (S.alerts.alerts||[]).filter(a => a.type==='data-anomaly');
-  src.forEach(a => s.add(anomalyKeyOf_(a)));
+  const keys = window._anomalyKeysShown || [];
+  if (keys.some(k => s.has(k))) keys.forEach(k => s.delete(k));
+  else keys.forEach(k => s.add(k));
   renderPage('alerts');
 }
 async function anomalySubmitOne(k, unapprove){
@@ -3221,9 +3242,9 @@ function viewTrackingSheet(){
     <div class="ph">
       <h1>Theo dõi hoạt động bảo dưỡng</h1>
       <p>${S.tracking.rows.length} máy · ${items.length} hạng mục ·
-        <b style="color:var(--red)">${nfmt_(cnt.overdue)}</b> quá hạn ·
-        <b style="color:var(--amb)">${nfmt_(cnt.soon)}</b> sắp đến hạn ·
-        <b style="color:var(--mu)">${nfmt_(cnt.nobase)}</b> chưa có mốc
+        <b style="color:var(--red)">${nint_(cnt.overdue)}</b> quá hạn ·
+        <b style="color:var(--amb)">${nint_(cnt.soon)}</b> sắp đến hạn ·
+        <b style="color:var(--mu)">${nint_(cnt.nobase)}</b> chưa có mốc
         <br><span style="font-size:11px;color:var(--mu)">Số trong ô = <b>số giờ ĐÃ CHẠY kể từ lần làm gần nhất</b>
         (“Số giờ máy chạy” − “Thời điểm…”) — đúng con số đang hiện trên Google Sheet.
         Màu là kết quả so với <b>Định mức giờ bảo dưỡng</b> ở Sheet 3. Di chuột vào ô để xem số giờ còn lại.
@@ -3238,7 +3259,7 @@ function viewTrackingSheet(){
     <div class="card"><div class="tw" style="max-height:70vh"><table>
       <thead><tr>
         <th>Mã máy</th><th>Trang trại</th><th>Đơn vị</th><th>Khu vực</th>
-        ${items.map(it=>`<th style="text-align:right" title="${esc(it.ten)} · chu kỳ ${nfmt_(it.chuKy)} h · vàng khi đã chạy ≥ ${nfmt_((it.chuKy||0)-BD.amber(it))} h · đỏ khi đã chạy ≥ ${nfmt_(it.chuKy)} h">${esc(it.ten)}<br><span style="font-weight:400;text-transform:none;font-size:9px">đã chạy / ${nfmt_(it.chuKy)} h</span></th>`).join('')}
+        ${items.map(it=>`<th style="text-align:right" title="${esc(it.ten)} · chu kỳ ${nint_(it.chuKy)} h · vàng khi đã chạy ≥ ${nint_((it.chuKy||0)-BD.amber(it))} h · đỏ khi đã chạy ≥ ${nint_(it.chuKy)} h">${esc(it.ten)}<br><span style="font-weight:400;text-transform:none;font-size:9px">đã chạy / ${nint_(it.chuKy)} h</span></th>`).join('')}
         ${oilHeader?`<th style="text-align:right">Hao nhớt/20h</th>`:''}
         <th></th>
       </tr></thead>
@@ -6643,9 +6664,9 @@ function viewBdCounter(){
     <div class="ph">
       <h1>Bộ đếm bảo dưỡng theo giờ vận hành</h1>
       <p>${cards.length} máy · ${items.length} hạng mục ·
-        <b style="color:var(--red)">${nfmt_(nOver)} quá hạn</b> ·
-        <b style="color:var(--amb)">${nfmt_(nSoon)} sắp đến hạn</b> ·
-        <b style="color:var(--mu)">${nfmt_(nNoBase)} chưa có mốc</b>
+        <b style="color:var(--red)">${nint_(nOver)} quá hạn</b> ·
+        <b style="color:var(--amb)">${nint_(nSoon)} sắp đến hạn</b> ·
+        <b style="color:var(--mu)">${nint_(nNoBase)} chưa có mốc</b>
         <br><span style="font-size:11px;color:var(--mu)">Bộ đếm = cột “Theo dõi/cảnh báo…” của Sheet 2
         = <b>Số giờ máy chạy − Thời điểm…</b>. Thanh tiến độ là đã chạy ÷ chu kỳ (Sheet 3).
         Báo đã làm → mốc nhảy lên bằng ODO → bộ đếm về 0.</span></p>
