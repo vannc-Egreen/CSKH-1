@@ -343,6 +343,9 @@ td{padding:9px 12px;vertical-align:middle}
       </div>
 
       <div class="nsec">Danh mục</div>
+      <div class="nitem" data-page="vtcat" onclick="nav('vtcat')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/><circle cx="7" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="7" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="7" cy="18" r="1.4" fill="currentColor" stroke="none"/></svg>Danh mục vật tư<span class="nbadge am" id="nb-vtcat">0</span>
+      </div>
       <div class="nitem" data-page="master" onclick="nav('master')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3h-8M12 3v4"/></svg>Danh sách &amp; Định mức máy<span class="nbadge am" id="nb-master">0</span>
       </div>
@@ -369,6 +372,7 @@ td{padding:9px 12px;vertical-align:middle}
       <div id="pg-stock" class="page"></div>
       <div id="pg-matcost" class="page"></div>
       <div id="pg-sim" class="page"></div>
+      <div id="pg-vtcat" class="page"></div>
     </div>
   </div>
 </div>
@@ -838,6 +842,7 @@ async function reloadAll(opt){
       dropdowns:d.dropdowns, alerts:d.alerts
     });
     normalizeCodesInState_();   // PHẢI chạy trước mọi tính toán — xem chú thích của hàm
+    try { _lastFetch.core = Date.now(); } catch(e){}   // đồng hồ TTL của tự-tải-lại theo trang
     refreshAlerts();     // luôn tính lại cảnh báo phía client từ Sheet 2
 
     $('nb-master').textContent = S.master.rows.length;
@@ -1106,7 +1111,67 @@ function nav(page){
   const el = $('pg-'+page); if (!el) return;
   el.classList.add('on');
   renderPage(page);
+  autoRefreshPage_(page);      // ← mở hạng mục nào thì tự tải lại đúng dữ liệu của hạng mục đó
   closeSB();
+}
+
+/* ============================================================================
+ *  TỰ TẢI LẠI KHI MỞ MỘT HẠNG MỤC
+ * ----------------------------------------------------------------------------
+ *  Trước đây dữ liệu chỉ được tải lúc đăng nhập và lúc bấm "↻ Đồng bộ". Hai người
+ *  cùng làm một buổi thì người mở web trước sẽ nhìn số liệu của lúc 8h sáng suốt cả
+ *  ngày mà không biết — và đó đúng là kiểu sai nguy hiểm nhất: màn hình đầy số, mọi
+ *  thứ trông bình thường, chỉ có điều số đã cũ.
+ *
+ *  BA ĐIỂM CỐ Ý:
+ *  1 · TTL 45 giây. Bấm qua lại giữa các trang không được biến thành 20 lượt gọi API —
+ *      Apps Script có hạn ngạch, và mỗi lượt bootstrap đọc cả chục sheet.
+ *  2 · IM LẶNG. Không toast, không đổi dòng trạng thái thành "Đang tải…": người vừa mở
+ *      trang ra là để đọc, nhảy thông báo lên là quấy rầy vô cớ. Chỉ một chấm nhỏ ở góc.
+ *  3 · Dựng lại trang SAU KHI dữ liệu về, nhưng chỉ khi người dùng còn ở đúng trang đó —
+ *      tải xong mà họ đã bấm sang trang khác thì dựng lại là giật màn hình.
+ * ========================================================================== */
+const PAGE_SOURCE = {
+  dash:'both', alerts:'both', analysis:'core', monthly:'core',
+  tracking:'core', filter:'core', efficiency:'core', master:'core', spec:'core',
+  stock:'qlvt', matcost:'qlvt', sim:'qlvt', vtcat:'qlvt',
+};
+const AUTO_REFRESH_MS = 45000;
+const _lastFetch = { core:0, qlvt:0 };
+let _autoBusy = false;
+
+async function autoRefreshPage_(page, force){
+  const src = PAGE_SOURCE[page]; if (!src) return;
+  if (_autoBusy) return;
+  const now = Date.now();
+  const needCore = (src==='core'||src==='both') && (force || now - _lastFetch.core > AUTO_REFRESH_MS);
+  const needQlvt = (src==='qlvt'||src==='both') && (force || now - _lastFetch.qlvt > AUTO_REFRESH_MS);
+  if (!needCore && !needQlvt) return;
+
+  _autoBusy = true;
+  autoDot_(true);
+  try {
+    if (needCore){ await reloadAll({ silent:true, fresh:true }); _lastFetch.core = Date.now(); _lastFetch.qlvt = Date.now(); }
+    else if (needQlvt){ await loadQlvt(true); _lastFetch.qlvt = Date.now(); }
+    const cur = document.querySelector('.page.on');
+    if (cur && cur.id === 'pg-'+page) renderPage(page);
+  } catch(e){ /* mạng chập chờn — giữ nguyên bản đang hiện, lần mở sau thử lại */ }
+  finally { _autoBusy = false; autoDot_(false); }
+}
+
+/** Chấm báo "đang cập nhật" ở góc phải trên — đủ để biết, không đủ để làm phiền. */
+function autoDot_(on){
+  let el = $('autoDot');
+  if (!el){
+    el = document.createElement('div');
+    el.id = 'autoDot';
+    el.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:60;display:none;'
+      + 'background:#0d6e3f;color:#fff;font-size:11px;font-weight:600;padding:5px 10px;'
+      + 'border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.18)';
+    el.textContent = '⟳ đang cập nhật…';
+    document.body.appendChild(el);
+  }
+  el.style.display = on ? '' : 'none';
 }
 function renderCurrent(){
   const cur = document.querySelector('.page.on'); if (!cur) return;
@@ -1156,6 +1221,7 @@ function _renderPageInner_(p, el){
     case 'stock':    el.innerHTML = viewStock(); break;
     case 'matcost':  el.innerHTML = viewMatCost(); afterMatCost(); break;
     case 'sim':      el.innerHTML = viewSim(); break;
+    case 'vtcat':    el.innerHTML = viewVtCat(); break;
   }
 }
 
@@ -6681,6 +6747,11 @@ const Q = {
   sim:{ headers:[], rows:[] }, alarmDict:{ headers:[], rows:[] }, contacts:{ headers:[], rows:[] },
   anomalyOk:{ keys:[] },          // khoá các điểm dữ liệu đã xác nhận đúng — Sheet 24
 
+  /* Bản nháp danh mục vật tư đang sửa trên trang "Danh mục vật tư".
+   * catDirty = true thì lần tự-tải-lại nền KHÔNG được dựng lại bản nháp — nếu không,
+   * mấy dòng vừa gõ sẽ biến mất giữa chừng mà người dùng không hiểu vì sao. */
+  catDraft:null, catDirty:false,
+
   maintLog:{ headers:[], rows:[], total:0 }, moveLog:{ headers:[], rows:[], total:0 },
   alarmLog:{ headers:[], rows:[], total:0 },
   alerts:{ maintenance:[], stock:[], sim:[], oil:[], config:[] },
@@ -6696,6 +6767,7 @@ const Q = {
     stockRegion:new Set(), stockType:new Set(), stockUnit:new Set(),
     moveQ:'', moveType:'', moveVt:'',  // bộ lọc sổ nhật ký
     normQ:'', normVt:'',               // bộ lọc bảng sửa định mức (modal)
+    catQ:'',                           // bộ lọc trang Danh mục vật tư
     sim:'', simOnlyDue:true,
     costMonth:'',
     /* Bộ lọc trang Chi phí vật tư — CÙNG BỘ ba với trang Kho vật tư (khu vực · loại hình ·
@@ -6739,6 +6811,7 @@ function qItems_(onlyHour){
     .map(r => ({ vt:String(r['Mã VT']||'').trim().toUpperCase(),
                  ten:String(r['Tên vật tư']||'').trim(),
                  dvt:String(r['Đơn vị tính']||'').trim(),
+                 theoGio:String(r['Theo giờ']||'').toUpperCase() !== 'FALSE',
                  nhom:String(r['Nhóm']||'').trim() }))
     .filter(v => v.vt && v.ten);
 }
@@ -6761,10 +6834,13 @@ async function loadQlvt(silent){
       alerts:d.alerts||Q.alerts, cfg:d.cfg||{},
       anomalyOk:d.anomalyOk||{ keys:[] },
     });
+    /* Bản nháp danh mục chỉ được dựng lại khi KHÔNG có sửa đổi treo — xem chú thích ở Q.catDraft. */
+    if (!Q.catDirty) Q.catDraft = null;
     /* Danh sách xác nhận vừa về → phải tính lại cảnh báo, nếu không những điểm đã
      * duyệt vẫn hiện cho tới lần đồng bộ sau. loadQlvt() chạy song song với bootstrap
      * và có thể xong trước, nên bọc try: lần gọi sau sẽ đúng. */
     try { refreshAlerts(); } catch(e){}
+    try { _lastFetch.qlvt = Date.now(); } catch(e){}
     qUpdateBadges_();
     return true;
   } catch(e){
@@ -6790,6 +6866,13 @@ function qUpdateBadges_(){
   try { updateSidebarBadges(); } catch (e) { /* bootstrap chưa xong — lần gọi sau sẽ đúng */ }
   set('nb-stock', nSt, nSt>0);
   set('nb-sim', nSim, nSim>0);
+  /* Badge "Danh mục vật tư" = số vật tư đang dùng mà CHƯA dòng máy nào khai định mức.
+   * Đó là việc cần làm thật: vật tư khai ra mà không gắn với dòng máy nào thì không bao
+   * giờ sinh cảnh báo thiếu hàng, và sẽ lặng lẽ nằm đó cho tới lúc trại hết hàng. */
+  try {
+    const nCat = qItems_(false).filter(v => vcModelCount_(v.ten) === 0).length;
+    set('nb-vtcat', nCat, nCat>0);
+  } catch(e){ /* Q.norms chưa về — lần gọi sau sẽ đúng */ }
 }
 
 /** Màn hình chờ dùng chung khi chưa tải được dữ liệu vật tư. */
@@ -7155,6 +7238,9 @@ function viewStockOnHand_(){
         <div style="font-size:11px;color:var(--mu);margin-top:8px">
           Bấm vào một ô vật tư để mở bảng <b>đơn giá &amp; định mức theo dòng máy</b> —
           ghi thẳng vào Sheet “11. Định mức theo dòng máy”, có lưu vết ở Sheet 15.
+          ${Q.perm.editNorm?`<br>Cần <b>thêm hoặc bớt loại vật tư</b>?
+            <b onclick="nav('vtcat')" style="color:var(--bl);cursor:pointer;text-decoration:underline">Mở Danh mục vật tư</b>
+            — cột ở Sheet 11 và Sheet 14 sẽ tự mọc/tự mất theo.`:''}
         </div>
       </div>
     </div>
@@ -7368,6 +7454,20 @@ function qCountByModel_(){
   return c;
 }
 
+/**
+ * Bộ cột được phép sửa cho MỘT vật tư — lọc hai lớp:
+ *  · theo LOẠI VẬT TƯ: vật tư gửi trại (không hao theo giờ) không có Chu kỳ / Báo trước /
+ *    SL/lần ở Sheet 11, bày ra cũng không có cột nào để ghi vào;
+ *  · theo QUYỀN: định mức kỹ thuật cần editNorm, đơn giá cần editPrice.
+ * Bảng hiện và hàm lưu PHẢI dùng chung hàm này — trước đây mỗi nơi tự lọc một kiểu, và
+ * đó là cách chắc chắn nhất để một ngày nào đó hai bên lệch nhau.
+ */
+function qNormFieldsFor_(v){
+  return NORM_FIELDS_UI
+    .filter(f => (v && v.theoGio) || !f.norm || f.k === 'Tồn tối thiểu')
+    .filter(f => f.norm ? Q.perm.editNorm : Q.perm.editPrice);
+}
+
 function qOpenNorm(vt){
   const v = qItems_(false).find(x => x.vt === String(vt).trim().toUpperCase());
   if (!v){ toast('Không tìm thấy vật tư này ở Sheet 10','err'); return; }
@@ -7391,7 +7491,7 @@ function qNormHtml_(){
   const q = (Q.f.normQ||'').toLowerCase().trim();
   const cnt = qCountByModel_();
   const models = qAllModels_().filter(m => !q || m.toLowerCase().includes(q));
-  const flds = NORM_FIELDS_UI.filter(f => f.norm ? Q.perm.editNorm : Q.perm.editPrice);
+  const flds = qNormFieldsFor_(v);
 
   const val = (model, key) => {
     const r = (Q.norms.rows||[]).find(x => String(x['Dòng máy']||'').trim().toUpperCase() === model);
@@ -7511,7 +7611,7 @@ function qNormToggleUse(model, on){
 async function qSaveNorm(){
   const v = qItems_(false).find(x => x.vt === Q.f.normVt);
   if (!v) return;
-  const flds = NORM_FIELDS_UI.filter(f => f.norm ? Q.perm.editNorm : Q.perm.editPrice);
+  const flds = qNormFieldsFor_(v);
 
   /* Gửi ĐỦ mọi dòng máy đang hiện, kể cả ô không đổi. Backend tự so với giá trị cũ và
    * chỉ ghi ô nào thật sự khác (xem qlvtSaveNorms) — để phía web tự lọc thì phải giữ
@@ -7606,6 +7706,281 @@ async function qSubmitMove(){
   if (!d || !d.ok){ toast((d&&d.error)||'Lỗi ghi phiếu','err'); return; }
   closeOv(); await loadQlvt(); renderPage('stock');
   toast('Đã ghi phiếu ' + payload.loai,'ok');
+}
+
+/* ============================================================================
+ *  TRANG · DANH MỤC VẬT TƯ  (Sheet 10)
+ * ----------------------------------------------------------------------------
+ *  Đây là NGUỒN của mọi cột vật tư trong hệ thống: thêm 1 dòng ở đây thì Sheet 11
+ *  (định mức theo dòng máy) và Sheet 14 (tồn kho tại trại) tự mọc thêm cột tương ứng;
+ *  gỡ đi thì cột tự biến mất. Vì vậy trang này cố ý làm CHẬM và RÕ:
+ *
+ *  · Sửa trên bản nháp trong máy, chưa ghi gì cho tới khi bấm "Lưu danh mục" — thêm
+ *    vài dòng rồi đổi ý là bấm "Huỷ thay đổi", không để lại rác trên Sheet.
+ *  · TÊN VẬT TƯ LÀ KHOÁ CỘT. Đổi tên = đổi tên cột ở Sheet 11 (số đã điền theo sang),
+ *    nên tên phải duy nhất và không được chứa dấu " · ".
+ *  · Hai mức gỡ, khác nhau về hậu quả nên tách hẳn thành hai nút:
+ *      – Ngừng dùng : biến khỏi mọi màn hình và khỏi Sheet 14, NHƯNG định mức ở Sheet 11
+ *                     vẫn nằm đó. Dùng khi tạm không cấp nữa, sau này có thể bật lại.
+ *      – Xoá hẳn    : xoá cả cột ở Sheet 11. Nếu vật tư đã từng có phiếu, backend chặn
+ *                     lại và bắt xác nhận — vì bảng chi phí các tháng cũ sẽ mất tên hàng.
+ * ========================================================================== */
+
+/** Bản nháp đang sửa. Chỉ dựng lại từ dữ liệu server khi KHÔNG có sửa đổi treo —
+ *  nếu không, lần tự-tải-lại nền sẽ nuốt mất những dòng vừa gõ. */
+function qCatDraft_(){
+  if (!Q.catDraft){
+    Q.catDraft = (Q.catalog.rows||[]).map(r => ({
+      vt: String(r['Mã VT']||'').trim().toUpperCase(),
+      ten: String(r['Tên vật tư']||'').trim(),
+      tenCu: String(r['Tên vật tư']||'').trim(),
+      nhom: String(r['Nhóm']||'').trim(),
+      dvt: String(r['Đơn vị tính']||'').trim(),
+      theoGio: String(r['Theo giờ']||'').toUpperCase() !== 'FALSE',
+      active: String(r['Đang dùng']||'TRUE').toUpperCase() !== 'FALSE',
+      ghiChu: String(r['Ghi chú']||''),
+      moi: false,
+    }));
+  }
+  return Q.catDraft;
+}
+function vcTouch(){ Q.catDirty = true; }
+
+/** Số dòng máy đã khai định mức cho vật tư này — để biết gỡ nó đi thì ảnh hưởng ai. */
+function vcModelCount_(ten){
+  let n = 0;
+  (Q.norms.rows||[]).forEach(r => {
+    const co = NORM_FIELDS_UI.some(f => {
+      const v = r[ten + QSEP + f.k];
+      return v !== '' && v !== null && v !== undefined;
+    });
+    if (co) n++;
+  });
+  return n;
+}
+/** Tổng tồn toàn hệ thống của 1 vật tư — con số nhắc "đang có hàng thật trong kho". */
+function vcStockTotal_(ten){
+  let s = 0;
+  (Q.stock.rows||[]).forEach(r => { const v = num2_(qv_(r, ten, 'Tồn')); if (v) s += v; });
+  return s;
+}
+
+function viewVtCat(){
+  if (!Q.loaded) return qNotReady_('Danh mục vật tư');
+  if (!Q.perm.editNorm){
+    return `<div class="ph"><h1>Danh mục vật tư</h1></div>
+      <div class="empty"><div class="ei">🔒</div>
+        Chỉ tài khoản có quyền <b>Sửa định mức</b> mới được thêm/bớt vật tư.<br>
+        <span style="font-size:11px">Thêm một vật tư là thêm cột cho cả Sheet 11 và Sheet 14 —
+        đây là thao tác cấu hình hệ thống, không phải nhập liệu hằng ngày.</span>
+      </div>`;
+  }
+
+  const d = qCatDraft_();
+  const q = (Q.f.catQ||'').toLowerCase().trim();
+  const nhoms = [...new Set(d.map(v=>v.nhom).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'vi'));
+  const nOn = d.filter(v=>v.active).length;
+  const nOff = d.length - nOn;
+
+  const row = (v, i) => {
+    const nMd = vcModelCount_(v.tenCu || v.ten);
+    const ton = vcStockTotal_(v.tenCu || v.ten);
+    const dim = v.active ? '' : 'opacity:.55';
+    return `<tr style="${dim}">
+      <td style="text-align:center;white-space:nowrap;padding:2px 4px">
+        <button class="btn bg-gr sm" style="padding:1px 6px" title="Lên"
+          onclick="vcMove(${i},-1)" ${i===0?'disabled':''}>▲</button>
+        <button class="btn bg-gr sm" style="padding:1px 6px" title="Xuống"
+          onclick="vcMove(${i},1)" ${i===d.length-1?'disabled':''}>▼</button>
+      </td>
+      <td><input class="inp" style="padding:4px 6px;font-size:12px;max-width:130px;font-family:var(--mono)"
+            value="${esc(v.vt)}" placeholder="VT-…"
+            oninput="qCatDraft_()[${i}].vt=this.value.toUpperCase();vcTouch()"></td>
+      <td><input class="inp" style="padding:4px 6px;font-size:12px;min-width:150px;font-weight:600"
+            value="${esc(v.ten)}" placeholder="Tên hiện trên mọi bảng"
+            oninput="qCatDraft_()[${i}].ten=this.value;vcTouch()"></td>
+      <td><input class="inp" style="padding:4px 6px;font-size:12px;min-width:130px" list="vcNhom"
+            value="${esc(v.nhom)}" oninput="qCatDraft_()[${i}].nhom=this.value;vcTouch()"></td>
+      <td><input class="inp" style="padding:4px 6px;font-size:12px;max-width:70px;text-align:center"
+            value="${esc(v.dvt)}" placeholder="Cái"
+            oninput="qCatDraft_()[${i}].dvt=this.value;vcTouch()"></td>
+      <td style="text-align:center">
+        <input type="checkbox" ${v.theoGio?'checked':''}
+          title="Có tick = hao theo GIỜ CHẠY, sẽ có cột Chu kỳ / Báo trước / SL/lần ở Sheet 11"
+          onchange="qCatDraft_()[${i}].theoGio=this.checked;vcTouch();renderPage('vtcat')"></td>
+      <td style="text-align:right;font-family:var(--mono);color:${nMd?'var(--tx)':'var(--mu)'}">${nint_(nMd)}</td>
+      <td style="text-align:right;font-family:var(--mono);color:${ton?'var(--tx)':'var(--mu)'}">${nfd_(ton)}</td>
+      <td style="text-align:center">
+        <button class="fchip ${v.active?'on':''}" style="padding:2px 8px;font-size:11px"
+          onclick="qCatDraft_()[${i}].active=!qCatDraft_()[${i}].active;vcTouch();renderPage('vtcat')"
+          title="${v.active?'Đang dùng — bấm để NGỪNG DÙNG (giữ định mức ở Sheet 11)':'Đã ngừng — bấm để dùng lại'}">
+          ${v.active?'Đang dùng':'Ngừng dùng'}</button>
+      </td>
+      <td><input class="inp" style="padding:4px 6px;font-size:12px;min-width:120px"
+            value="${esc(v.ghiChu)}" oninput="qCatDraft_()[${i}].ghiChu=this.value;vcTouch()"></td>
+      <td style="text-align:center">
+        <button class="btn bg-r sm" style="padding:2px 8px" title="Xoá hẳn khỏi danh mục — cột ở Sheet 11 và 14 sẽ biến mất"
+          onclick="vcDel(${i})">✕</button></td>
+    </tr>`;
+  };
+
+  const list = d.map((v,i)=>({v,i}))
+    .filter(x => !q || (x.v.ten+' '+x.v.vt+' '+x.v.nhom).toLowerCase().includes(q));
+
+  return `
+    <div class="ph">
+      <h1>Danh mục vật tư</h1>
+      <p>${nint_(d.length)} loại vật tư · ${nint_(nOn)} đang dùng${nOff?` · ${nint_(nOff)} đã ngừng`:''}
+        <br><span style="font-size:11px;color:var(--mu)">
+        Sheet “10. Danh mục vật tư” là <b>gốc</b> — thêm/bớt ở đây thì cột ở
+        “11. Định mức theo dòng máy” và “14. Tồn kho vật tư tại trại” tự mọc/tự mất theo.</span></p>
+    </div>
+
+    <datalist id="vcNhom">${nhoms.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+
+    ${Q.catDirty?`<div class="card" style="border-left:3px solid var(--amb)"><div class="cb" style="padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <b style="font-size:12px;color:var(--amb)">● Có thay đổi chưa ghi</b>
+      <span style="font-size:11px;color:var(--mu);flex:1;min-width:200px">
+        Chưa có gì được ghi lên Google Sheet. Bấm <b>Lưu danh mục</b> để áp dụng, hoặc <b>Huỷ</b> để lấy lại bản cũ.</span>
+      <button class="btn bg-gr sm" onclick="vcRevert()">↺ Huỷ thay đổi</button>
+      <button class="btn bg-g sm" onclick="vcSave()">💾 Lưu danh mục</button>
+    </div></div>`:''}
+
+    <div class="msf">
+      <input class="si" id="vcSearch" style="flex:1" placeholder="🔍 Tìm tên vật tư, mã VT, nhóm…"
+             value="${esc(Q.f.catQ||'')}" oninput="Q.f.catQ=this.value;renderPage('vtcat')">
+      <button class="btn bg-b sm" onclick="vcAdd()">+ Thêm vật tư</button>
+      <button class="btn bg-gr sm" onclick="vcSyncCols()" title="Ép dựng lại cột ở Sheet 11 và 14 cho khớp danh mục — dùng khi ai đó sửa tay trên Google Sheet">⟳ Đồng bộ cột</button>
+      ${Q.catDirty?`<button class="btn bg-g sm" onclick="vcSave()">💾 Lưu danh mục</button>`:''}
+    </div>
+
+    <div class="card"><div class="cb" style="padding:0">
+      <div class="tw" style="max-height:62vh"><table>
+        <thead><tr>
+          <th style="text-align:center">Thứ tự</th>
+          <th>Mã VT</th>
+          <th>Tên vật tư <span style="font-weight:400;opacity:.7">(= tên cột)</span></th>
+          <th>Nhóm</th>
+          <th style="text-align:center">ĐVT</th>
+          <th style="text-align:center" title="Vật tư hao theo giờ chạy — có chu kỳ thay">Theo giờ</th>
+          <th style="text-align:right" title="Số dòng máy đã khai định mức cho vật tư này">Đã khai</th>
+          <th style="text-align:right" title="Tổng tồn toàn hệ thống">Tồn hiện có</th>
+          <th style="text-align:center">Trạng thái</th>
+          <th>Ghi chú</th>
+          <th style="text-align:center">Xoá</th>
+        </tr></thead>
+        <tbody>${list.map(x=>row(x.v,x.i)).join('') ||
+          '<tr><td colspan="11"><div class="empty">Không có vật tư nào khớp.</div></td></tr>'}</tbody>
+      </table></div>
+    </div></div>
+
+    <div class="card"><div class="cb" style="padding:10px 14px;font-size:11px;color:var(--mu);line-height:1.7">
+      <b style="color:var(--tx)">Ba điều nên biết trước khi sửa</b><br>
+      1 · <b>Tên vật tư là tên cột.</b> Đổi tên thì cột ở Sheet 11 đổi theo và giữ nguyên số đã điền —
+          nhưng tên phải duy nhất và không được chứa dấu “·”.<br>
+      2 · <b>“Ngừng dùng” khác “Xoá hẳn”.</b> Ngừng dùng chỉ giấu vật tư đi, định mức ở Sheet 11 vẫn còn.
+          Xoá hẳn thì mất luôn cột — vật tư đã có phiếu trong sổ 15 sẽ bị hỏi lại trước khi xoá.<br>
+      3 · <b>Thứ tự ở đây là thứ tự cột</b> ở Sheet 11 và Sheet 14. Xếp các vật tư hay dùng lên trên
+          thì người vận hành đỡ phải kéo ngang.
+    </div></div>`;
+}
+
+function vcAdd(){
+  const d = qCatDraft_();
+  d.push({ vt:'', ten:'', tenCu:'', nhom:'Vật tư gửi trại', dvt:'Cái',
+           theoGio:false, active:true, ghiChu:'', moi:true });
+  Q.f.catQ = '';
+  vcTouch(); renderPage('vtcat');
+  setTimeout(()=>{ const rows=document.querySelectorAll('#pg-vtcat tbody tr');
+    const last=rows[rows.length-1]; if(last){ last.scrollIntoView({block:'center'});
+      const inp=last.querySelector('input'); if(inp) inp.focus(); } }, 30);
+}
+
+function vcMove(i, dir){
+  const d = qCatDraft_(); const j = i + dir;
+  if (j < 0 || j >= d.length) return;
+  const t = d[i]; d[i] = d[j]; d[j] = t;
+  vcTouch(); renderPage('vtcat');
+}
+
+function vcDel(i){
+  const d = qCatDraft_(); const v = d[i]; if (!v) return;
+  const nMd = vcModelCount_(v.tenCu || v.ten), ton = vcStockTotal_(v.tenCu || v.ten);
+  const canh = [];
+  if (nMd) canh.push(`${nMd} dòng máy đang khai định mức`);
+  if (ton) canh.push(`còn ${nfd_(ton)} ${v.dvt||''} trong kho`);
+  const ok = confirm(
+    `Xoá hẳn “${v.ten||v.vt}” khỏi danh mục?\n\n` +
+    (canh.length ? `⚠ ${canh.join(' · ')}.\n\n` : '') +
+    `Cột của vật tư này sẽ biến mất khỏi Sheet 11 và Sheet 14.\n` +
+    `Nếu chỉ muốn tạm ngừng cấp, hãy bấm nút trạng thái để chuyển sang “Ngừng dùng” — cách đó giữ lại định mức.`);
+  if (!ok) return;
+  d.splice(i,1); vcTouch(); renderPage('vtcat');
+}
+
+function vcRevert(){
+  Q.catDraft = null; Q.catDirty = false;
+  renderPage('vtcat'); toast('Đã bỏ mọi thay đổi chưa ghi','ok');
+}
+
+async function vcSave(force){
+  const d = qCatDraft_();
+  // Soát ngay trên web những lỗi backend chắc chắn chặn — báo sớm thì sửa nhanh hơn
+  for (const v of d){
+    if (!String(v.vt||'').trim())  { toast('Có dòng chưa điền Mã VT','err'); return; }
+    if (!String(v.ten||'').trim()) { toast(`Vật tư ${v.vt} chưa có tên`,'err'); return; }
+    if (String(v.ten).indexOf(QSEP.trim()) >= 0){ toast('Tên vật tư không được chứa dấu “·”','err'); return; }
+  }
+  const items = d.map(v => ({ vt:v.vt, ten:v.ten, tenCu:v.tenCu, nhom:v.nhom, dvt:v.dvt,
+                              theoGio:v.theoGio, active:v.active, ghiChu:v.ghiChu }));
+  toast('Đang ghi danh mục và dựng lại cột…');
+  const r = await apiPost({ action:'qlvtSaveCatalog',
+    payload:{ items, nguoi:(S.user&&S.user.name)||'admin', xoaHan: !!force },
+    user:(S.user&&S.user.name)||'admin' });
+
+  if (r && r.needConfirm){
+    /* Backend chặn vì vật tư đã có phiếu. Hỏi lại bằng modal chứ không phải confirm() trơn:
+     * người dùng cần thấy ĐÍCH DANH vật tư nào, bao nhiêu phiếu, rồi mới quyết. */
+    openOv(`
+      <div class="mh"><div><h2>Vật tư này đã có phiếu trong sổ</h2>
+        <p>Xoá hẳn sẽ làm bảng chi phí các tháng cũ mất tên hàng.</p></div>
+        <button class="mcl" onclick="closeOv()">✕</button></div>
+      <div class="mb">
+        <div class="tw"><table><thead><tr><th>Vật tư</th><th style="text-align:right">Số phiếu đã ghi</th></tr></thead>
+          <tbody>${(r.used||[]).map(x=>`<tr><td><b>${esc(x.ten)}</b></td>
+            <td style="text-align:right;font-family:var(--mono)">${nint_(x.n)}</td></tr>`).join('')}</tbody></table></div>
+        <div style="font-size:12px;color:var(--mu);margin-top:10px;line-height:1.7">
+          <b style="color:var(--tx)">Khuyến nghị:</b> chuyển sang <b>Ngừng dùng</b> thay vì xoá.
+          Vật tư sẽ biến khỏi mọi màn hình và khỏi Sheet 14, nhưng định mức ở Sheet 11 và lịch sử phiếu vẫn nguyên vẹn.
+        </div>
+      </div>
+      <div class="mf">
+        <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
+        <button class="btn bg-r" onclick="closeOv();vcSave(true)">Vẫn xoá hẳn</button>
+      </div>`);
+    return;
+  }
+  if (!r || !r.ok){ toast((r&&r.error)||'Lỗi ghi danh mục','err'); return; }
+
+  Q.catDirty = false; Q.catDraft = null;
+  await loadQlvt();
+  renderPage('vtcat');
+  toast(`✓ Đã lưu ${nint_(r.items)} vật tư · dựng lại cột Sheet 11 và Sheet 14`, 'ok');
+}
+
+async function vcSyncCols(){
+  toast('Đang dựng lại cột theo danh mục…');
+  const r = await apiPost({ action:'qlvtSyncColumns', user:(S.user&&S.user.name)||'admin' });
+  if (!r || !r.ok){ toast((r&&r.error)||'Lỗi đồng bộ cột','err'); return; }
+  Q.catDraft = null; Q.catDirty = false;
+  await loadQlvt(); renderPage('vtcat');
+  /* Nếu bảng tính từ chối công thức thì cột "Tối thiểu" ở Sheet 14 chỉ là SỐ TĨNH —
+   * vẫn đúng, nhưng chỉ đổi khi tính lại. Phải nói ra, vì cái người dùng trông đợi là
+   * "sửa Sheet 11 xong Sheet 14 tự đổi", mà lặng lẽ mất tính năng đó thì họ sẽ tin
+   * nhầm là số đã cập nhật. */
+  const st = r.stock || {};
+  if (st.live === false) toast('⚠ ' + (st.note || 'Sheet 14 đang dùng số tĩnh'), 'err');
+  else toast('✓ Sheet 11 và Sheet 14 đã khớp danh mục','ok');
 }
 
 /* ============================================================================
