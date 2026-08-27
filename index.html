@@ -4387,7 +4387,6 @@ function bdEditItem(ma){
     ma:'', ten:'', nhom:'', chuKy:'', canhBao:'', apDung:'*', vt:'', sl:'',
     batBuoc:false, dangDung:true, thuTu:'', ghiChu:'', _row:0 };
   const isNew = !ma;
-  const vtList = [...new Set(BD.items().map(x=>x.vt).filter(Boolean))];
 
   openOv(`
     <div class="mh">
@@ -4428,14 +4427,27 @@ function bdEditItem(ma){
         </div>
       </div>
       <div class="fsec">
-        <div class="fsh"><div class="fsn">3</div><div class="fst">Vật tư đi kèm · để trống nếu hạng mục không tiêu hao vật tư</div></div>
-        <div class="fgrid fg3">
-          <div class="iw"><div class="il">Mã VT liên kết</div>
-            <input class="inp" id="hm_vt" value="${esc(it.vt)}" list="hm_vtlist" placeholder="VD: VT-BUGI">
-            <datalist id="hm_vtlist">${vtList.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>
-            <div style="font-size:9px;color:var(--mu);margin-top:3px">Có mã VT thì mỗi lần báo bảo dưỡng sẽ tự trừ kho tại trại</div></div>
-          <div class="iw"><div class="il">SL/lần thay</div>
-            <input class="inp" id="hm_sl" type="number" step="any" value="${it.sl ?? ''}"></div>
+        <div class="fsh"><div class="fsn">3</div><div class="fst">Vật tư đi kèm · khai ở Danh mục vật tư, không khai ở đây</div></div>
+        <div class="fgrid fg2">
+          <div class="iw"><div class="il">Vật tư đang nối với hạng mục này</div>
+            <div style="background:#f1f5f9;border-radius:8px;padding:8px 10px;font-size:12px;min-height:34px">
+              ${(function(){
+                const dsach = ((Q.catalog&&Q.catalog.rows)||[])
+                  .filter(r => String(r['Đang dùng']||'TRUE').toUpperCase() !== 'FALSE')
+                  .filter(r => { const h = bdSlugMa_(r['Hạng mục BD']);
+                    return h && (h === bdSlugMa_(it.ma) || h === bdSlugMa_(it.ten)); })
+                  .map(r => String(r['Tên vật tư']||'').trim()).filter(Boolean);
+                return dsach.length
+                  ? dsach.map(x=>`<b>${esc(x)}</b>`).join(' · ')
+                  : '<span style="color:var(--mu)">chưa nối vật tư nào</span>';
+              })()}
+            </div>
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">
+              Một hạng mục ăn được <b>nhiều</b> vật tư (thay lọc nhớt = lọc nhớt 1 + lọc nhớt 2 + long đen),
+              nên liên kết khai ở cột <b>Hạng mục BD</b> bên
+              <b onclick="closeOv();nav('vtcat')" style="color:var(--bl);cursor:pointer;text-decoration:underline">Danh mục vật tư</b>.
+              Số lượng mỗi lần thay khai ở Sheet 11 theo từng dòng máy.
+            </div></div>
           <div class="iw"><div class="il">Thứ tự cột</div>
             <input class="inp" id="hm_thutu" type="number" value="${it.thuTu ?? ''}" placeholder="10, 20, 30…"></div>
         </div>
@@ -4467,7 +4479,9 @@ async function bdSaveItem(row){
     const res = await apiPost({ action:'bdSaveItem', user:S.user.name, item:{
       row: row||0, ma: $('hm_ma').value.trim(), ten,
       nhom: $('hm_nhom').value, chuKy: $('hm_chuky').value, canhBao: $('hm_canhbao').value,
-      apDung: $('hm_apdung').value, vt: $('hm_vt').value, sl: $('hm_sl').value,
+      /* Không gửi vt/sl nữa: hai cột đó đã bị xoá khỏi Sheet 3. Vật tư khai ở
+       * "Hạng mục BD" của Sheet 10, số lượng mỗi lần khai ở Sheet 11 theo dòng máy. */
+      apDung: $('hm_apdung').value,
       thuTu: $('hm_thutu').value, ghiChu: $('hm_ghichu').value,
       batBuoc: $('hm_batbuoc').value === '1', dangDung: $('hm_dangdung').value === '1' }});
     if (!res.ok) throw new Error(res.error);
@@ -6751,6 +6765,7 @@ const Q = {
    * catDirty = true thì lần tự-tải-lại nền KHÔNG được dựng lại bản nháp — nếu không,
    * mấy dòng vừa gõ sẽ biến mất giữa chừng mà người dùng không hiểu vì sao. */
   catDraft:null, catDirty:false,
+  normLinks:{},
 
   maintLog:{ headers:[], rows:[], total:0 }, moveLog:{ headers:[], rows:[], total:0 },
   alarmLog:{ headers:[], rows:[], total:0 },
@@ -6829,6 +6844,8 @@ async function loadQlvt(silent){
     Object.assign(Q, {
       loaded:true, perm:d.perm||Q.perm, catalog:d.catalog, norms:d.norms,
       models:d.models||Q.models,
+      /* Vật tư nào có chu kỳ lấy tự động — quyết định ô nào khoá ở bảng định mức. */
+      normLinks:d.normLinks||{},
       stock:d.stock, sim:d.sim, alarmDict:d.alarmDict,
       contacts:d.contacts, maintLog:d.maintLog, moveLog:d.moveLog, alarmLog:d.alarmLog,
       alerts:d.alerts||Q.alerts, cfg:d.cfg||{},
@@ -7468,6 +7485,21 @@ function qNormFieldsFor_(v){
     .filter(f => f.norm ? Q.perm.editNorm : Q.perm.editPrice);
 }
 
+/* Hai cột lấy tự động từ Sheet 3 (hoặc Sheet 4 với hạt lọc). Hiện dạng chữ tĩnh có
+ * biểu tượng 🔗 chứ không phải ô nhập: một ô trông như nhập được mà gõ vào thì bị đè
+ * ngay lần đồng bộ sau là kiểu giao diện nói dối — người dùng tin là đã sửa xong.
+ * Backend cũng chặn độc lập (xem qlvtSaveNorms), vì một bản web cũ đang mở dở vẫn có
+ * thể gửi lên những ô này. */
+const QNORM_LOCKED_KEYS = ['Chu kỳ (h)', 'Cảnh báo trước (h)'];
+function qNormLink_(v){ return (v && Q.normLinks) ? Q.normLinks[v.ten] : null; }
+function qNormLocked_(v, key){ return !!qNormLink_(v) && QNORM_LOCKED_KEYS.indexOf(key) >= 0; }
+function qNormLockHint_(v){
+  const l = qNormLink_(v); if (!l) return '';
+  return l.theoDongMay
+    ? `Lấy tự động từ “${l.nguon}” theo từng dòng máy — mỗi dòng máy một chu kỳ riêng. Sửa ở sheet đó.`
+    : `Lấy tự động từ hạng mục “${l.ma}” ở “${l.nguon}”. Sửa ở đó thì mọi dòng máy đổi theo.`;
+}
+
 function qOpenNorm(vt){
   const v = qItems_(false).find(x => x.vt === String(vt).trim().toUpperCase());
   if (!v){ toast('Không tìm thấy vật tư này ở Sheet 10','err'); return; }
@@ -7548,8 +7580,12 @@ function qNormHtml_(){
                      title="Bỏ tick rồi Lưu = xoá vật tư này khỏi định mức của dòng máy ${esc(m)}">
             </td>
             ${flds.map(f=>`<td style="text-align:right">
-              <input class="inp" style="text-align:right;padding:4px 6px;font-size:12px;max-width:110px"
-                     id="${idOf(m,f.k)}" value="${esc(val(m,f.k))}" placeholder="—">
+              ${qNormLocked_(v, f.k) ? `<span title="${esc(qNormLockHint_(v))}"
+                   style="display:inline-block;min-width:70px;text-align:right;font-family:var(--mono);
+                          background:#f1f5f9;color:#334155;border-radius:6px;padding:4px 8px;cursor:help">
+                   ${esc(val(m,f.k)) || '—'} <span style="opacity:.5">🔗</span></span>`
+              : `<input class="inp" style="text-align:right;padding:4px 6px;font-size:12px;max-width:110px"
+                     id="${idOf(m,f.k)}" value="${esc(val(m,f.k))}" placeholder="—">`}
             </td>`).join('')}
           </tr>`;
         }).join('') || '<tr><td colspan="9"><div class="empty">Không có dòng máy nào khớp.</div></td></tr>'}</tbody>
@@ -7738,6 +7774,7 @@ function qCatDraft_(){
       dvt: String(r['Đơn vị tính']||'').trim(),
       theoGio: String(r['Theo giờ']||'').toUpperCase() !== 'FALSE',
       active: String(r['Đang dùng']||'TRUE').toUpperCase() !== 'FALSE',
+      hangMuc: String(r['Hạng mục BD']||'').trim(),
       ghiChu: String(r['Ghi chú']||''),
       moi: false,
     }));
@@ -7745,6 +7782,22 @@ function qCatDraft_(){
   return Q.catDraft;
 }
 function vcTouch(){ Q.catDirty = true; }
+
+/** Mã quy ước "chu kỳ lấy từ Sheet 4 theo dòng máy" — phải trùng HATLOC_MA ở QLVT.gs. */
+const QLVT_HATLOC_MA = '__HATLOC__';
+
+/** Gợi ý cho ô "Hạng mục BD": các mã hạng mục đang có ở Sheet 3, cộng mã hạt lọc. */
+function vcHangMucList_(){
+  const out = new Set([QLVT_HATLOC_MA]);
+  try {
+    (S.spec?.rows || []).forEach(r => {
+      const ma = String(r['Mã hạng mục'] || r._byLetter?.B || '').trim();
+      if (ma) out.add(ma);
+    });
+  } catch(e){}
+  (Q.catalog.rows||[]).forEach(r => { const m=String(r['Hạng mục BD']||'').trim(); if(m) out.add(m); });
+  return [...out].sort((a,b)=>a.localeCompare(b,'vi'));
+}
 
 /** Số dòng máy đã khai định mức cho vật tư này — để biết gỡ nó đi thì ảnh hưởng ai. */
 function vcModelCount_(ten){
@@ -7808,6 +7861,11 @@ function viewVtCat(){
         <input type="checkbox" ${v.theoGio?'checked':''}
           title="Có tick = hao theo GIỜ CHẠY, sẽ có cột Chu kỳ / Báo trước / SL/lần ở Sheet 11"
           onchange="qCatDraft_()[${i}].theoGio=this.checked;vcTouch();renderPage('vtcat')"></td>
+      <td>${v.theoGio ? `<input class="inp" style="padding:4px 6px;font-size:12px;min-width:120px" list="vcHM"
+            value="${esc(v.hangMuc)}" placeholder="(không nối)"
+            title="Chu kỳ và cảnh báo trước của vật tư này lấy từ hạng mục nào ở Sheet 3. Để trống = tự gõ tay."
+            oninput="qCatDraft_()[${i}].hangMuc=this.value.trim();vcTouch()">`
+          : '<span style="color:var(--mu);font-size:11px">—</span>'}</td>
       <td style="text-align:right;font-family:var(--mono);color:${nMd?'var(--tx)':'var(--mu)'}">${nint_(nMd)}</td>
       <td style="text-align:right;font-family:var(--mono);color:${ton?'var(--tx)':'var(--mu)'}">${nfd_(ton)}</td>
       <td style="text-align:center">
@@ -7837,6 +7895,7 @@ function viewVtCat(){
     </div>
 
     <datalist id="vcNhom">${nhoms.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+    <datalist id="vcHM">${vcHangMucList_().map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
 
     ${Q.catDirty?`<div class="card" style="border-left:3px solid var(--amb)"><div class="cb" style="padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <b style="font-size:12px;color:var(--amb)">● Có thay đổi chưa ghi</b>
@@ -7863,6 +7922,7 @@ function viewVtCat(){
           <th>Nhóm</th>
           <th style="text-align:center">ĐVT</th>
           <th style="text-align:center" title="Vật tư hao theo giờ chạy — có chu kỳ thay">Theo giờ</th>
+          <th title="Chu kỳ &amp; cảnh báo trước lấy tự động từ hạng mục này ở Sheet 3">Hạng mục BD</th>
           <th style="text-align:right" title="Số dòng máy đã khai định mức cho vật tư này">Đã khai</th>
           <th style="text-align:right" title="Tổng tồn toàn hệ thống">Tồn hiện có</th>
           <th style="text-align:center">Trạng thái</th>
@@ -7870,7 +7930,7 @@ function viewVtCat(){
           <th style="text-align:center">Xoá</th>
         </tr></thead>
         <tbody>${list.map(x=>row(x.v,x.i)).join('') ||
-          '<tr><td colspan="11"><div class="empty">Không có vật tư nào khớp.</div></td></tr>'}</tbody>
+          '<tr><td colspan="12"><div class="empty">Không có vật tư nào khớp.</div></td></tr>'}</tbody>
       </table></div>
     </div></div>
 
@@ -7881,14 +7941,19 @@ function viewVtCat(){
       2 · <b>“Ngừng dùng” khác “Xoá hẳn”.</b> Ngừng dùng chỉ giấu vật tư đi, định mức ở Sheet 11 vẫn còn.
           Xoá hẳn thì mất luôn cột — vật tư đã có phiếu trong sổ 15 sẽ bị hỏi lại trước khi xoá.<br>
       3 · <b>Thứ tự ở đây là thứ tự cột</b> ở Sheet 11 và Sheet 14. Xếp các vật tư hay dùng lên trên
-          thì người vận hành đỡ phải kéo ngang.
+          thì người vận hành đỡ phải kéo ngang.<br>
+      4 · <b>“Hạng mục BD” quyết định chu kỳ.</b> Nối vào một hạng mục ở Sheet 3 thì hai cột
+          <b>Chu kỳ (h)</b> và <b>Cảnh báo trước (h)</b> ở Sheet 11 lấy thẳng số của hạng mục đó và
+          <b>không sửa tay được nữa</b> — sửa thì sửa ở Sheet 3, một chỗ cho tất cả. Nhiều vật tư nối
+          chung một hạng mục là bình thường (thay lọc nhớt ăn lọc nhớt 1 + lọc nhớt 2 + long đen).
+          Riêng <b>${esc(QLVT_HATLOC_MA)}</b> nghĩa là lấy từ “4. Data thay lọc” theo <b>từng dòng máy</b>.
     </div></div>`;
 }
 
 function vcAdd(){
   const d = qCatDraft_();
   d.push({ vt:'', ten:'', tenCu:'', nhom:'Vật tư gửi trại', dvt:'Cái',
-           theoGio:false, active:true, ghiChu:'', moi:true });
+           theoGio:false, active:true, hangMuc:'', ghiChu:'', moi:true });
   Q.f.catQ = '';
   vcTouch(); renderPage('vtcat');
   setTimeout(()=>{ const rows=document.querySelectorAll('#pg-vtcat tbody tr');
@@ -7932,7 +7997,8 @@ async function vcSave(force){
     if (String(v.ten).indexOf(QSEP.trim()) >= 0){ toast('Tên vật tư không được chứa dấu “·”','err'); return; }
   }
   const items = d.map(v => ({ vt:v.vt, ten:v.ten, tenCu:v.tenCu, nhom:v.nhom, dvt:v.dvt,
-                              theoGio:v.theoGio, active:v.active, ghiChu:v.ghiChu }));
+                              theoGio:v.theoGio, active:v.active,
+                              hangMuc:v.hangMuc, ghiChu:v.ghiChu }));
   toast('Đang ghi danh mục và dựng lại cột…');
   const r = await apiPost({ action:'qlvtSaveCatalog',
     payload:{ items, nguoi:(S.user&&S.user.name)||'admin', xoaHan: !!force },
@@ -8342,6 +8408,24 @@ const BD_WORK_KINDS = ['Bảo dưỡng định kỳ', 'Thay thế', 'Sửa chữ
  *  bổ sung xong — cảnh báo lúc nào cũng sáng thì người vận hành sẽ học cách phớt lờ,
  *  và phớt lờ luôn cả những cái đang thật.
  * ========================================================================== */
+/** Bỏ dấu để so mã hạng mục — "LOC_NHỚT" và "LOC_NHOT" là một. */
+function bdSlugMa_(x){
+  return String(x==null?'':x).normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/đ/gi,'d').toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+/** Vật tư CHÍNH của một hạng mục — vật tư đầu tiên ở Sheet 10 trỏ về hạng mục đó. */
+function bdVtOfHangMuc_(ma, ten){
+  const k = bdSlugMa_(ma), k2 = bdSlugMa_(ten);
+  if (!k && !k2) return '';
+  const rows = (Q.catalog && Q.catalog.rows) || [];
+  for (const r of rows){
+    if (String(r['Đang dùng']||'TRUE').toUpperCase() === 'FALSE') continue;
+    const h = bdSlugMa_(r['Hạng mục BD']);
+    if (h && (h === k || h === k2)) return String(r['Mã VT']||'').trim().toUpperCase();
+  }
+  return '';
+}
+
 const BD = {
   items(){
     return ((S.spec && S.spec.rows) || []).map(r => ({
@@ -8351,8 +8435,13 @@ const BD = {
       chuKy: bdN_(r['Định mức giờ bảo dưỡng']),
       canhBao: bdN_(r['Cảnh báo trước']),
       apDung: String(r['Áp dụng cho'] || '*').trim() || '*',
-      vt: String(r['Mã VT liên kết'] || '').trim(),
-      sl: bdN_(r['SL/lần thay']),
+      /* Hai trường này KHÔNG còn cột riêng ở Sheet 3 (bốn cột thừa đã xoá).
+       *   vt — tra ngược từ cột 'Hạng mục BD' của Sheet 10: một hạng mục ăn nhiều vật
+       *        tư, nên liên kết phải khai ở phía vật tư mới đủ chỗ.
+       *   sl — luôn null, số lượng mỗi lần thay nay lấy ở Sheet 11 theo từng dòng máy,
+       *        chi tiết hơn hẳn một con số dùng chung cho mọi dòng máy. */
+      vt: bdVtOfHangMuc_(String(r['Mã hạng mục'] || ''), String(r['Tên hạng mục'] || '')),
+      sl: null,
       batBuoc: bdB_(r['Bắt buộc'], false),
       dangDung: bdB_(r['Đang dùng'], true),
       thuTu: bdN_(r['Thứ tự']) ?? 999,
