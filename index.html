@@ -881,7 +881,20 @@ function navEfficiencyToCode(code){
  *  4 · CÓ HẠN GIỜ. fetch mặc định chờ vô hạn; mạng trại chập chờn thì lớp phủ
  *      treo mãi và cả app coi như chết. 60 giây rồi báo lỗi rõ ràng.
  * ========================================================================== */
-const API_TIMEOUT_MS = 60000;
+/* HAI NGÂN SÁCH THỜI GIAN, VÌ CÓ HAI LOẠI REQUEST KHÁC HẲN NHAU.
+ *
+ * Một con số duy nhất 60 giây là sai ở cả hai đầu:
+ *   · Với lệnh ghi hay hỏi mốc dữ liệu, 60 giây là QUÁ DÀI — hỏng từ giây thứ ba
+ *     mà vẫn bắt người ta nhìn lớp phủ thêm gần một phút.
+ *   · Với gói bootstrap lần đầu trong ngày, 60 giây là QUÁ NGẮN. Lượt đó phải đọc
+ *     16 sheet, dựng 6 bộ cảnh báo rồi nén cả gói lại — trên 79 máy có thể vượt
+ *     một phút một cách hoàn toàn bình thường. Cắt ở 60 giây là TỰ HUỶ ĐÚNG LƯỢT
+ *     GỌI ĐÃ GẦN XONG, rồi lượt sau lại bắt đầu từ con số không: cache chưa kịp
+ *     ghi nên lần thử lại cũng chậm y hệt, và web rơi vào vòng lặp không bao giờ
+ *     tải xong. Đây chính là lỗi "bootstrap quá 60 giây không phản hồi".
+ */
+const API_TIMEOUT_MS = 45000;        // lệnh ghi, hỏi mốc, đăng nhập…
+const BOOTSTRAP_TIMEOUT_MS = 210000; // gói dữ liệu lớn — dài hơn hẳn hạn của Apps Script
 
 /* Action đi qua POST nhưng KHÔNG đổi dữ liệu → không hiện lớp chặn, không báo "đã ghi". */
 const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','materialCost','smartgenStatus',
@@ -889,9 +902,10 @@ const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','materialCost','smar
 /* Action chạy nền, có thanh trạng thái riêng → cũng không hiện lớp chặn. */
 const POST_BACKGROUND = ['smartgenRun','smartgenAutoSync'];
 
-async function fetchJson_(url, opt, label){
+async function fetchJson_(url, opt, label, budgetMs){
+  const budget = budgetMs || API_TIMEOUT_MS;
   const ctl = ('AbortController' in window) ? new AbortController() : null;
-  const timer = setTimeout(() => { try { ctl && ctl.abort(); } catch(e){} }, API_TIMEOUT_MS);
+  const timer = setTimeout(() => { try { ctl && ctl.abort(); } catch(e){} }, budget);
   try {
     const res = await fetch(url, Object.assign({}, opt, ctl ? { signal: ctl.signal } : {}));
     const txt = await res.text();
@@ -902,18 +916,20 @@ async function fetchJson_(url, opt, label){
       throw new Error('Apps Script trả về nội dung không đọc được. Nhiều khả năng bản deploy đã cũ — deploy lại "Web app · Anyone".');
     }
   } catch (e){
-    if (e && e.name === 'AbortError') throw new Error((label||'Yêu cầu') + ' quá 60 giây không phản hồi. Kiểm tra mạng rồi thử lại.');
+    if (e && e.name === 'AbortError')
+      throw new Error((label||'Yêu cầu') + ' không phản hồi sau ' + Math.round(budget/1000)
+        + ' giây. Apps Script đang bận hoặc mạng chập chờn — bấm ↻ Đồng bộ để thử lại.');
     throw e;
   } finally { clearTimeout(timer); }
 }
 
-async function apiGet(action, params){
+async function apiGet(action, params, budgetMs){
   const url = new URL(API_URL);
   url.searchParams.set('action', action);
   if (params) Object.keys(params).forEach(k => url.searchParams.set(k, params[k]));
   if (S.token) url.searchParams.set('token', S.token);
   if (S.user && S.user.login) url.searchParams.set('user', S.user.login);
-  return fetchJson_(url.toString(), {}, action);
+  return fetchJson_(url.toString(), {}, action, budgetMs);
 }
 
 const _postFlight = new Map();     // chữ ký lệnh → lời hứa đang bay
@@ -1052,8 +1068,25 @@ async function reloadAll(opt){
     if (API_URL.includes('PASTE_')) throw new Error('Chưa dán URL Apps Script vào biến API_URL');
     const params = {};
     if (o.fresh) params.fresh = '1';
-    if (wantQ)   params.full  = '1';
-    const d = await apiGet('bootstrap', Object.keys(params).length ? params : null);
+
+    /* SONG SONG, KHÔNG NỐI ĐUÔI VÀ CŨNG KHÔNG GỘP.
+     *
+     * Bản đầu nối đuôi nhau: bootstrap xong mới tới vật tư → tổng thời gian bằng
+     * TỔNG hai lượt, và bốn trang vật tư trống trơn suốt lượt thứ nhất.
+     *
+     * Bản thứ hai gộp làm một (full=1). Sửa được chuyện trống trơn, nhưng máy chủ
+     * vẫn phải làm đúng chừng ấy việc — chỉ khác là dồn vào MỘT lượt gọi, nên lượt
+     * đó dài gần bằng tổng hai lượt cũ và là lượt đầu tiên đụng trần thời gian.
+     *
+     * Bản này bắn HAI lượt cùng lúc: Apps Script chạy hai execution song song, nên
+     * tổng thời gian chỉ bằng lượt LÂU HƠN, không phải tổng. Thêm một cái lợi mà cả
+     * hai bản trước đều không có: gói chính về trước thì dựng màn hình NGAY, không
+     * phải ngồi đợi gói vật tư — mà đó mới là thứ người dùng nhìn vào đầu tiên.
+     *
+     * Server vẫn hỗ trợ full=1; giữ lại cho lần gọi nào thật sự cần một gói duy nhất. */
+    const qlvtP = wantQ ? loadQlvt(true) : null;
+
+    const d = await apiGet('bootstrap', Object.keys(params).length ? params : null, BOOTSTRAP_TIMEOUT_MS);
     if (!d.ok) throw new Error(d.error||'Lỗi bootstrap');
     if (d.rev) S.rev = Number(d.rev.n) || 0;
     if (d.perm) applyPerm_(d.perm, d.pending);
@@ -1077,14 +1110,22 @@ async function reloadAll(opt){
     $('nb-alerts').textContent = S.alerts.total;
     const ineff = computeInefficient(S.master.rows);
     const nbEff = $('nb-eff'); if (nbEff) nbEff.textContent = ineff.length;
-    $('ftTime').textContent = new Date().toLocaleTimeString('vi-VN');
+    $('ftTime').textContent = new Date().toLocaleTimeString('vi-VN')
+      + (d.cached ? ' · cache' : (d.ms ? ' · dựng ' + Math.round(d.ms/1000) + 's' : ''));
 
-    /* Gói vật tư đi kèm ngay trong response — không còn lượt gọi thứ hai. */
-    if (wantQ){
-      if (d.qlvt && d.qlvt.ok !== false){ applyQlvt_(d.qlvt); S.loadErr.qlvt = ''; }
-      else { S.loadErr.qlvt = (d.qlvt && d.qlvt.error) || 'Chưa cài module vật tư trên Apps Script'; Q.loaded = false; }
-      S.loading.qlvt = false;
+    /* Gói chính đã có → DỰNG MÀN HÌNH NGAY, chưa cần đợi gói vật tư.
+     * Người dùng thấy Tổng quan, Cảnh báo, Theo dõi bảo dưỡng đầy đủ trong khi bốn
+     * trang vật tư còn hiện khung chờ — hơn hẳn việc bắt cả app nhìn màn hình trắng
+     * cho tới khi mọi thứ về đủ. */
+    S.loading.core = false;
+    try { renderCurrent(); } catch(e){}
+
+    if (d.qlvt && d.qlvt.ok !== false){    // trường hợp gọi bằng full=1
+      applyQlvt_(d.qlvt); S.loadErr.qlvt = ''; S.loading.qlvt = false;
       try { _lastFetch.qlvt = Date.now(); } catch(e){}
+    } else if (qlvtP){
+      /* Gói vật tư hỏng KHÔNG được kéo theo cả hàm: 6 sheet chính đã về và đã hiện. */
+      try { await qlvtP; } catch(e){ S.loadErr.qlvt = e.message; Q.loaded = false; }
     }
 
     setStatus(false, `Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
@@ -7035,10 +7076,17 @@ function startSession_(d){
   loadDrafts();                 // khôi phục bản nháp chưa lưu (nếu có)
   renderSmartGenMenu();          // sinh nút/menu Smartgen ở topbar
 
-  /* MỘT LƯỢT GỌI LẤY TẤT CẢ — dữ liệu chính VÀ vật tư (full=1).
-   * Yêu cầu vận hành: đăng nhập phát là mọi hạng mục có dữ liệu, không phải bấm
-   * "Đồng bộ" rồi ngồi đợi ở từng trang một. */
-  reloadAll({ fresh:true, withQlvt:true })
+  /* KHÔNG dùng fresh:true ở đây nữa — và đây là thay đổi đáng giá nhất về tốc độ.
+   *
+   * fresh=1 bắt máy chủ BỎ QUA CACHE và đọc lại toàn bộ 16 sheet. Từ khi cache khoá
+   * theo mốc dữ liệu (egRev_), việc đó thành thừa: mốc chưa đổi nghĩa là không ai
+   * sửa gì, cache đang giữ đúng bản mới nhất. Ép đọc lại chỉ khiến MỌI người đăng
+   * nhập đều phải trả cái giá 30–90 giây, mỗi người một lần, mỗi ngày.
+   *
+   * Nay: người đầu tiên trong ngày (hoặc người đầu tiên sau khi có ai đó sửa dữ
+   * liệu) dựng cache, mọi người vào sau nhận trong vài trăm mili giây. Nút ↻ Đồng bộ
+   * vẫn giữ fresh:true cho lúc muốn chắc chắn tuyệt đối. */
+  reloadAll({ withQlvt:true })
     .then(() => { startAutoRefresh(); return autoSyncOnLogin(); });
 }
 
@@ -7543,7 +7591,9 @@ async function loadQlvt(silent){
     url.searchParams.set('action','qlvtBootstrap');
     url.searchParams.set('user', (S.user && S.user.login) || (S.user && S.user.name) || '');
     if (S.token) url.searchParams.set('token', S.token);
-    const d = await fetchJson_(url.toString(), {}, 'qlvtBootstrap');
+    /* Gói vật tư cũng là gói lớn (10 sheet + 5 bộ cảnh báo) — dùng chung ngân sách
+     * thời gian với bootstrap, không phải hạn ngắn của các lệnh ghi. */
+    const d = await fetchJson_(url.toString(), {}, 'qlvtBootstrap', BOOTSTRAP_TIMEOUT_MS);
     if (!d || !d.ok) throw new Error((d && d.error) || 'Chưa cài module vật tư trên Apps Script');
     if (d.rev) S.rev = Number(d.rev.n) || 0;
     if (d.perm) applyPerm_(d.perm);
