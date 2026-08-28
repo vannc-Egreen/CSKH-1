@@ -8245,7 +8245,7 @@ function viewStockLog_(){
     if (fType && qLoai_(g(r,'Loại phiếu')) !== fType) return false;
     if (fVt && String(g(r,'Mã VT')).trim() !== fVt) return false;
     if (!q) return true;
-    return `${g(r,'Mã máy')} ${g(r,'Trang trại')} ${g(r,'Tên vật tư')} ${g(r,'Lý do')} ${g(r,'Người thực hiện')}`
+    return `${g(r,'Mã máy')} ${g(r,'Trang trại')} ${g(r,'Tên vật tư')} ${g(r,'Lý do')} ${g(r,'Kỹ thuật viên')} ${g(r,'Người thực hiện')}`
       .toLowerCase().includes(q);
   });
   rows = rows.slice().reverse();                       // mới nhất lên đầu
@@ -8291,7 +8291,7 @@ function viewStockLog_(){
     </div>
 
     <div class="msf">
-      <input class="si" style="flex:1" placeholder="🔍 Tìm mã máy, trại, lý do, người thực hiện…"
+      <input class="si" style="flex:1" placeholder="🔍 Tìm mã máy, trại, lý do, kỹ thuật viên…"
              value="${esc(Q.f.moveQ||'')}" oninput="Q.f.moveQ=this.value;renderPage('stock')">
       <button class="btn bg-b sm" onclick="qPickMachine()">+ Lập phiếu</button>
       <button class="btn bg-gr sm" onclick="exportCsv(Q.moveLog,'nhat-ky-nhap-xuat-vat-tu')">⤓ CSV</button>
@@ -8299,19 +8299,37 @@ function viewStockLog_(){
 
     <div class="card"><div class="tw" style="max-height:64vh"><table>
       <thead><tr>
-        <th title="WHEN">Thời gian</th>
+        <th title="WHEN — thời điểm sự vụ xảy ra">Thời gian</th>
         <th title="WHERE">Mã máy</th><th title="WHERE">Trang trại</th>
         <th title="WHAT">Vật tư</th><th title="WHAT">Loại</th>
         <th style="text-align:right" title="WHAT">SL</th>
         ${Q.perm.viewPrice?'<th style="text-align:right" title="WHAT">Thành tiền</th>':''}
         <th style="text-align:right" title="đối chiếu">Tồn sau</th>
-        <th title="WHY">Lý do</th><th title="WHO">Người thực hiện</th><th title="HOW">Nguồn</th>
+        <th title="WHY">Lý do</th>
+        <th title="WHO — người trực tiếp làm ngoài hiện trường">Kỹ thuật viên</th>
+        <th title="WHO — tài khoản gõ phiếu">Người ghi</th>
+        <th title="HOW">Nguồn</th>
       </tr></thead>
       <tbody>${rows.slice(0,400).map(r=>{
         const loai = String(g(r,'Loại phiếu')).trim();
         const trai = String(g(r,'Trang trại'));
+        const kt   = String(g(r,'Kỹ thuật viên'));
+        const nguoi= String(g(r,'Người thực hiện'));
+        const ghiLuc = String(g(r,'Thời gian ghi sổ'));
+        const khi    = String(g(r,'Thời gian'));
+        /* Nhập bù sau nhiều giờ là chuyện bình thường, nhưng lệch quá 1 ngày thì đáng
+         * soi: hoặc gõ nhầm ngày, hoặc phiếu để quên cả tuần mới nhập. Đánh dấu bằng
+         * một chấm nhỏ thay vì cột riêng — cột riêng thì bảng đã 12 cột lại dài thêm. */
+        let treZ = '';
+        try {
+          const a = new Date(khi), b = new Date(ghiLuc);
+          if (!isNaN(a) && !isNaN(b)){
+            const d = Math.round((b - a) / 86400000);
+            if (d >= 1) treZ = `<span title="Ghi sổ lúc ${esc(ghiLuc)} — sau sự vụ ${d} ngày" style="color:var(--amb)"> ⏱</span>`;
+          }
+        } catch(e){}
         return `<tr>
-          <td style="font-size:11px;white-space:nowrap">${esc(String(g(r,'Thời gian')))}</td>
+          <td style="font-size:11px;white-space:nowrap" title="${ghiLuc?`Ghi vào sổ lúc ${esc(ghiLuc)}`:''}">${esc(khi)}${treZ}</td>
           <td><span class="mm">${esc(String(g(r,'Mã máy')))}</span></td>
           <td style="font-size:11px">${trai ? esc(trai)
             : `<span class="b bmu" title="Phiếu ghi trước khi sổ có cột này — không suy ngược được vì máy có thể đã đổi trại">—</span>`}</td>
@@ -8321,10 +8339,12 @@ function viewStockLog_(){
           ${Q.perm.viewPrice?`<td style="text-align:right;font-family:var(--mono)">${fmtVnd_(numOrNull_(g(r,'Thành tiền (đ)'))||0)}</td>`:''}
           <td style="text-align:right;font-family:var(--mono);color:var(--mu)">${nfd_(numOrNull_(g(r,'Tồn sau phiếu')))}</td>
           <td style="font-size:11px;max-width:240px">${esc(String(g(r,'Lý do')))}</td>
-          <td style="font-size:11px">${esc(String(g(r,'Người thực hiện')))}</td>
+          <td style="font-size:11px">${kt ? esc(kt)
+            : `<span class="b bmu" title="Phiếu ghi trước khi sổ có cột này">—</span>`}</td>
+          <td style="font-size:11px;color:var(--mu)">${esc(nguoi)}</td>
           <td style="font-size:10px;color:var(--mu)">${esc(String(g(r,'Nguồn ghi')))}</td>
         </tr>`;
-      }).join('') || '<tr><td colspan="11"><div class="empty">Chưa có phiếu nào khớp bộ lọc.</div></td></tr>'}</tbody>
+      }).join('') || '<tr><td colspan="13"><div class="empty">Chưa có phiếu nào khớp bộ lọc.</div></td></tr>'}</tbody>
     </table></div>
     ${rows.length>400?`<div class="cb" style="padding:8px 14px;font-size:11px;color:var(--mu)">
       Hiển thị 400 phiếu mới nhất trong ${nint_(rows.length)} phiếu khớp lọc — tải CSV để xem đủ.</div>`:''}
@@ -8606,7 +8626,13 @@ function qOpenMove(code, vt){
           <div class="ilh" id="qmTypeHint">Cấp hàng về trại — làm tăng tồn kho của máy này.</div></div>
         <div class="iw"><div class="il">Số lượng</div><input class="inp" id="qmQty" value="1"></div>
         ${Q.perm.editPrice?`<div class="iw"><div class="il">Đơn giá (đ)</div><input class="inp" id="qmPrice" placeholder="Bỏ trống = lấy theo định mức"></div>`:''}
-        <div class="iw"><div class="il">Người thực hiện</div><input class="inp" id="qmWho" value="${esc((S.user&&S.user.name)||'')}"></div>
+        <div class="iw"><div class="il">Thời điểm xảy ra sự vụ</div>
+          <input class="inp" type="datetime-local" id="qmKhi" value="${esc(qmbNowLocal_())}">
+          <div class="ilh">Sửa lại nếu việc đã làm từ trước — bảng chi phí tính theo mốc này.</div></div>
+        <div class="iw"><div class="il">Kỹ thuật viên thực hiện</div>
+          <input class="inp" id="qmKT" list="qmKTList" placeholder="Người trực tiếp làm ngoài trại">
+          <datalist id="qmKTList">${qmbKtList_().map(n=>`<option value="${esc(n)}">`).join('')}</datalist></div>
+        <div class="iw"><div class="il">Người ghi phiếu</div><input class="inp" id="qmWho" value="${esc((S.user&&S.user.name)||'')}"></div>
       </div>
       <div class="iw"><div class="il">Lý do / ghi chú</div><input class="inp" id="qmNote" placeholder="VD: cấp bổ sung đợt tháng 8"></div>
     </div>
@@ -8639,8 +8665,11 @@ async function qSubmitMove(){
     loai: ($('qmType')||{}).value, sl: ($('qmQty')||{}).value,
     donGia: ($('qmPrice')||{}).value || '',
     nguoi: ($('qmWho')||{}).value, lyDo: ($('qmNote')||{}).value,
+    kyThuat: String(($('qmKT')||{}).value||'').trim(),
+    ngay: String(($('qmKhi')||{}).value||'').trim(),
   };
   if (!payload.maCode || !payload.vt){ toast('Thiếu mã máy hoặc vật tư','err'); return; }
+  if (!payload.kyThuat){ toast('Chưa điền kỹ thuật viên thực hiện','err'); $('qmKT') && $('qmKT').focus(); return; }
   toast('Đang ghi phiếu…');
   const d = await apiPost({ action:'stockMove', payload, user:(S.user&&S.user.name)||'admin' });
   if (!d || !d.ok){ toast((d&&d.error)||'Lỗi ghi phiếu','err'); return; }
@@ -8661,16 +8690,18 @@ async function qSubmitMove(){
  *
  *  BA QUYẾT ĐỊNH THIẾT KẾ:
  *
- *  1 · BA CỘT NHẬP / XUẤT / KIỂM KÊ THAY VÌ MỘT Ô "SỐ LƯỢNG" + MỘT Ô CHỌN LOẠI.
+ *  1 · BỐN CỘT SỐ THAY VÌ MỘT Ô "SỐ LƯỢNG" + MỘT Ô CHỌN LOẠI.
  *      Ô chọn loại trên từng dòng nghĩa là mỗi dòng phải bấm hai lần và mắt phải đọc
- *      cả cột chọn để biết dòng đó đang làm gì. Ba cột thì nhìn một cái là thấy ngay
- *      "cột này cộng vào, cột kia trừ đi" — và điền nhầm cột là thấy ngay ở ô Tồn sau.
+ *      cả cột chọn để biết dòng đó đang làm gì. Bốn cột thì nhìn một cái là thấy ngay
+ *      dòng nào cộng vào, dòng nào trừ đi — và điền nhầm cột lộ ra ngay ở ô Tồn sau.
  *
- *  2 · "KIỂU XUẤT" (Sử dụng / Mang đi) ĐẶT CHUNG CHO CẢ PHIẾU, KHÔNG ĐẶT TỪNG DÒNG.
- *      Hai loại này khác nhau ở chỗ máy có phải gánh chi phí hay không — một tờ phiếu
- *      thực tế chỉ phục vụ một mục đích. Để từng dòng thì thêm 60 ô chọn mà 99% số lần
- *      đều để nguyên mặc định, đổi lại chỉ được một tình huống hiếm mà vẫn xử lý được
- *      bằng cách ghi hai phiếu.
+ *  2 · "SỬ DỤNG" VÀ "MANG ĐI" LÀ HAI CỘT RIÊNG, KHÔNG PHẢI MỘT Ô CHỌN CHUNG CHO CẢ PHIẾU.
+ *      Bản đầu đặt chung một ô "Kiểu xuất" cho cả tờ phiếu — SAI. Một lần thợ xuống trại
+ *      thường vừa thay vật tư cho chính máy đó (tiêu hao thật, máy phải gánh chi phí),
+ *      vừa lấy vài thứ mang sang trại khác (tài sản chỉ di chuyển, chi phí máy = 0). Ép
+ *      cả phiếu về một kiểu thì hoặc phải ghi hai tờ phiếu cho cùng một sự vụ, hoặc —
+ *      nguy hơn — người dùng để nguyên mặc định và toàn bộ hàng mang đi bị tính thành
+ *      chi phí của máy, làm sai bảng đ/kWh mà phải tới cuối tháng mới lộ.
  *
  *  3 · KHÔNG DỰNG LẠI MODAL KHI LỌC. Ô lọc chỉ ẩn/hiện dòng (style.display), không
  *      innerHTML lại — vì dựng lại là xoá sạch những số đã gõ ở các dòng đang ẩn.
@@ -8707,7 +8738,12 @@ function qOpenMachineSheet(code, focusVt){
     gia: qNormPrice_(model, v.ten),
   }));
   _mbCtx = { code: String(row['Mã máy']||c), model: model,
-             trai: String(row['Trại']||''), items: items };
+             trai: String(row['Trại']||''),
+             /* Gợi ý sẵn người vận hành của chính máy đó — phần lớn các phiếu là do
+              * người này làm, gõ lại tên mỗi lần là việc thừa. Vẫn sửa được. */
+             vanHanh: (() => { const m = qMachineOf_(row['Mã máy']);
+                               return m ? String(m._byLetter[COL.VH]||'').trim() : ''; })(),
+             items: items };
 
   openOv(qmbHtml_(focusVt));
   /* Con trỏ nhảy thẳng vào ô của vật tư vừa bấm — người dùng bấm vào ô "Nhớt" thì
@@ -8728,9 +8764,9 @@ function qmbHtml_(){
 
   const rowHtml = (v,i) => {
     const thieu = v.min != null && v.ton != null && v.ton < v.min;
-    const inp = (kind, ph) => `<input class="inp mbq" id="mb_${kind}_${i}" data-i="${i}" inputmode="decimal"
-        style="text-align:right;padding:4px 6px;font-size:12px;width:76px" placeholder="${ph}"
-        oninput="qmbCalc(${i})">`;
+    const inp = (kind, ph, mau) => `<input class="inp mbq" id="mb_${kind}_${i}" data-i="${i}" inputmode="decimal"
+        style="text-align:right;padding:4px 6px;font-size:12px;width:70px${mau?';border-color:'+mau:''}"
+        placeholder="${ph}" oninput="qmbCalc(${i})">`;
     return `<tr data-vt="${esc(v.vt)}" data-ten="${esc(v.ten.toLowerCase())}" data-thieu="${thieu?1:0}">
       <td style="position:sticky;left:0;background:#fff;z-index:2;min-width:150px">
         <b style="font-size:12px">${esc(v.ten)}</b>
@@ -8741,7 +8777,8 @@ function qmbHtml_(){
         ${v.min!=null?`<span style="font-size:9px;color:var(--mu)">/${v.min}</span>`:''}
       </td>
       <td style="text-align:right">${inp('nhap','+')}</td>
-      <td style="text-align:right">${inp('xuat','−')}</td>
+      <td style="text-align:right">${inp('dung','−')}</td>
+      <td style="text-align:right">${inp('mang','−')}</td>
       <td style="text-align:right">${inp('kk','=')}</td>
       ${canPrice?`<td style="text-align:right"><input class="inp" id="mb_gia_${i}"
         style="text-align:right;padding:4px 6px;font-size:12px;width:86px"
@@ -8759,17 +8796,19 @@ function qmbHtml_(){
 
     <div class="mb">
       <div class="fgrid fg2" style="margin-bottom:8px">
-        <div class="iw"><div class="il">Kiểu xuất — áp cho mọi dòng ở cột “Xuất”</div>
-          <select class="sel" id="mbKieuXuat" onchange="qmbHint()">
-            <option value="Xuất - Sử dụng">Xuất – Sử dụng (lắp/thay cho chính máy này)</option>
-            <option value="Xuất - Mang đi">Xuất – Mang đi (chuyển đi nơi khác, cho mượn)</option>
-          </select>
-          <div class="ilh" id="mbKieuHint">↓ Giảm tồn VÀ tính CHI PHÍ cho máy này (vào bảng đ/kWh).</div>
-        </div>
-        <div class="iw"><div class="il">Người thực hiện</div>
+        <div class="iw"><div class="il">Thời điểm xảy ra sự vụ</div>
+          <input class="inp" type="datetime-local" id="mbKhi" value="${esc(qmbNowLocal_())}">
+          <div class="ilh">Đang điền giờ hiện tại — sửa lại nếu việc đã làm từ trước
+            (VD thợ làm sáng, tối mới nhập). Mọi bảng chi phí tính theo mốc này.</div></div>
+        <div class="iw"><div class="il">Kỹ thuật viên thực hiện</div>
+          <input class="inp" id="mbKT" list="mbKTList" placeholder="Tên người trực tiếp làm ngoài trại"
+                 value="${esc(C.vanHanh||'')}">
+          <datalist id="mbKTList">${qmbKtList_().map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+          <div class="ilh">Khác với người gõ phiếu — để sau này truy được ai đã lắp/thay.</div></div>
+        <div class="iw"><div class="il">Người ghi phiếu</div>
           <input class="inp" id="mbWho" value="${esc((S.user&&S.user.name)||'')}"></div>
         <div class="iw"><div class="il">Lý do / ghi chú — dùng chung cho cả phiếu</div>
-          <input class="inp" id="mbNote" placeholder="VD: cấp hàng đợt tháng 8 · bảo dưỡng 2000h"></div>
+          <input class="inp" id="mbNote" placeholder="VD: bảo dưỡng 2000h · cấp hàng đợt tháng 8"></div>
       </div>
 
       <div class="msg" style="margin-bottom:6px">
@@ -8782,22 +8821,29 @@ function qmbHtml_(){
         <button class="btn bg-gr sm" onclick="qmbClear()">↺ Xoá số đã gõ</button>
       </div>
 
-      <div class="tw" style="max-height:44vh"><table class="qmat">
+      <div class="tw" style="max-height:42vh"><table class="qmat">
         <thead><tr>
           <th style="position:sticky;left:0;background:#f8fafc;z-index:3">Vật tư</th>
           <th style="text-align:right" title="Tồn hiện tại / tồn tối thiểu">Tồn</th>
           <th style="text-align:right;color:var(--g)" title="Cấp hàng về trại — cộng vào tồn">Nhập +</th>
-          <th style="text-align:right;color:var(--red)" title="Lấy ra dùng hoặc mang đi — trừ khỏi tồn">Xuất −</th>
+          <th style="text-align:right;color:var(--red)"
+              title="Lắp/thay cho CHÍNH máy này — giảm tồn VÀ tính chi phí cho máy (vào bảng đ/kWh)">
+            Xuất dùng −<br><span style="font-weight:400;font-size:9px;color:var(--mu)">máy gánh chi phí</span></th>
+          <th style="text-align:right;color:var(--amb)"
+              title="Chuyển sang nơi khác, cho mượn — giảm tồn nhưng chi phí máy = 0. Nhớ ghi phiếu Nhập ở nơi nhận.">
+            Mang đi −<br><span style="font-weight:400;font-size:9px;color:var(--mu)">chi phí máy = 0</span></th>
           <th style="text-align:right;color:var(--bl)" title="Đếm thực tế — ghi đè tồn về đúng số này">Kiểm kê =</th>
-          ${Q.perm.editPrice?'<th style="text-align:right" title="Bỏ trống = lấy đơn giá định mức Sheet 11">Đơn giá</th>':''}
+          ${canPrice?'<th style="text-align:right" title="Bỏ trống = lấy đơn giá định mức Sheet 11">Đơn giá</th>':''}
           <th style="text-align:right">Tồn sau</th>
         </tr></thead>
         <tbody id="mbBody">${C.items.map(rowHtml).join('')}</tbody>
       </table></div>
 
       <div style="font-size:11px;color:var(--mu);margin-top:8px">
-        Mỗi dòng chỉ được điền <b>một</b> trong ba cột. Dòng để trống thì bỏ qua — không sinh phiếu.
+        Mỗi dòng chỉ được điền <b>một</b> trong bốn cột số. Dòng để trống thì bỏ qua — không sinh phiếu.
         Kiểm kê ghi <b>0</b> là số thật (đếm được 0), khác với để trống.
+        <br><b style="color:var(--amb)">Xuất dùng và Mang đi có thể cùng nằm trong một tờ phiếu</b> —
+        điền vào cột tương ứng cho từng vật tư, không phải tách làm hai phiếu.
         <div id="mbSum" style="margin-top:6px;font-size:12px;color:var(--tx)"></div>
       </div>
     </div>
@@ -8808,13 +8854,23 @@ function qmbHtml_(){
     </div>`;
 }
 
-function qmbHint(){
-  const s = $('mbKieuXuat'), h = $('mbKieuHint'); if (!s||!h) return;
-  const mangDi = s.value === 'Xuất - Mang đi';
-  h.textContent = mangDi
-    ? '↓ Giảm tồn VÀ giảm giá trị tài sản kho, nhưng CHI PHÍ máy = 0. Nhớ ghi phiếu Nhập ở nơi nhận.'
-    : '↓ Giảm tồn VÀ tính CHI PHÍ cho máy này (vào bảng đ/kWh).';
-  h.style.color = mangDi ? 'var(--amb)' : '';
+/** Giờ hiện tại theo đúng định dạng <input type="datetime-local"> đòi: yyyy-MM-ddTHH:mm.
+ *  Cố ý KHÔNG dùng toISOString() — hàm đó quy về giờ UTC, ở Việt Nam sẽ hiện lùi 7 tiếng
+ *  và người dùng thấy phiếu của mình mang giờ đêm hôm trước. */
+function qmbNowLocal_(){
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** Gợi ý tên kỹ thuật viên: người vận hành đang khai ở Sheet 1 + người đã từng ghi phiếu.
+ *  Gõ tay vẫn được — đây là gợi ý cho nhanh, không phải danh sách đóng. */
+function qmbKtList_(){
+  const s = new Set();
+  try { (S.master.rows||[]).forEach(m => { const v = String(m._byLetter?.[COL.VH]||'').trim(); if (v) s.add(v); }); } catch(e){}
+  try { (Q.moveLog.rows||[]).forEach(r => {
+    ['Kỹ thuật viên','Người thực hiện'].forEach(h => { const v = String(r[h]||'').trim(); if (v && v!=='unknown') s.add(v); });
+  }); } catch(e){}
+  return [...s].sort((a,b)=>a.localeCompare(b,'vi')).slice(0,60);
 }
 
 /** Đọc 1 ô số. Trả null nếu để trống, NaN nếu gõ bậy. */
@@ -8826,21 +8882,38 @@ function qmbNum_(id){
   return isNaN(n) ? NaN : n;
 }
 
+/* Bốn cột số của một dòng, theo đúng thứ tự hiện trên bảng. Khai một chỗ để qmbCalc,
+ * qmbSum_, qmbClear và qmbSubmit không thể hiểu khác nhau về "dòng này đang làm gì" —
+ * bốn nơi tự liệt kê riêng thì thêm/bớt một cột là chắc chắn sót một nơi. */
+const MB_COTS = [
+  { k:'nhap', loai:'Nhập' },
+  { k:'dung', loai:'Xuất - Sử dụng' },
+  { k:'mang', loai:'Xuất - Mang đi' },
+  { k:'kk',   loai:'Kiểm kê' },
+];
+
+/** Đọc bốn ô của một dòng. Trả về mảng {k, loai, v} của những ô CÓ điền. */
+function qmbDaDien_(i){
+  return MB_COTS.map(c => ({ k:c.k, loai:c.loai, v: qmbNum_('mb_'+c.k+'_'+i) }))
+                .filter(x => x.v !== null);
+}
+
 /** Tính lại "Tồn sau" của 1 dòng + ô tổng cuối modal. Gọi sau mỗi lần gõ. */
 function qmbCalc(i){
   const C = _mbCtx; if (!C) return;
   const v = C.items[i]; if (!v) return;
-  const nhap = qmbNum_('mb_nhap_'+i), xuat = qmbNum_('mb_xuat_'+i), kk = qmbNum_('mb_kk_'+i);
-  const dienVao = [nhap,xuat,kk].filter(x => x !== null).length;
   const out = $('mb_sau_'+i); if (!out) return;
   const ton = v.ton != null ? v.ton : 0;
+  const dat = qmbDaDien_(i);
 
-  if (dienVao > 1){
+  if (dat.length > 1){
     out.innerHTML = '<span style="color:var(--red);font-size:11px">⚠ chỉ 1 cột</span>';
-  } else if (dienVao === 0){
+  } else if (dat.length === 0){
     out.textContent = '—'; out.style.color = '';
   } else {
-    let sau = kk !== null ? kk : (nhap !== null ? ton + nhap : ton - xuat);
+    const { loai, v: val } = dat[0];
+    let sau = loai === 'Kiểm kê' ? val
+            : (loai === 'Nhập' ? ton + val : ton - val);
     if (isNaN(sau)){ out.innerHTML = '<span style="color:var(--red);font-size:11px">⚠ không phải số</span>'; }
     else {
       sau = Math.round(sau*100)/100;
@@ -8853,22 +8926,30 @@ function qmbCalc(i){
 
 function qmbSum_(){
   const C = _mbCtx, box = $('mbSum'); if (!C || !box) return;
-  let nD = 0, tienNhap = 0, tienXuat = 0;
+  let nD = 0, tienNhap = 0, tienDung = 0, tienMang = 0, nMang = 0;
   C.items.forEach((v,i) => {
-    const nhap = qmbNum_('mb_nhap_'+i), xuat = qmbNum_('mb_xuat_'+i), kk = qmbNum_('mb_kk_'+i);
-    if ([nhap,xuat,kk].filter(x=>x!==null).length !== 1) return;
+    const dat = qmbDaDien_(i);
+    if (dat.length !== 1) return;
     nD++;
+    const { loai, v: val } = dat[0];
+    if (!isFinite(val)) return;
     const gEl = $('mb_gia_'+i);
     const g = (gEl && String(gEl.value||'').trim() !== '') ? Number(String(gEl.value).replace(/[,\s]/g,''))
             : (v.gia === '' ? 0 : v.gia);
     if (!isFinite(g)) return;
-    if (nhap !== null && isFinite(nhap)) tienNhap += nhap * g;
-    if (xuat !== null && isFinite(xuat)) tienXuat += xuat * g;
+    if (loai === 'Nhập')           tienNhap += val * g;
+    if (loai === 'Xuất - Sử dụng') tienDung += val * g;
+    if (loai === 'Xuất - Mang đi'){ tienMang += val * g; nMang++; }
   });
-  box.innerHTML = nD
-    ? `Sẽ ghi <b>${nint_(nD)}</b> dòng vào Sheet 15` +
-      (Q.perm.viewPrice ? ` · nhập <b style="color:var(--s3)">${fmtVnd_(tienNhap)}</b> · xuất <b style="color:var(--red)">${fmtVnd_(tienXuat)}</b>` : '')
-    : '<span style="color:var(--mu)">Chưa điền dòng nào.</span>';
+  if (!nD){ box.innerHTML = '<span style="color:var(--mu)">Chưa điền dòng nào.</span>'; return; }
+  const tien = Q.perm.viewPrice;
+  box.innerHTML = `Sẽ ghi <b>${nint_(nD)}</b> dòng vào Sheet 15`
+    + (tien ? ` · nhập <b style="color:var(--s3)">${fmtVnd_(tienNhap)}</b>`
+            + ` · dùng <b style="color:var(--red)">${fmtVnd_(tienDung)}</b>` : '')
+    /* Hàng mang đi hiện thành MỘT SỐ RIÊNG, không cộng vào "đã dùng": đây là tài sản
+     * đang di chuyển giữa hai trại, nơi nhận phải nhập đủ đúng số này. */
+    + (nMang ? ` · <span style="color:var(--amb)">mang đi ${nint_(nMang)} loại${tien?` <b>${fmtVnd_(tienMang)}</b>`:''}</span>
+        <span style="font-size:11px;color:var(--mu)">(chi phí máy = 0 · nhớ ghi phiếu Nhập ở nơi nhận)</span>` : '');
 }
 
 /** Lọc chỉ ẩn/hiện dòng — KHÔNG dựng lại bảng, nếu không số đã gõ ở dòng ẩn sẽ mất. */
@@ -8905,44 +8986,61 @@ function qmbFillMin(){
 function qmbClear(){
   const C = _mbCtx; if (!C) return;
   C.items.forEach((v,i) => {
-    ['nhap','xuat','kk','gia'].forEach(k => { const el = $('mb_'+k+'_'+i); if (el) el.value = ''; });
+    MB_COTS.concat([{k:'gia'}]).forEach(c => { const el = $('mb_'+c.k+'_'+i); if (el) el.value = ''; });
     qmbCalc(i);
   });
 }
 
 async function qmbSubmit(){
   const C = _mbCtx; if (!C) return;
-  const kieuXuat = ($('mbKieuXuat')||{}).value || 'Xuất - Sử dụng';
-  const nguoi = String(($('mbWho')||{}).value||'').trim() || (S.user&&S.user.name) || 'unknown';
-  const lyDo  = String(($('mbNote')||{}).value||'').trim();
+  const nguoi   = String(($('mbWho')||{}).value||'').trim() || (S.user&&S.user.name) || 'unknown';
+  const kyThuat = String(($('mbKT')||{}).value||'').trim();
+  const lyDo    = String(($('mbNote')||{}).value||'').trim();
+  const khi     = String(($('mbKhi')||{}).value||'').trim();
+
+  if (!kyThuat){ toast('Chưa điền kỹ thuật viên thực hiện','err'); $('mbKT') && $('mbKT').focus(); return; }
+  if (!khi){    toast('Chưa có thời điểm xảy ra sự vụ','err');    $('mbKhi') && $('mbKhi').focus(); return; }
+
+  /* Ngày ở TƯƠNG LAI gần như luôn là gõ nhầm (năm 2062 thay vì 2026). Cho qua thì phiếu
+   * rơi vào một tháng chưa tồn tại và biến mất khỏi mọi bảng chi phí — không ai đi tìm. */
+  const tKhi = new Date(khi);
+  if (isNaN(tKhi)){ toast('Thời điểm sự vụ không đọc được','err'); return; }
+  if (tKhi.getTime() > Date.now() + 6*3600*1000){
+    if (!confirm(`Thời điểm sự vụ (${khi.replace('T',' ')}) nằm ở tương lai. Có chắc không?`)) return;
+  }
 
   const lines = [], loi = [];
   C.items.forEach((v,i) => {
-    const nhap = qmbNum_('mb_nhap_'+i), xuat = qmbNum_('mb_xuat_'+i), kk = qmbNum_('mb_kk_'+i);
-    const dat = [['Nhập',nhap],['Xuất',xuat],['Kiểm kê',kk]].filter(x => x[1] !== null);
+    const dat = qmbDaDien_(i);
     if (!dat.length) return;
-    if (dat.length > 1){ loi.push(`${v.ten}: điền ${dat.length} cột cùng lúc — mỗi dòng chỉ được một.`); return; }
-    const [kind, val] = dat[0];
-    if (isNaN(val)){ loi.push(`${v.ten}: “${$('mb_'+(kind==='Nhập'?'nhap':kind==='Xuất'?'xuat':'kk')+'_'+i).value}” không phải số.`); return; }
+    if (dat.length > 1){
+      loi.push(`${v.ten}: điền ${dat.length} cột cùng lúc — mỗi dòng chỉ được một.`); return;
+    }
+    const { loai, v: val } = dat[0];
+    if (isNaN(val)){ loi.push(`${v.ten}: giá trị vừa gõ không phải số.`); return; }
     if (val < 0){ loi.push(`${v.ten}: số lượng không được âm.`); return; }
-    if (val === 0 && kind !== 'Kiểm kê') return;      // nhập/xuất 0 = không có gì xảy ra
+    if (val === 0 && loai !== 'Kiểm kê') return;      // nhập/xuất 0 = không có gì xảy ra
 
     const gEl = $('mb_gia_'+i);
     const donGia = (gEl && String(gEl.value||'').trim() !== '') ? String(gEl.value).replace(/[,\s]/g,'') : '';
-    lines.push({ vt: v.vt, loai: kind === 'Xuất' ? kieuXuat : kind, sl: val, donGia: donGia });
+    lines.push({ vt: v.vt, loai: loai, sl: val, donGia: donGia });
   });
 
   if (loi.length){ toast(loi[0], 'err'); return; }
   if (!lines.length){ toast('Chưa điền số vào dòng nào','err'); return; }
 
-  const nNhap = lines.filter(l=>l.loai==='Nhập').length;
-  const nXuat = lines.filter(l=>/^Xuất/.test(l.loai)).length;
-  const nKk   = lines.filter(l=>l.loai==='Kiểm kê').length;
-  const tomTat = [nNhap?`${nNhap} nhập`:'', nXuat?`${nXuat} xuất`:'', nKk?`${nKk} kiểm kê`:'']
-    .filter(Boolean).join(' · ');
-  if (!confirm(`Ghi phiếu cho máy ${C.code}:\n${tomTat}\n\nSổ 15 chỉ thêm, không sửa — ghi sai phải ghi phiếu bù. Tiếp tục?`)) return;
+  const dem = l => lines.filter(x => x.loai === l).length;
+  const tomTat = [
+    dem('Nhập')           ? `${dem('Nhập')} nhập` : '',
+    dem('Xuất - Sử dụng') ? `${dem('Xuất - Sử dụng')} xuất dùng` : '',
+    dem('Xuất - Mang đi') ? `${dem('Xuất - Mang đi')} mang đi` : '',
+    dem('Kiểm kê')        ? `${dem('Kiểm kê')} kiểm kê` : '',
+  ].filter(Boolean).join(' · ');
 
-  await qmbSend_({ maCode: C.code, lines, nguoi, lyDo }, false);
+  if (!confirm(`Ghi phiếu cho máy ${C.code}\nThời điểm: ${khi.replace('T',' ')}\nKỹ thuật viên: ${kyThuat}\n${tomTat}\n\n`
+    + 'Sổ 15 chỉ thêm, không sửa — ghi sai phải ghi phiếu bù. Tiếp tục?')) return;
+
+  await qmbSend_({ maCode: C.code, lines, nguoi, kyThuat, lyDo, ngay: khi }, false);
 }
 
 async function qmbSend_(payload, chapNhanAm){
