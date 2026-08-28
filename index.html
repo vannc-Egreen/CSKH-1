@@ -225,6 +225,16 @@ td{padding:9px 12px;vertical-align:middle}
 .toast{position:fixed;bottom:22px;right:22px;background:var(--s2);color:#fff;padding:11px 16px;border-radius:9px;font-size:12px;font-weight:500;box-shadow:var(--shl);z-index:9999;transform:translateY(80px);opacity:0;transition:.3s;max-width:320px}
 .toast.show{transform:translateY(0);opacity:1}
 .toast.ok{background:var(--g)}.toast.err{background:var(--red)}.toast.warn{background:var(--amb)}.toast.info{background:var(--bl)}
+/* Thanh "có dữ liệu mới đang chờ". Cố ý KHÔNG phải toast: toast tự tắt sau 3,6 giây,
+   mà tin này phải nằm đó cho tới khi người dùng nhập xong mới xử lý. Cũng cố ý không
+   phải hộp thoại: chặn màn hình giữa lúc đang gõ dở còn tệ hơn cả việc không báo. */
+.newdata{position:fixed;left:50%;transform:translateX(-50%) translateY(-90px);top:12px;z-index:9998;
+  background:#1e293b;color:#fff;border-radius:10px;box-shadow:var(--shl);padding:9px 12px;
+  display:flex;align-items:center;gap:10px;font-size:12px;opacity:0;transition:.28s;pointer-events:none;max-width:92vw}
+.newdata.show{transform:translateX(-50%) translateY(0);opacity:1;pointer-events:auto}
+.newdata b{font-weight:700}
+.newdata .nd-btn{background:var(--g);color:#fff;border:0;border-radius:7px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}
+.newdata .nd-x{background:transparent;border:0;color:#94a3b8;cursor:pointer;font-size:15px;line-height:1;padding:0 2px}
 
 .mob-menu-btn{display:none;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);cursor:pointer;margin-right:6px}
 .mob-menu-btn svg{width:18px;height:18px;stroke:#fff;stroke-width:2;fill:none}
@@ -458,6 +468,11 @@ td{padding:9px 12px;vertical-align:middle}
 </div>
 
 <div class="ov" id="ov"><div class="modal" id="mdl"></div></div>
+<div class="newdata" id="newData">
+  <span id="newDataTxt">Có dữ liệu mới</span>
+  <button class="nd-btn" onclick="applyPendingData()">↻ Cập nhật ngay</button>
+  <button class="nd-x" onclick="hideNewData_()" title="Để lát nữa">✕</button>
+</div>
 <div class="busyov" id="busyOv"><div class="busybox"><div class="busysp"></div><span id="busyTxt">Đang ghi vào Google Sheet…</span></div></div>
 <div class="toast" id="toast"></div>
 
@@ -950,12 +965,19 @@ async function apiPost(body){
   }
 
   if (!quiet) egBusy_(true, action === 'authChangePassword' ? 'Đang đổi mật khẩu…' : 'Đang ghi vào Google Sheet…');
+  /* Trong lúc lệnh ghi còn đang bay, tuyệt đối không cho bộ tự-đồng-bộ tải lại: server
+   * đã tăng mốc phiên bản NGAY khi nhận lệnh, nên máy của chính người vừa bấm Lưu cũng
+   * thấy "có thay đổi" và sẽ vẽ lại bằng dữ liệu CŨ (lệnh ghi chưa xong). */
+  if (writes) _writeInFlight++;
 
   const p = (async () => {
     try {
       const d = await fetchJson_(API_URL, {
         method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: sig
       }, action);
+      /* Ghi xong thì tự đón mốc mới của CHÍNH MÌNH — nếu không, 15 giây sau máy mình sẽ
+       * báo "có người vừa thay đổi dữ liệu" cho đúng thay đổi mình vừa làm. */
+      if (writes && d && d.ok){ _revPending = null; hideNewData_(); syncRevAfterWrite_(); }
       if (!quiet && d && d.ok){
         toast('✓ Đã ghi vào Google Sheet — đang cập nhật màn hình…', 'ok');
         autoDot_(true);
@@ -966,7 +988,7 @@ async function apiPost(body){
       return d;
     } finally {
       if (!quiet) egBusy_(false);
-      if (writes) _postFlight.delete(sig);
+      if (writes){ _postFlight.delete(sig); _writeInFlight = Math.max(0, _writeInFlight - 1); }
     }
   })();
 
@@ -1199,7 +1221,7 @@ function applyQlvt_(d){
     anomalyOk:d.anomalyOk||{ keys:[] },
   });
   /* Bản nháp danh mục chỉ được dựng lại khi KHÔNG có sửa đổi treo — xem chú thích ở Q.catDraft. */
-  if (!Q.catDirty) Q.catDraft = null;
+  if (!Q.catDirty){ Q.catDraft = null; Q.catBaseVt = null; }
   try { refreshAlerts(); } catch(e){}
   qUpdateBadges_();
 }
@@ -1337,9 +1359,104 @@ async function runSmartGenTask(taskId, extraParams){
  *  Kết quả đúng như yêu cầu: đăng nhập lần đầu → lấy bản mới nhất (fresh, bỏ qua cache);
  *  sau đó nằm im, chỉ động đậy khi thật sự có thay đổi từ người khác hoặc từ sheet.
  * ============================================================ */
-const REV_POLL_MS = 15000;
-let _revTimer = null;
-let _revBusy = false;
+/* ============================================================
+ *  KHOÁ CHỐNG MẤT THAO TÁC ĐANG NHẬP DỞ
+ * ------------------------------------------------------------
+ *  LỖI ĐÃ GẶP: A ghi xong bấm Lưu → mốc phiên bản tăng → máy của B thấy lệch và tự
+ *  tải lại → toàn bộ những gì B đang gõ dở bị dựng lại từ dữ liệu server, mất sạch.
+ *  Càng nhiều người dùng thì càng hay xảy ra, và B thường không hiểu vừa mất vì cái gì.
+ *
+ *  BA CÁCH VÀ VÌ SAO CHỌN CÁCH THỨ BA:
+ *   1) Tắt hẳn tự tải lại → quay về cảnh mỗi người nhìn một số liệu khác nhau.
+ *   2) Hỏi "có muốn tải lại không?" bằng confirm() → hộp thoại nhảy ra giữa lúc đang
+ *      gõ, cướp bàn phím; và nó vẫn nhảy ra lần nữa sau 15 giây.
+ *   3) HOÃN LẠI, BÁO BẰNG MỘT THANH KHÔNG CHẶN. Đang nhập liệu thì giữ thay đổi ở
+ *      trạng thái CHỜ và hiện một thanh nhỏ trên đầu; nhập xong (đóng modal, rời ô,
+ *      im 45 giây) thì tự áp. Không mất gì, không chặn ai.
+ *
+ *  "ĐANG NHẬP LIỆU" ĐƯỢC HIỂU LÀ — thiếu bất kỳ vế nào cũng đủ để mất dữ liệu thật:
+ *    · đang mở modal (mọi biểu mẫu của app đều nằm trong modal), hoặc
+ *    · có ô nhập đang được chọn — TRỪ ô tìm kiếm/lọc (class .si). Ô lọc mà cũng tính
+ *      là bận thì chỉ cần bấm vào ô tìm kiếm rồi bỏ đó là web đứng im cả buổi.
+ *    · vừa gõ vào một ô nhập liệu trong vòng 45 giây, hoặc
+ *    · có bản nháp danh mục vật tư chưa lưu (Q.catDirty), hoặc
+ *    · đang có lệnh ghi bay lên server (_writeInFlight) — tải lại lúc đó sẽ vẽ lại
+ *      bằng dữ liệu CŨ vì lệnh ghi chưa tới nơi.
+ * ============================================================ */
+const REV_POLL_MS   = 15000;
+const EDIT_GRACE_MS = 45000;     // im bàn phím bao lâu thì coi là đã nhập xong
+let _revTimer   = null;
+let _revBusy    = false;
+let _revPending = null;          // {n, by} — thay đổi của người khác đang chờ áp
+let _editDepth  = 0;             // đếm biểu mẫu tự khai báo đang mở
+let _lastTypeAt = 0;             // mốc gõ phím gần nhất vào một ô NHẬP LIỆU
+let _writeInFlight = 0;          // số lệnh ghi đang bay lên server
+
+/** Cho code khác tự khai "đang mở biểu mẫu" — dùng cặp, luôn endEdit trong finally. */
+function beginEdit(){ _editDepth++; }
+function endEdit(){ _editDepth = Math.max(0, _editDepth - 1); }
+
+/** Ô này có phải chỗ NHẬP LIỆU không? Ô tìm kiếm/lọc thì không tính. */
+function isEntryField_(el){
+  if (!el || !el.tagName) return false;
+  if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && el.isContentEditable !== true) return false;
+  if (el.classList && el.classList.contains('si')) return false;      // ô tìm kiếm
+  if (el.type === 'search') return false;
+  const id = String(el.id||'');
+  if (/search|Search|^q.*Q$/.test(id)) return false;
+  return true;
+}
+
+function isUserBusy_(){
+  if (_editDepth > 0) return true;
+  if (_writeInFlight > 0) return true;
+  const ov = $('ov');
+  if (ov && ov.classList.contains('show')) return true;
+  try { if (Q && Q.catDirty) return true; } catch(e){}
+  if (isEntryField_(document.activeElement)) return true;
+  if (_lastTypeAt && (Date.now() - _lastTypeAt) < EDIT_GRACE_MS) return true;
+  return false;
+}
+
+/* Bắt Ở TẦNG CAPTURE trên document: các ô nhập được dựng lại liên tục bằng innerHTML
+ * nên không thể gắn tay từng ô — gắn một lần ở đây là bắt được cả những ô sinh ra sau. */
+document.addEventListener('input',  e => { if (isEntryField_(e.target)) _lastTypeAt = Date.now(); }, true);
+document.addEventListener('change', e => { if (isEntryField_(e.target)) _lastTypeAt = Date.now(); }, true);
+
+function showNewData_(by){
+  const el = $('newData'), tx = $('newDataTxt');
+  if (!el || !tx) return;
+  const ai = String(by||'').trim();
+  tx.innerHTML = (ai && ai !== (S.user && S.user.name))
+    ? `<b>${esc(ai)}</b> vừa thay đổi dữ liệu · đang giữ lại vì anh/chị đang nhập dở`
+    : `Google Sheet vừa thay đổi · đang giữ lại vì anh/chị đang nhập dở`;
+  el.classList.add('show');
+}
+function hideNewData_(){ const el = $('newData'); if (el) el.classList.remove('show'); }
+
+/** Người dùng chủ động bấm "Cập nhật ngay". */
+async function applyPendingData(){
+  if (!_revPending) { hideNewData_(); return; }
+  const ov = $('ov');
+  if (ov && ov.classList.contains('show')){
+    if (!confirm('Cập nhật ngay sẽ đóng biểu mẫu đang mở. Những gì chưa bấm Lưu có thể mất. Tiếp tục?')) return;
+    closeOv();
+  }
+  await applyRev_(_revPending);
+}
+
+async function applyRev_(p){
+  _revPending = null;
+  hideNewData_();
+  S.rev = Number(p.n) || S.rev;
+  await reloadAll({ silent:true, withQlvt:true });
+  renderCurrent();
+  if (S.perm.manageUser) ensureUsers_(true);
+  const ai = String(p.by || '').trim();
+  toast(ai && ai !== (S.user && S.user.name)
+    ? `↻ ${ai} vừa thay đổi dữ liệu — đã cập nhật`
+    : '↻ Dữ liệu trên Google Sheet vừa thay đổi — đã cập nhật', 'ok');
+}
 
 function startAutoRefresh(){
   stopAutoRefresh();
@@ -1356,11 +1473,14 @@ function stopAutoRefresh(){ if (_revTimer) clearInterval(_revTimer); _revTimer =
 
 async function checkDataVersion_(){
   if (_revBusy) return;
-  /* Đang mở modal thì KHÔNG tải lại. Tải lại lúc đó sẽ dựng lại trang phía sau và có
-   * thể xoá mất những gì đang gõ dở trong form. Lần kiểm tra sau (15 s nữa) vẫn thấy
-   * mốc lệch, nên không mất thay đổi nào — chỉ hoãn lại. */
-  const ov = $('ov');
-  if (ov && ov.classList.contains('show')) return;
+
+  /* ĐANG NHẬP DỞ MÀ ĐÃ CÓ THAY ĐỔI CHỜ SẴN: không cần hỏi server lại, chỉ nhắc thanh
+   * báo còn đó. Hỏi thêm cũng không làm được gì khác. */
+  if (_revPending && isUserBusy_()){ showNewData_(_revPending.by); return; }
+
+  /* Nhập xong rồi mà vẫn còn thay đổi treo → áp ngay, không đợi người dùng bấm.
+   * Đây mới là hành vi đúng: người dùng không phải nhớ mình đang nợ một lần cập nhật. */
+  if (_revPending && !isUserBusy_()){ await applyRev_(_revPending); return; }
 
   _revBusy = true;
   try {
@@ -1370,14 +1490,15 @@ async function checkDataVersion_(){
     if (S.rev === null || S.rev === undefined){ S.rev = n; return; }
     if (n === S.rev) return;
 
-    S.rev = n;
-    const ai = String(d.rev.by || '').trim();
-    await reloadAll({ silent:true, withQlvt:true });
-    renderCurrent();
-    if (S.perm.manageUser) ensureUsers_(true);
-    toast(ai && ai !== (S.user && S.user.name)
-      ? `↻ ${ai} vừa thay đổi dữ liệu — đã cập nhật`
-      : '↻ Dữ liệu trên Google Sheet vừa thay đổi — đã cập nhật', 'ok');
+    /* MẤU CHỐT: tải lại là VẼ LẠI TOÀN BỘ TRANG. Nếu ngay lúc đó người dùng đang gõ
+     * thì mọi thứ chưa bấm Lưu biến mất — đúng lỗi mà anh Vân gặp. Nên: xếp vào hàng
+     * chờ, hiện thanh báo, và tự áp ở nhịp sau khi người dùng đã nhập xong. */
+    if (isUserBusy_()){
+      _revPending = { n:n, by:String(d.rev.by||'') };
+      showNewData_(_revPending.by);
+      return;
+    }
+    await applyRev_({ n:n, by:String(d.rev.by||'') });
   } catch(e){
     /* Mất mạng chốc lát là chuyện thường. Im lặng bỏ qua: báo lỗi mỗi 15 giây thì
      * người dùng sẽ tắt luôn cả những cảnh báo thật. */
@@ -6931,6 +7052,9 @@ function closeOv(){
   _currentEffModalRow = null;
   $('ov').classList.remove('show');
   document.body.style.overflow='';
+  /* Đóng biểu mẫu = có thể đã nhập xong. Xét lại ngay thay vì đợi hết nhịp 15 giây —
+   * nhưng vẫn đi qua checkDataVersion_ để nó tự kiểm tra các điều kiện "còn bận" khác. */
+  setTimeout(() => { try { checkDataVersion_(); } catch(e){} }, 400);
 }
 document.addEventListener('DOMContentLoaded', ()=>{
   /* Enter ở ô mật khẩu = bấm nút. Bỏ qua chi tiết này thì người dùng gõ xong
@@ -7515,7 +7639,7 @@ const Q = {
   /* Bản nháp danh mục vật tư đang sửa trên trang "Danh mục vật tư".
    * catDirty = true thì lần tự-tải-lại nền KHÔNG được dựng lại bản nháp — nếu không,
    * mấy dòng vừa gõ sẽ biến mất giữa chừng mà người dùng không hiểu vì sao. */
-  catDraft:null, catDirty:false,
+  catDraft:null, catDirty:false, catBaseVt:null,
   normLinks:{},
 
   maintLog:{ headers:[], rows:[], total:0 }, moveLog:{ headers:[], rows:[], total:0 },
@@ -7981,9 +8105,12 @@ function viewStockOnHand_(){
     const ton = num2_(qv_(r,v.ten,'Tồn'));
     const min = num2_(qv_(r,v.ten,'Tối thiểu'));
     const short = min!=null && ton!=null && ton<min;
+    /* Bấm vào ô cũng mở PHIẾU GỘP của cả máy (không phải biểu mẫu 1 vật tư như trước),
+     * chỉ khác là con trỏ nhảy sẵn vào đúng vật tư vừa bấm. Người dùng thường bấm vào
+     * ô đỏ mình nhìn thấy trước, rồi mới nhớ ra còn mấy thứ khác cùng cần cấp. */
     return `<td style="text-align:right;${short?'background:#fef2f2':''}"
-      onclick="qOpenMove('${esc(String(r['Mã máy']||''))}','${esc(v.vt)}')"
-      title="${esc(v.ten)} — bấm để nhập/xuất" class="qtd">
+      onclick="qOpenMachineSheet('${esc(String(r['Mã máy']||''))}','${esc(v.vt)}')"
+      title="${esc(v.ten)} — bấm để mở phiếu của máy này" class="qtd">
       <b style="${short?'color:var(--red)':''}">${ton!=null?ton:0}</b>
       ${min!=null?`<span style="font-size:9px;color:var(--mu)">/${min}</span>`:''}
     </td>`;
@@ -7994,7 +8121,9 @@ function viewStockOnHand_(){
       <h1>Kho vật tư gửi tại trại</h1>
       <p>${all.length} máy · ${items.length} loại vật tư ·
         <b style="color:var(--red)">${nint_(nShort)} máy đang thiếu</b>
-        <br><span style="font-size:11px;color:var(--mu)">Ô hiển thị <b>tồn/tối thiểu</b> · bấm vào ô để lập phiếu Nhập / Xuất / Kiểm kê</span></p>
+        <br><span style="font-size:11px;color:var(--mu)">Ô hiển thị <b>tồn/tối thiểu</b> ·
+        bấm vào <b>mã máy</b> để mở phiếu cho <b>toàn bộ vật tư của máy đó</b> — nhập, xuất, kiểm kê
+        điền một lượt rồi lưu một lần</span></p>
     </div>
 
     <div class="card" style="border-left:3px solid var(--s3)">
@@ -8066,7 +8195,7 @@ function viewStockOnHand_(){
         <button class="fchip ${Q.f.stockOnlyShort?'on':''}"
           onclick="Q.f.stockOnlyShort=!Q.f.stockOnlyShort;renderPage('stock')">Chỉ máy đang thiếu · ${nint_(nShort)}</button>
         ${nLoc?`<button class="btn bg-gr sm" onclick="qClearStockFilters()">↺ Bỏ lọc · ${nLoc}</button>`:''}
-        <button class="btn bg-b sm" onclick="qOpenMove('','')">+ Lập phiếu</button>
+        <button class="btn bg-b sm" onclick="qPickMachine()">+ Lập phiếu</button>
         <button class="btn bg-gr sm" onclick="exportCsv(Q.stock,'ton-kho-vat-tu')">⤓ CSV</button>
       </div>
     </div>
@@ -8080,7 +8209,11 @@ function viewStockOnHand_(){
           onclick="qOpenNorm('${esc(v.vt)}')" style="text-align:right;cursor:pointer">${esc(v.ten)} <span style="opacity:.45">✎</span><br><span style="font-weight:400;color:var(--mu)">${esc(v.dvt)}</span></th>`).join('')}
       </tr></thead>
       <tbody>${rows.map(r=>`<tr>
-        <td style="position:sticky;left:0;background:#fff;z-index:2"><span class="mm">${esc(String(r['Mã máy']||''))}</span>
+        <td style="position:sticky;left:0;background:#fff;z-index:2;cursor:pointer"
+            onclick="qOpenMachineSheet('${esc(String(r['Mã máy']||''))}','')"
+            title="Bấm để mở phiếu Nhập / Xuất / Kiểm kê cho TOÀN BỘ vật tư của máy này">
+          <span class="mm">${esc(String(r['Mã máy']||''))}</span>
+          <span style="opacity:.45;font-size:11px">📝</span>
           ${Number(r['Số vật tư thiếu'])>0?`<span class="b br" style="margin-left:4px">${r['Số vật tư thiếu']}</span>`:''}</td>
         <td style="font-size:11px">${esc(String(r['Trại']||''))}</td>
         <td style="font-size:11px;color:var(--mu)">${esc(qLoaiHinh_(r))}</td>
@@ -8160,7 +8293,7 @@ function viewStockLog_(){
     <div class="msf">
       <input class="si" style="flex:1" placeholder="🔍 Tìm mã máy, trại, lý do, người thực hiện…"
              value="${esc(Q.f.moveQ||'')}" oninput="Q.f.moveQ=this.value;renderPage('stock')">
-      <button class="btn bg-b sm" onclick="qOpenMove('','')">+ Lập phiếu</button>
+      <button class="btn bg-b sm" onclick="qPickMachine()">+ Lập phiếu</button>
       <button class="btn bg-gr sm" onclick="exportCsv(Q.moveLog,'nhat-ky-nhap-xuat-vat-tu')">⤓ CSV</button>
     </div>
 
@@ -8516,6 +8649,351 @@ async function qSubmitMove(){
 }
 
 /* ============================================================================
+ *  PHIẾU GỘP THEO MÃ MÁY — bấm vào mã máy, làm hết một lượt
+ * ----------------------------------------------------------------------------
+ *  VÌ SAO PHẢI ĐỔI: bản cũ bắt bấm vào TỪNG Ô vật tư, mỗi ô mở một biểu mẫu, chọn lại
+ *  mã máy, chọn loại phiếu, gõ số, bấm Lưu, đợi ghi xong. Xe hàng xuống trại nhập 12
+ *  thứ là làm đúng chuỗi đó 12 lần — khoảng 5 phút thao tác và 12 lần chờ Google Sheet.
+ *  Tệ hơn: bỏ dở giữa chừng thì kho ghi được một nửa, không có gì đánh dấu là còn dở.
+ *
+ *  BẢN NÀY: một mã máy = một tờ phiếu. Bày sẵn MỌI vật tư của máy đó cùng tồn hiện có,
+ *  người dùng điền vào ô nào thì dòng đó có hiệu lực, bấm Lưu một lần.
+ *
+ *  BA QUYẾT ĐỊNH THIẾT KẾ:
+ *
+ *  1 · BA CỘT NHẬP / XUẤT / KIỂM KÊ THAY VÌ MỘT Ô "SỐ LƯỢNG" + MỘT Ô CHỌN LOẠI.
+ *      Ô chọn loại trên từng dòng nghĩa là mỗi dòng phải bấm hai lần và mắt phải đọc
+ *      cả cột chọn để biết dòng đó đang làm gì. Ba cột thì nhìn một cái là thấy ngay
+ *      "cột này cộng vào, cột kia trừ đi" — và điền nhầm cột là thấy ngay ở ô Tồn sau.
+ *
+ *  2 · "KIỂU XUẤT" (Sử dụng / Mang đi) ĐẶT CHUNG CHO CẢ PHIẾU, KHÔNG ĐẶT TỪNG DÒNG.
+ *      Hai loại này khác nhau ở chỗ máy có phải gánh chi phí hay không — một tờ phiếu
+ *      thực tế chỉ phục vụ một mục đích. Để từng dòng thì thêm 60 ô chọn mà 99% số lần
+ *      đều để nguyên mặc định, đổi lại chỉ được một tình huống hiếm mà vẫn xử lý được
+ *      bằng cách ghi hai phiếu.
+ *
+ *  3 · KHÔNG DỰNG LẠI MODAL KHI LỌC. Ô lọc chỉ ẩn/hiện dòng (style.display), không
+ *      innerHTML lại — vì dựng lại là xoá sạch những số đã gõ ở các dòng đang ẩn.
+ * ========================================================================== */
+let _mbCtx = null;   // { code, model, items:[{vt,ten,dvt,ton,min,gia}] }
+
+/** Đơn giá định mức của (dòng máy × vật tư) — nguồn Sheet 11, để gợi ý sẵn. */
+function qNormPrice_(model, ten){
+  const r = (Q.norms.rows||[]).find(x =>
+    String(x['Dòng máy']||'').trim().toUpperCase() === String(model||'').trim().toUpperCase());
+  const raw = r ? r[ten + QSEP + 'Đơn giá (đ)'] : '';
+  const n = numOrNull_(raw);
+  return n == null ? '' : n;
+}
+
+function qOpenMachineSheet(code, focusVt){
+  const c = String(code||'').trim();
+  const row = (Q.stock.rows||[]).find(r => String(r['Mã máy']||'').trim().toUpperCase() === c.toUpperCase());
+  if (!row){ toast('Không tìm thấy máy '+c+' trong bảng tồn kho','err'); return; }
+  if (!S.perm.editData){
+    openOv(`<div class="mh"><div><h2>${esc(c)}</h2><p>Kho vật tư tại trại</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+      <div class="mb"><div class="empty"><div class="ei">🔒</div>
+        Tài khoản của anh/chị chỉ được XEM, chưa ghi được phiếu vật tư.</div></div>
+      <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`);
+    return;
+  }
+
+  const model = String(row['Dòng máy']||'').trim();
+  const items = qItems_(false).map(v => ({
+    vt: v.vt, ten: v.ten, dvt: v.dvt,
+    ton: num2_(qv_(row, v.ten, 'Tồn')),
+    min: num2_(qv_(row, v.ten, 'Tối thiểu')),
+    gia: qNormPrice_(model, v.ten),
+  }));
+  _mbCtx = { code: String(row['Mã máy']||c), model: model,
+             trai: String(row['Trại']||''), items: items };
+
+  openOv(qmbHtml_(focusVt));
+  /* Con trỏ nhảy thẳng vào ô của vật tư vừa bấm — người dùng bấm vào ô "Nhớt" thì
+   * việc đầu tiên họ định làm gần như chắc chắn là gõ số cho Nhớt. */
+  setTimeout(() => {
+    const i = items.findIndex(x => x.vt === String(focusVt||'').trim().toUpperCase());
+    if (i >= 0){
+      const el = $('mb_nhap_'+i);
+      if (el){ el.focus(); el.select && el.select(); el.closest('tr').style.background = '#fffbeb'; }
+    }
+  }, 60);
+}
+
+function qmbHtml_(){
+  const C = _mbCtx; if (!C) return '';
+  const gia = Q.perm.viewPrice;
+  const canPrice = Q.perm.editPrice;
+
+  const rowHtml = (v,i) => {
+    const thieu = v.min != null && v.ton != null && v.ton < v.min;
+    const inp = (kind, ph) => `<input class="inp mbq" id="mb_${kind}_${i}" data-i="${i}" inputmode="decimal"
+        style="text-align:right;padding:4px 6px;font-size:12px;width:76px" placeholder="${ph}"
+        oninput="qmbCalc(${i})">`;
+    return `<tr data-vt="${esc(v.vt)}" data-ten="${esc(v.ten.toLowerCase())}" data-thieu="${thieu?1:0}">
+      <td style="position:sticky;left:0;background:#fff;z-index:2;min-width:150px">
+        <b style="font-size:12px">${esc(v.ten)}</b>
+        <div style="font-size:10px;color:var(--mu)">${esc(v.dvt||'')}${gia&&v.gia!==''?` · ${fmtVnd_(v.gia)}`:''}</div>
+      </td>
+      <td style="text-align:right;font-family:var(--mono);${thieu?'background:#fef2f2':''}">
+        <b style="${thieu?'color:var(--red)':''}">${v.ton!=null?v.ton:0}</b>
+        ${v.min!=null?`<span style="font-size:9px;color:var(--mu)">/${v.min}</span>`:''}
+      </td>
+      <td style="text-align:right">${inp('nhap','+')}</td>
+      <td style="text-align:right">${inp('xuat','−')}</td>
+      <td style="text-align:right">${inp('kk','=')}</td>
+      ${canPrice?`<td style="text-align:right"><input class="inp" id="mb_gia_${i}"
+        style="text-align:right;padding:4px 6px;font-size:12px;width:86px"
+        placeholder="${v.gia!==''?esc(String(v.gia)):'—'}"></td>`:''}
+      <td style="text-align:right;font-family:var(--mono);font-size:12px" id="mb_sau_${i}">—</td>
+    </tr>`;
+  };
+
+  return `
+    <div class="mh"><div>
+      <h2>Phiếu vật tư · <span class="mm">${esc(C.code)}</span></h2>
+      <p>${esc(C.trai||'—')}${C.model?` · dòng máy ${esc(C.model)}`:''} —
+         điền số vào những vật tư cần, <b>bấm Lưu một lần</b> cho cả tờ phiếu.</p>
+    </div><button class="mcl" onclick="closeOv()">✕</button></div>
+
+    <div class="mb">
+      <div class="fgrid fg2" style="margin-bottom:8px">
+        <div class="iw"><div class="il">Kiểu xuất — áp cho mọi dòng ở cột “Xuất”</div>
+          <select class="sel" id="mbKieuXuat" onchange="qmbHint()">
+            <option value="Xuất - Sử dụng">Xuất – Sử dụng (lắp/thay cho chính máy này)</option>
+            <option value="Xuất - Mang đi">Xuất – Mang đi (chuyển đi nơi khác, cho mượn)</option>
+          </select>
+          <div class="ilh" id="mbKieuHint">↓ Giảm tồn VÀ tính CHI PHÍ cho máy này (vào bảng đ/kWh).</div>
+        </div>
+        <div class="iw"><div class="il">Người thực hiện</div>
+          <input class="inp" id="mbWho" value="${esc((S.user&&S.user.name)||'')}"></div>
+        <div class="iw"><div class="il">Lý do / ghi chú — dùng chung cho cả phiếu</div>
+          <input class="inp" id="mbNote" placeholder="VD: cấp hàng đợt tháng 8 · bảo dưỡng 2000h"></div>
+      </div>
+
+      <div class="msg" style="margin-bottom:6px">
+        <!-- class "si" cố ý: bộ khoá chống mất thao tác coi ô có class si là ô tìm kiếm,
+             không phải ô nhập liệu, nên gõ ở đây không làm treo việc tự cập nhật. -->
+        <input class="si" id="mbFind" style="flex:1" placeholder="🔍 Lọc nhanh tên vật tư…"
+               oninput="qmbFilter()">
+        <button class="fchip" id="mbOnlyShort" onclick="qmbToggleShort()">Chỉ vật tư đang thiếu</button>
+        <button class="btn bg-b sm" onclick="qmbFillMin()" title="Điền cột Nhập = tối thiểu − tồn cho mọi dòng đang thiếu">↧ Bù về tối thiểu</button>
+        <button class="btn bg-gr sm" onclick="qmbClear()">↺ Xoá số đã gõ</button>
+      </div>
+
+      <div class="tw" style="max-height:44vh"><table class="qmat">
+        <thead><tr>
+          <th style="position:sticky;left:0;background:#f8fafc;z-index:3">Vật tư</th>
+          <th style="text-align:right" title="Tồn hiện tại / tồn tối thiểu">Tồn</th>
+          <th style="text-align:right;color:var(--g)" title="Cấp hàng về trại — cộng vào tồn">Nhập +</th>
+          <th style="text-align:right;color:var(--red)" title="Lấy ra dùng hoặc mang đi — trừ khỏi tồn">Xuất −</th>
+          <th style="text-align:right;color:var(--bl)" title="Đếm thực tế — ghi đè tồn về đúng số này">Kiểm kê =</th>
+          ${Q.perm.editPrice?'<th style="text-align:right" title="Bỏ trống = lấy đơn giá định mức Sheet 11">Đơn giá</th>':''}
+          <th style="text-align:right">Tồn sau</th>
+        </tr></thead>
+        <tbody id="mbBody">${C.items.map(rowHtml).join('')}</tbody>
+      </table></div>
+
+      <div style="font-size:11px;color:var(--mu);margin-top:8px">
+        Mỗi dòng chỉ được điền <b>một</b> trong ba cột. Dòng để trống thì bỏ qua — không sinh phiếu.
+        Kiểm kê ghi <b>0</b> là số thật (đếm được 0), khác với để trống.
+        <div id="mbSum" style="margin-top:6px;font-size:12px;color:var(--tx)"></div>
+      </div>
+    </div>
+
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
+      <button class="btn bg-g" onclick="qmbSubmit()">✓ Ghi cả phiếu</button>
+    </div>`;
+}
+
+function qmbHint(){
+  const s = $('mbKieuXuat'), h = $('mbKieuHint'); if (!s||!h) return;
+  const mangDi = s.value === 'Xuất - Mang đi';
+  h.textContent = mangDi
+    ? '↓ Giảm tồn VÀ giảm giá trị tài sản kho, nhưng CHI PHÍ máy = 0. Nhớ ghi phiếu Nhập ở nơi nhận.'
+    : '↓ Giảm tồn VÀ tính CHI PHÍ cho máy này (vào bảng đ/kWh).';
+  h.style.color = mangDi ? 'var(--amb)' : '';
+}
+
+/** Đọc 1 ô số. Trả null nếu để trống, NaN nếu gõ bậy. */
+function qmbNum_(id){
+  const el = $(id); if (!el) return null;
+  const raw = String(el.value||'').trim();
+  if (raw === '') return null;
+  const n = Number(raw.replace(/[,\s]/g,'.'));
+  return isNaN(n) ? NaN : n;
+}
+
+/** Tính lại "Tồn sau" của 1 dòng + ô tổng cuối modal. Gọi sau mỗi lần gõ. */
+function qmbCalc(i){
+  const C = _mbCtx; if (!C) return;
+  const v = C.items[i]; if (!v) return;
+  const nhap = qmbNum_('mb_nhap_'+i), xuat = qmbNum_('mb_xuat_'+i), kk = qmbNum_('mb_kk_'+i);
+  const dienVao = [nhap,xuat,kk].filter(x => x !== null).length;
+  const out = $('mb_sau_'+i); if (!out) return;
+  const ton = v.ton != null ? v.ton : 0;
+
+  if (dienVao > 1){
+    out.innerHTML = '<span style="color:var(--red);font-size:11px">⚠ chỉ 1 cột</span>';
+  } else if (dienVao === 0){
+    out.textContent = '—'; out.style.color = '';
+  } else {
+    let sau = kk !== null ? kk : (nhap !== null ? ton + nhap : ton - xuat);
+    if (isNaN(sau)){ out.innerHTML = '<span style="color:var(--red);font-size:11px">⚠ không phải số</span>'; }
+    else {
+      sau = Math.round(sau*100)/100;
+      out.textContent = sau;
+      out.style.color = sau < 0 ? 'var(--red)' : (v.min != null && sau < v.min ? 'var(--amb)' : 'var(--g)');
+    }
+  }
+  qmbSum_();
+}
+
+function qmbSum_(){
+  const C = _mbCtx, box = $('mbSum'); if (!C || !box) return;
+  let nD = 0, tienNhap = 0, tienXuat = 0;
+  C.items.forEach((v,i) => {
+    const nhap = qmbNum_('mb_nhap_'+i), xuat = qmbNum_('mb_xuat_'+i), kk = qmbNum_('mb_kk_'+i);
+    if ([nhap,xuat,kk].filter(x=>x!==null).length !== 1) return;
+    nD++;
+    const gEl = $('mb_gia_'+i);
+    const g = (gEl && String(gEl.value||'').trim() !== '') ? Number(String(gEl.value).replace(/[,\s]/g,''))
+            : (v.gia === '' ? 0 : v.gia);
+    if (!isFinite(g)) return;
+    if (nhap !== null && isFinite(nhap)) tienNhap += nhap * g;
+    if (xuat !== null && isFinite(xuat)) tienXuat += xuat * g;
+  });
+  box.innerHTML = nD
+    ? `Sẽ ghi <b>${nint_(nD)}</b> dòng vào Sheet 15` +
+      (Q.perm.viewPrice ? ` · nhập <b style="color:var(--s3)">${fmtVnd_(tienNhap)}</b> · xuất <b style="color:var(--red)">${fmtVnd_(tienXuat)}</b>` : '')
+    : '<span style="color:var(--mu)">Chưa điền dòng nào.</span>';
+}
+
+/** Lọc chỉ ẩn/hiện dòng — KHÔNG dựng lại bảng, nếu không số đã gõ ở dòng ẩn sẽ mất. */
+function qmbFilter(){
+  const q = String(($('mbFind')||{}).value||'').toLowerCase().trim();
+  const onlyShort = ($('mbOnlyShort')||{}).classList?.contains('on');
+  document.querySelectorAll('#mbBody tr').forEach(tr => {
+    const okQ = !q || (tr.getAttribute('data-ten')||'').includes(q);
+    const okS = !onlyShort || tr.getAttribute('data-thieu') === '1';
+    tr.style.display = (okQ && okS) ? '' : 'none';
+  });
+}
+function qmbToggleShort(){
+  const b = $('mbOnlyShort'); if (!b) return;
+  b.classList.toggle('on'); qmbFilter();
+}
+
+function qmbFillMin(){
+  const C = _mbCtx; if (!C) return;
+  let n = 0;
+  C.items.forEach((v,i) => {
+    if (v.min == null) return;
+    const ton = v.ton != null ? v.ton : 0;
+    const can = Math.round((v.min - ton)*100)/100;
+    if (can <= 0) return;
+    const el = $('mb_nhap_'+i); if (!el) return;
+    el.value = can; n++;
+    qmbCalc(i);
+  });
+  toast(n ? `Đã điền ${n} dòng cần bù — kiểm tra lại rồi bấm Lưu` : 'Không có vật tư nào dưới mức tối thiểu',
+        n ? 'ok' : 'info');
+}
+
+function qmbClear(){
+  const C = _mbCtx; if (!C) return;
+  C.items.forEach((v,i) => {
+    ['nhap','xuat','kk','gia'].forEach(k => { const el = $('mb_'+k+'_'+i); if (el) el.value = ''; });
+    qmbCalc(i);
+  });
+}
+
+async function qmbSubmit(){
+  const C = _mbCtx; if (!C) return;
+  const kieuXuat = ($('mbKieuXuat')||{}).value || 'Xuất - Sử dụng';
+  const nguoi = String(($('mbWho')||{}).value||'').trim() || (S.user&&S.user.name) || 'unknown';
+  const lyDo  = String(($('mbNote')||{}).value||'').trim();
+
+  const lines = [], loi = [];
+  C.items.forEach((v,i) => {
+    const nhap = qmbNum_('mb_nhap_'+i), xuat = qmbNum_('mb_xuat_'+i), kk = qmbNum_('mb_kk_'+i);
+    const dat = [['Nhập',nhap],['Xuất',xuat],['Kiểm kê',kk]].filter(x => x[1] !== null);
+    if (!dat.length) return;
+    if (dat.length > 1){ loi.push(`${v.ten}: điền ${dat.length} cột cùng lúc — mỗi dòng chỉ được một.`); return; }
+    const [kind, val] = dat[0];
+    if (isNaN(val)){ loi.push(`${v.ten}: “${$('mb_'+(kind==='Nhập'?'nhap':kind==='Xuất'?'xuat':'kk')+'_'+i).value}” không phải số.`); return; }
+    if (val < 0){ loi.push(`${v.ten}: số lượng không được âm.`); return; }
+    if (val === 0 && kind !== 'Kiểm kê') return;      // nhập/xuất 0 = không có gì xảy ra
+
+    const gEl = $('mb_gia_'+i);
+    const donGia = (gEl && String(gEl.value||'').trim() !== '') ? String(gEl.value).replace(/[,\s]/g,'') : '';
+    lines.push({ vt: v.vt, loai: kind === 'Xuất' ? kieuXuat : kind, sl: val, donGia: donGia });
+  });
+
+  if (loi.length){ toast(loi[0], 'err'); return; }
+  if (!lines.length){ toast('Chưa điền số vào dòng nào','err'); return; }
+
+  const nNhap = lines.filter(l=>l.loai==='Nhập').length;
+  const nXuat = lines.filter(l=>/^Xuất/.test(l.loai)).length;
+  const nKk   = lines.filter(l=>l.loai==='Kiểm kê').length;
+  const tomTat = [nNhap?`${nNhap} nhập`:'', nXuat?`${nXuat} xuất`:'', nKk?`${nKk} kiểm kê`:'']
+    .filter(Boolean).join(' · ');
+  if (!confirm(`Ghi phiếu cho máy ${C.code}:\n${tomTat}\n\nSổ 15 chỉ thêm, không sửa — ghi sai phải ghi phiếu bù. Tiếp tục?`)) return;
+
+  await qmbSend_({ maCode: C.code, lines, nguoi, lyDo }, false);
+}
+
+async function qmbSend_(payload, chapNhanAm){
+  const body = Object.assign({}, payload, chapNhanAm ? { chapNhanAm:true } : {});
+  toast('Đang ghi phiếu…');
+  const d = await apiPost({ action:'stockMoveBatch', payload: body,
+                            user:(S.user&&S.user.name)||'admin' });
+
+  if (d && d.ok === false && d.needConfirm){
+    if (confirm(d.error + '\n\nVẫn ghi phiếu như đã điền?')) return qmbSend_(payload, true);
+    return;
+  }
+  if (!d || !d.ok){ toast((d&&d.error)||'Lỗi ghi phiếu','err'); return; }
+
+  closeOv();
+  await loadQlvt();
+  renderPage('stock');
+  toast(`✓ Đã ghi ${d.lines} dòng vào Sheet 15 cho máy ${payload.maCode}`, 'ok');
+}
+
+/** Chọn máy rồi mở phiếu gộp — dùng cho nút "+ Lập phiếu" khi chưa biết máy nào. */
+function qPickMachine(){
+  const rows = (Q.stock.rows||[]);
+  openOv(`
+    <div class="mh"><div><h2>Lập phiếu vật tư</h2>
+      <p>Chọn mã máy — toàn bộ vật tư của máy đó sẽ hiện ra để nhập/xuất/kiểm kê một lượt.</p>
+    </div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div class="iw"><div class="il">Mã máy</div>
+        <select class="sel" id="qpkCode">${rows.map(r=>{
+          const c = String(r['Mã máy']||''); const t = String(r['Trại']||'');
+          const th = Number(r['Số vật tư thiếu'])||0;
+          return `<option value="${esc(c)}">${esc(c)}${t?' — '+esc(t):''}${th?` · thiếu ${th}`:''}</option>`;
+        }).join('')}</select></div>
+      <div style="font-size:11px;color:var(--mu);margin-top:8px">
+        Cần ghi nhanh đúng một loại vật tư? Dùng
+        <b onclick="closeOv();qOpenMove('','')" style="color:var(--bl);cursor:pointer;text-decoration:underline">phiếu lẻ</b>.
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
+      <button class="btn bg-g" onclick="qmbGo_()">Mở phiếu →</button>
+    </div>`);
+}
+function qmbGo_(){
+  const c = ($('qpkCode')||{}).value; if (!c) return;
+  closeOv();
+  setTimeout(()=>qOpenMachineSheet(c, ''), 60);
+}
+
+/* ============================================================================
  *  TRANG · DANH MỤC VẬT TƯ  (Sheet 10)
  * ----------------------------------------------------------------------------
  *  Đây là NGUỒN của mọi cột vật tư trong hệ thống: thêm 1 dòng ở đây thì Sheet 11
@@ -8549,6 +9027,10 @@ function qCatDraft_(){
       ghiChu: String(r['Ghi chú']||''),
       moi: false,
     }));
+    /* GHIM danh sách mã VT ngay tại đây, không đợi lúc bấm Lưu. Bản nháp xuất phát từ
+     * ĐÚNG những mã này; nếu lúc lưu mới đi đọc lại Q.catalog thì con số đó có thể đã
+     * được làm mới ở giữa buổi và phép so sẽ không phát hiện được gì. */
+    Q.catBaseVt = Q.catDraft.map(v => v.vt).filter(Boolean);
   }
   return Q.catDraft;
 }
@@ -8755,7 +9237,7 @@ function vcDel(i){
 }
 
 function vcRevert(){
-  Q.catDraft = null; Q.catDirty = false;
+  Q.catDraft = null; Q.catDirty = false; Q.catBaseVt = null;
   renderPage('vtcat'); toast('Đã bỏ mọi thay đổi chưa ghi','ok');
 }
 
@@ -8770,10 +9252,18 @@ async function vcSave(force){
   const items = d.map(v => ({ vt:v.vt, ten:v.ten, tenCu:v.tenCu, nhom:v.nhom, dvt:v.dvt,
                               theoGio:v.theoGio, active:v.active,
                               hangMuc:v.hangMuc, ghiChu:v.ghiChu }));
+  /* Danh sách mã VT mà bản nháp này XUẤT PHÁT TỪ. Backend so với Sheet 10 hiện tại:
+   * có mã lạ nghĩa là người khác vừa thêm vật tư trong lúc mình đang sửa, và bấm Lưu
+   * bây giờ sẽ xoá mất nó (action này ghi đè toàn bộ sheet). Thà dừng lại và bắt tải
+   * lại còn hơn xoá một cột ở Sheet 11/14 mà không ai biết. */
+  const baseVt = Q.catBaseVt || (Q.catalog.rows||[]).map(r => String(r['Mã VT']||'').trim().toUpperCase()).filter(Boolean);
+
   toast('Đang ghi danh mục và dựng lại cột…');
   const r = await apiPost({ action:'qlvtSaveCatalog',
-    payload:{ items, nguoi:(S.user&&S.user.name)||'admin', xoaHan: !!force },
+    payload:{ items, baseVt, nguoi:(S.user&&S.user.name)||'admin', xoaHan: !!force },
     user:(S.user&&S.user.name)||'admin' });
+
+  if (r && r.conflict){ toast(r.error, 'err'); return; }
 
   if (r && r.needConfirm){
     /* Backend chặn vì vật tư đã có phiếu. Hỏi lại bằng modal chứ không phải confirm() trơn:
@@ -8799,7 +9289,7 @@ async function vcSave(force){
   }
   if (!r || !r.ok){ toast((r&&r.error)||'Lỗi ghi danh mục','err'); return; }
 
-  Q.catDirty = false; Q.catDraft = null;
+  Q.catDirty = false; Q.catDraft = null; Q.catBaseVt = null;
   await loadQlvt();
   renderPage('vtcat');
   toast(`✓ Đã lưu ${nint_(r.items)} vật tư · dựng lại cột Sheet 11 và Sheet 14`, 'ok');
@@ -8809,7 +9299,7 @@ async function vcSyncCols(){
   toast('Đang dựng lại cột theo danh mục…');
   const r = await apiPost({ action:'qlvtSyncColumns', user:(S.user&&S.user.name)||'admin' });
   if (!r || !r.ok){ toast((r&&r.error)||'Lỗi đồng bộ cột','err'); return; }
-  Q.catDraft = null; Q.catDirty = false;
+  Q.catDraft = null; Q.catDirty = false; Q.catBaseVt = null;
   await loadQlvt(); renderPage('vtcat');
   /* Nếu bảng tính từ chối công thức thì cột "Tối thiểu" ở Sheet 14 chỉ là SỐ TĨNH —
    * vẫn đúng, nhưng chỉ đổi khi tính lại. Phải nói ra, vì cái người dùng trông đợi là
