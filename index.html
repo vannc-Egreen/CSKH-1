@@ -259,6 +259,55 @@ td{padding:9px 12px;vertical-align:middle}
   .uname{display:none}
   .content{height:calc(100vh - 50px)}
 }
+
+/* ---- MÀN HÌNH CHỜ (skeleton) --------------------------------------------
+ * Bảng xám nhấp nháy thay cho khoảng trống. Lý do tồn tại: bản cũ hiện đúng
+ * dòng chữ "Chưa đọc được dữ liệu — kiểm tra đã dán QLVT.gs chưa" trong lúc
+ * dữ liệu MỚI ĐANG TẢI. Người dùng đọc xong đi kiểm tra Apps Script, trong khi
+ * thứ duy nhất cần làm là đợi thêm hai giây. Chờ và hỏng phải trông khác nhau. */
+@keyframes shim{0%{background-position:-380px 0}100%{background-position:380px 0}}
+.skel{background:#eef2f6;background-image:linear-gradient(90deg,#eef2f6 0px,#f8fafc 190px,#eef2f6 380px);
+  background-size:760px 100%;animation:shim 1.15s linear infinite;border-radius:8px;height:14px;margin:9px 0}
+.skel.h1{height:26px;width:46%;margin-bottom:16px}
+.skel.card{height:74px;border-radius:var(--rl);margin-bottom:11px}
+.skel.row{height:38px;margin:0 0 6px}
+.skwrap{padding:2px}
+.skmsg{font-size:11px;color:var(--mu);text-align:center;padding:10px 0 2px}
+
+/* ---- LỚP CHẶN KHI ĐANG GHI ----------------------------------------------
+ * Bấm "Lưu" xong mà màn hình không đổi gì trong 3–8 giây thì phản xạ tự nhiên
+ * là bấm lại — và thế là hai phiếu. Lớp này vừa nói rõ "đang ghi", vừa CHẶN
+ * cú bấm thứ hai bằng chính hình học của nó, không phụ thuộc vào việc code có
+ * nhớ khoá nút hay không. */
+.busyov{position:fixed;inset:0;z-index:900;background:rgba(15,23,42,.34);display:none;
+  align-items:center;justify-content:center;backdrop-filter:blur(1.5px)}
+.busyov.show{display:flex}
+.busybox{background:#fff;border-radius:14px;padding:20px 26px;box-shadow:var(--shl);
+  display:flex;align-items:center;gap:13px;font-size:13px;font-weight:700;color:var(--s);max-width:82vw}
+.busysp{width:19px;height:19px;border:2.5px solid #d7e3ec;border-top-color:var(--g);border-radius:50%;
+  animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---- MÀN HÌNH ĐĂNG NHẬP / ĐĂNG KÝ --------------------------------------- */
+.atabs{display:flex;gap:6px;margin-bottom:16px;background:#f1f5f9;padding:4px;border-radius:10px}
+.atab{flex:1;text-align:center;padding:8px;border-radius:7px;font-size:12px;font-weight:700;
+  color:var(--mu);cursor:pointer;border:none;background:none;font-family:var(--font)}
+.atab.on{background:#fff;color:var(--g);box-shadow:var(--sh)}
+.aerr{font-size:11px;font-weight:600;padding:9px 11px;border-radius:8px;line-height:1.55;display:none}
+.aerr.show{display:block}
+.aerr.bad{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
+.aerr.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+.aerr.good{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
+.abtn:disabled{opacity:.6;cursor:not-allowed}
+
+/* ---- CHỨC DANH ---------------------------------------------------------- */
+.rolechip{font-size:9px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;
+  padding:2px 7px;border-radius:99px;background:rgba(255,255,255,.2);color:#fff;white-space:nowrap}
+.rb{display:inline-flex;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:800;white-space:nowrap}
+.rb.admin{background:#ede9fe;color:#5b21b6}.rb.hcns{background:#dbeafe;color:#1e40af}
+.rb.cskh{background:#dcfce7;color:#166534}.rb.kt{background:#fef3c7;color:#92400e}
+.permgrid td,.permgrid th{text-align:center}
+.permgrid td:first-child,.permgrid th:first-child{text-align:left}
 </style>
 </head>
 <body>
@@ -271,11 +320,35 @@ td{padding:9px 12px;vertical-align:middle}
       <p>Vận hành · Bảo dưỡng · Cảnh báo</p>
     </div>
     <div class="abody">
-      <div class="af">
-        <div><div class="fl">Tên đăng nhập</div><input class="fi" id="lu" placeholder="Tên đăng nhập..." value="admin"></div>
-        <div><div class="fl">Mật khẩu</div><input class="fi" type="password" id="lp" placeholder="Mật khẩu..." value="egreen"></div>
-        <button class="abtn" onclick="doLogin()">🔐 Đăng nhập</button>
+      <div class="atabs">
+        <button class="atab on" id="atabLogin" onclick="authTab('login')">Đăng nhập</button>
+        <button class="atab" id="atabReg" onclick="authTab('reg')">Đăng ký</button>
+      </div>
+
+      <div class="af" id="authLogin">
+        <div><div class="fl">Tên đăng nhập</div><input class="fi" id="lu" placeholder="Tên đăng nhập..." autocomplete="username"></div>
+        <div><div class="fl">Mật khẩu</div><input class="fi" type="password" id="lp" placeholder="Mật khẩu..." autocomplete="current-password"></div>
+        <div class="aerr" id="loginMsg"></div>
+        <button class="abtn" id="btnLogin" onclick="doLogin()">🔐 Đăng nhập</button>
         <div class="anote">Kết nối trực tiếp với <b>Google Sheet</b>. Mọi thay đổi trên web sẽ đồng bộ ngay vào sheet, và ngược lại.</div>
+      </div>
+
+      <div class="af" id="authReg" style="display:none">
+        <div><div class="fl">Tên đăng nhập</div><input class="fi" id="ru" placeholder="chữ không dấu, số, dấu . _ -"></div>
+        <div><div class="fl">Họ và tên</div><input class="fi" id="rn" placeholder="VD: Nguyễn Văn A"></div>
+        <div><div class="fl">Chức danh đề nghị</div>
+          <select class="fi" id="rr">
+            <option value="Kĩ thuật">Kĩ thuật</option>
+            <option value="CSKH">CSKH</option>
+            <option value="HCNS">HCNS</option>
+            <option value="Admin">Admin</option>
+          </select></div>
+        <div><div class="fl">Điện thoại</div><input class="fi" id="rp2" placeholder="Số liên hệ (không bắt buộc)"></div>
+        <div><div class="fl">Mật khẩu</div><input class="fi" type="password" id="rp" placeholder="Tối thiểu 6 ký tự"></div>
+        <div><div class="fl">Nhập lại mật khẩu</div><input class="fi" type="password" id="rp3" placeholder="Gõ lại mật khẩu"></div>
+        <div class="aerr" id="regMsg"></div>
+        <button class="abtn" id="btnReg" onclick="doRegister()">✎ Gửi đăng ký</button>
+        <div class="anote">Chức danh chọn ở đây chỉ là <b>đề nghị</b>. Tài khoản dùng được sau khi Admin duyệt.</div>
       </div>
     </div>
   </div>
@@ -294,12 +367,13 @@ td{padding:9px 12px;vertical-align:middle}
         <div class="sdot off" id="sDot"></div><span id="sLbl">Đang kết nối…</span>
         <div class="sspin" id="sSpin"></div>
       </div>
-      <div class="upill">
+      <div class="upill" onclick="openAccountBox()" style="cursor:pointer" title="Tài khoản & đổi mật khẩu">
         <div class="uav" id="tAv">A</div>
         <div class="uname" id="tName">Admin</div>
+        <div class="rolechip" id="tRole" style="display:none"></div>
       </div>
       <span id="smartgenMenu"></span>
-      <button class="tbtn" onclick="reloadAll({fresh:true}).then(()=>loadQlvt(true)).then(()=>renderCurrent())" title="Đồng bộ 2 chiều thủ công với Google Sheet — bỏ qua cache, lấy đúng bản mới nhất">↻ Đồng bộ</button>
+      <button class="tbtn" onclick="reloadAll({fresh:true, withQlvt:true}).then(()=>renderCurrent())" title="Đồng bộ 2 chiều thủ công với Google Sheet — bỏ qua cache, lấy đúng bản mới nhất">↻ Đồng bộ</button>
       <button class="tbtn" onclick="doLogout()">Đăng xuất</button>
     </div>
   </div>
@@ -353,6 +427,11 @@ td{padding:9px 12px;vertical-align:middle}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>Hạng mục bảo dưỡng
       </div>
 
+      <div class="nsec" id="nsec-sys" style="display:none">Hệ thống</div>
+      <div class="nitem" data-page="users" id="nav-users" style="display:none" onclick="nav('users')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Người dùng &amp; Phân quyền<span class="nbadge rd" id="nb-users" style="display:none">0</span>
+      </div>
+
       <div class="sfooter">
         eGreen Genset v1.0<br>
         © 2025 · <span id="ftTime">—</span><br><span id="ftSync" style="opacity:.75">Smartgen: —</span>
@@ -373,11 +452,13 @@ td{padding:9px 12px;vertical-align:middle}
       <div id="pg-matcost" class="page"></div>
       <div id="pg-sim" class="page"></div>
       <div id="pg-vtcat" class="page"></div>
+      <div id="pg-users" class="page"></div>
     </div>
   </div>
 </div>
 
 <div class="ov" id="ov"><div class="modal" id="mdl"></div></div>
+<div class="busyov" id="busyOv"><div class="busybox"><div class="busysp"></div><span id="busyTxt">Đang ghi vào Google Sheet…</span></div></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -398,7 +479,27 @@ const S = {
   monthly:{ headers:[], rows:[] },      // Sheet 9 · Tổng kết hiệu quả tháng
   dropdowns:{},
   alerts:{ alerts:[], towerStates:[], total:0 },
-  user:{ name:'Admin' },
+  user:{ name:'Admin', login:'', role:'' },
+
+  /* PHIÊN ĐĂNG NHẬP.
+   * token  — chuỗi có chữ ký do server phát khi đăng nhập. Gắn vào MỌI request;
+   *          server đọc chức danh từ đây chứ không tin tên do web khai.
+   * perm   — bản sao ma trận quyền của chức danh hiện tại. Dùng để ẩn/hiện nút.
+   *          Đây CHỈ là phép lịch sự với người dùng: chốt chặn thật nằm ở server
+   *          (egGuard_ / authRequire_ / stripPrices_), nên sửa biến này trong
+   *          DevTools cũng không ghi hay xem thêm được gì. */
+  token:'',
+  perm:{ role:'', authed:false, viewPrice:false, editPrice:false, editNorm:false,
+         editData:false, approveUser:false, manageUser:false, admin:false },
+  pendingUsers:0,
+  users:null,
+
+  /* ĐANG TẢI vs TẢI HỎNG — hai trạng thái khác nhau, phải hiện khác nhau.
+   * Gộp chung là nguồn gốc màn hình "Chưa đọc được dữ liệu vật tư" hiện lên
+   * trong lúc dữ liệu vẫn đang trên đường về. */
+  loading:{ core:false, qlvt:false },
+  loadErr:{ core:'', qlvt:'' },
+  booted:false,
   filters:{
     master:'',
     masterStatus:'',   // '', 'active', 'stopped', 'notinstalled'
@@ -760,13 +861,110 @@ function navEfficiencyToCode(code){
   }, 220);
 }
 
-async function apiGet(action, params){
-  const url = new URL(API_URL); url.searchParams.set('action', action);
-  if (params) Object.keys(params).forEach(k => url.searchParams.set(k, params[k]));
-  return (await fetch(url.toString())).json();
+/* ============================================================================
+ *  TẦNG GỌI API
+ * ----------------------------------------------------------------------------
+ *  BỐN VIỆC, MỖI VIỆC SỬA MỘT LỖI CỤ THỂ ĐÃ GẶP:
+ *
+ *  1 · GẮN TOKEN VÀO MỌI REQUEST. Server đọc chức danh từ token, không từ chuỗi
+ *      tên. Trước đây web gửi kèm user:'admin' — gõ tay là thành admin.
+ *
+ *  2 · CHỐNG BẤM HAI LẦN. Cùng một lệnh ghi đang bay mà bấm lại thì trả về ĐÚNG
+ *      lời hứa đang chờ, không gửi request thứ hai. Đây là chốt chặn thật cho
+ *      chuyện "tưởng chưa được nên bấm lại thành 2 phiếu"; lớp phủ mờ chỉ là
+ *      phần nhìn thấy được của nó.
+ *
+ *  3 · BÁO ĐÃ GHI XONG NGAY LÚC SERVER TRẢ LỜI, không đợi màn hình dựng lại.
+ *      Bản cũ để câu "Đã ghi phiếu" chạy SAU khi tải lại toàn bộ dữ liệu, tức là
+ *      5–10 giây sau cú bấm — đúng khoảng lặng khiến người ta bấm lại.
+ *
+ *  4 · CÓ HẠN GIỜ. fetch mặc định chờ vô hạn; mạng trại chập chờn thì lớp phủ
+ *      treo mãi và cả app coi như chết. 60 giây rồi báo lỗi rõ ràng.
+ * ========================================================================== */
+const API_TIMEOUT_MS = 60000;
+
+/* Action đi qua POST nhưng KHÔNG đổi dữ liệu → không hiện lớp chặn, không báo "đã ghi". */
+const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','materialCost','smartgenStatus',
+                       'authMe','authList','authLogin','authRegister'];
+/* Action chạy nền, có thanh trạng thái riêng → cũng không hiện lớp chặn. */
+const POST_BACKGROUND = ['smartgenRun','smartgenAutoSync'];
+
+async function fetchJson_(url, opt, label){
+  const ctl = ('AbortController' in window) ? new AbortController() : null;
+  const timer = setTimeout(() => { try { ctl && ctl.abort(); } catch(e){} }, API_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, Object.assign({}, opt, ctl ? { signal: ctl.signal } : {}));
+    const txt = await res.text();
+    try { return JSON.parse(txt); }
+    catch (e){
+      /* Apps Script trả HTML khi bản deploy hết hạn hoặc chưa cấp quyền — thông
+       * báo "Unexpected token <" chẳng nói gì với người vận hành. */
+      throw new Error('Apps Script trả về nội dung không đọc được. Nhiều khả năng bản deploy đã cũ — deploy lại "Web app · Anyone".');
+    }
+  } catch (e){
+    if (e && e.name === 'AbortError') throw new Error((label||'Yêu cầu') + ' quá 60 giây không phản hồi. Kiểm tra mạng rồi thử lại.');
+    throw e;
+  } finally { clearTimeout(timer); }
 }
+
+async function apiGet(action, params){
+  const url = new URL(API_URL);
+  url.searchParams.set('action', action);
+  if (params) Object.keys(params).forEach(k => url.searchParams.set(k, params[k]));
+  if (S.token) url.searchParams.set('token', S.token);
+  if (S.user && S.user.login) url.searchParams.set('user', S.user.login);
+  return fetchJson_(url.toString(), {}, action);
+}
+
+const _postFlight = new Map();     // chữ ký lệnh → lời hứa đang bay
+
 async function apiPost(body){
-  return (await fetch(API_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(body) })).json();
+  const action = String((body && body.action) || '');
+  const b = Object.assign({}, body);
+  if (S.token) b.token = S.token;
+  if (!b.user && S.user && S.user.login) b.user = S.user.login;
+
+  const quiet = POST_READONLY.indexOf(action) >= 0 || POST_BACKGROUND.indexOf(action) >= 0;
+  const writes = POST_READONLY.indexOf(action) < 0;
+  const sig = JSON.stringify(b);
+
+  if (writes && _postFlight.has(sig)){
+    toast('Lệnh này đang chạy, không gửi lại lần hai', 'info');
+    return _postFlight.get(sig);
+  }
+
+  if (!quiet) egBusy_(true, action === 'authChangePassword' ? 'Đang đổi mật khẩu…' : 'Đang ghi vào Google Sheet…');
+
+  const p = (async () => {
+    try {
+      const d = await fetchJson_(API_URL, {
+        method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: sig
+      }, action);
+      if (!quiet && d && d.ok){
+        toast('✓ Đã ghi vào Google Sheet — đang cập nhật màn hình…', 'ok');
+        autoDot_(true);
+      }
+      /* Phiên hết hạn ở giữa buổi làm: nói thẳng thay vì để mọi nút im lặng không chạy. */
+      if (d && d.ok === false && /chưa đăng nhập|không đủ quyền/i.test(String(d.error||'')))
+        toast(d.error, 'err');
+      return d;
+    } finally {
+      if (!quiet) egBusy_(false);
+      if (writes) _postFlight.delete(sig);
+    }
+  })();
+
+  if (writes) _postFlight.set(sig, p);
+  return p;
+}
+
+/** Lớp phủ chặn thao tác trong lúc ghi. Cố ý CHẶN CẢ MÀN HÌNH: khoá riêng cái nút
+ *  vừa bấm không đủ, vì nhiều màn hình có 2–3 nút cùng ghi một chỗ. */
+function egBusy_(on, msg){
+  const el = document.getElementById('busyOv');
+  if (!el) return;
+  if (msg){ const t = document.getElementById('busyTxt'); if (t) t.textContent = msg; }
+  el.classList.toggle('show', !!on);
 }
 
 /* Khoá so sánh mã máy — bỏ khoảng trắng thừa và không phân biệt hoa/thường. */
@@ -827,20 +1025,45 @@ function normalizeCodesInState_(){
  *            lại tự động do phát hiện người khác vừa sửa dữ liệu: nhảy toast giữa lúc
  *            đang gõ dở một form là quấy rầy vô cớ.
  */
+/**
+ * @param {{fresh?:boolean, silent?:boolean, withQlvt?:boolean}} [opt]
+ *   fresh    — bỏ qua cache phía server. Từ khi cache khoá theo MỐC DỮ LIỆU
+ *              (xem egRev_ trong Code.gs), cờ này gần như không cần nữa: mốc đổi
+ *              là khoá cache đổi. Giữ lại cho nút "↻ Đồng bộ" bấm tay, khi người
+ *              dùng muốn chắc chắn tuyệt đối.
+ *   silent   — không toast, không đổi dòng trạng thái. Dùng cho lần tải lại nền.
+ *   withQlvt — mặc định TRUE: xin luôn gói vật tư trong CÙNG một request.
+ *
+ * VÌ SAO GỘP HAI GÓI LÀM MỘT:
+ *   Bản cũ gọi bootstrap trước, xong mới bắn tiếp qlvtBootstrap. Hai lượt nối
+ *   đuôi nhau, mỗi lượt vài giây. Trong khoảng giữa, bốn trang vật tư hiện dòng
+ *   "Chưa đọc được dữ liệu vật tư — kiểm tra đã dán QLVT.gs chưa" — một câu báo
+ *   lỗi cài đặt, cho một tình huống không hỏng gì cả. Gộp lại thì hoặc có tất,
+ *   hoặc không có gì; không còn khoảng giữa để hiểu nhầm.
+ */
 async function reloadAll(opt){
   const o = opt || {};
-  if (!o.silent) setStatus(true, 'Đang tải…');
+  const wantQ = o.withQlvt !== false;
+  if (!o.silent) setStatus(true, 'Đang tải dữ liệu…');
+  S.loading.core = true;
+  if (wantQ) S.loading.qlvt = true;
+  if (!o.silent) renderCurrent();          // hiện khung chờ ngay, không để trống trơn
   try {
     if (API_URL.includes('PASTE_')) throw new Error('Chưa dán URL Apps Script vào biến API_URL');
-    const d = await apiGet('bootstrap', o.fresh ? { fresh:'1' } : null);
+    const params = {};
+    if (o.fresh) params.fresh = '1';
+    if (wantQ)   params.full  = '1';
+    const d = await apiGet('bootstrap', Object.keys(params).length ? params : null);
     if (!d.ok) throw new Error(d.error||'Lỗi bootstrap');
     if (d.rev) S.rev = Number(d.rev.n) || 0;
+    if (d.perm) applyPerm_(d.perm, d.pending);
     Object.assign(S, {
       master:d.master, tracking:d.tracking, spec:d.spec, filter:d.filter,
       efficiency: d.efficiency || { headers:[], rows:[] },
       monthly: d.monthly || { headers:[], rows:[] },
       dropdowns:d.dropdowns, alerts:d.alerts
     });
+    S.loadErr.core = '';
     normalizeCodesInState_();   // PHẢI chạy trước mọi tính toán — xem chú thích của hàm
     try { _lastFetch.core = Date.now(); } catch(e){}   // đồng hồ TTL của tự-tải-lại theo trang
     refreshAlerts();     // luôn tính lại cảnh báo phía client từ Sheet 2
@@ -856,17 +1079,88 @@ async function reloadAll(opt){
     const nbEff = $('nb-eff'); if (nbEff) nbEff.textContent = ineff.length;
     $('ftTime').textContent = new Date().toLocaleTimeString('vi-VN');
 
-    setStatus(false, `Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
-    renderCurrent();
-    if (!o.silent) toast('Đã tải dữ liệu từ Google Sheet', 'ok');
+    /* Gói vật tư đi kèm ngay trong response — không còn lượt gọi thứ hai. */
+    if (wantQ){
+      if (d.qlvt && d.qlvt.ok !== false){ applyQlvt_(d.qlvt); S.loadErr.qlvt = ''; }
+      else { S.loadErr.qlvt = (d.qlvt && d.qlvt.error) || 'Chưa cài module vật tư trên Apps Script'; Q.loaded = false; }
+      S.loading.qlvt = false;
+      try { _lastFetch.qlvt = Date.now(); } catch(e){}
+    }
 
-    /* Module vật tư tải RIÊNG và im lặng: nếu Apps Script chưa cài QLVT.gs thì
-     * app cũ vẫn chạy đủ, 4 trang mới chỉ hiện hướng dẫn cài thay vì văng lỗi. */
-    loadQlvt(true).then(ok => { if (ok) renderCurrent(); });
+    setStatus(false, `Đã đồng bộ · ${S.master.rows.length} máy · ${S.alerts.total} cảnh báo`);
+    S.loading.core = false;
+    /* Không dựng lại màn hình ở đây: khối finally bên dưới làm việc đó cho CẢ hai
+     * nhánh thành công và lỗi. Dựng hai lần với bảng vài nghìn dòng là một nhịp
+     * giật thấy rõ, và đó đúng là loại chậm mà người dùng đang phàn nàn. */
+    if (!o.silent) toast('Đã tải dữ liệu từ Google Sheet', 'ok');
+    autoDot_(false);
   } catch(e){
+    S.loadErr.core = e.message;
+    if (wantQ && !Q.loaded) S.loadErr.qlvt = e.message;
     setStatus(false, '❌ ' + e.message, true);
-    toast(e.message, 'err');
+    if (!o.silent) toast(e.message, 'err');
+    autoDot_(false);
+  } finally {
+    S.loading.core = false;
+    if (wantQ) S.loading.qlvt = false;
+    try { renderCurrent(); } catch(e){}
   }
+}
+
+/* ============================================================================
+ *  ÁP CHỨC DANH VÀO GIAO DIỆN
+ * ----------------------------------------------------------------------------
+ *  Ẩn nút KHÔNG PHẢI là biện pháp an ninh — chốt thật nằm ở server. Đây là phép
+ *  lịch sự: đừng bày ra trước mắt người ta những nút mà bấm vào chỉ nhận về câu
+ *  "không đủ quyền".
+ * ========================================================================== */
+function applyPerm_(perm, pending){
+  if (!perm) return;
+  S.perm = Object.assign({}, S.perm, perm);
+  if (perm.role) S.user.role = perm.role;
+  if (perm.name) S.user.name = perm.name;
+  Q.perm = Object.assign({}, Q.perm, {
+    role: S.perm.role, viewPrice: !!S.perm.viewPrice,
+    editPrice: !!S.perm.editPrice, editNorm: !!S.perm.editNorm
+  });
+  if (typeof pending === 'number') S.pendingUsers = pending;
+
+  const tn = $('tName'); if (tn) tn.textContent = S.user.name || S.user.login || '—';
+  const av = $('tAv');   if (av) av.textContent = String(S.user.name || 'A').trim().charAt(0).toUpperCase();
+  const rc = $('tRole');
+  if (rc){ rc.textContent = S.perm.role || ''; rc.style.display = S.perm.role ? '' : 'none'; }
+
+  /* Mục "Người dùng & Phân quyền": chỉ chức danh có quyền DUYỆT TÀI KHOẢN mới thấy.
+   * Theo yêu cầu vận hành, đó đúng một chức danh — Admin. */
+  const show = !!S.perm.manageUser;
+  const nu = $('nav-users'), ns = $('nsec-sys');
+  if (nu) nu.style.display = show ? '' : 'none';
+  if (ns) ns.style.display = show ? '' : 'none';
+  const nb = $('nb-users');
+  if (nb){ nb.textContent = S.pendingUsers; nb.style.display = (show && S.pendingUsers>0) ? '' : 'none'; }
+
+  /* Đang đứng ở trang không còn quyền xem (VD bị hạ chức danh giữa buổi) → về Tổng quan. */
+  if (!show){
+    const cur = document.querySelector('.page.on');
+    if (cur && cur.id === 'pg-users') nav('dash');
+  }
+}
+
+/** Nhét gói vật tư vào Q — dùng chung cho cả hai đường: gộp trong bootstrap và gọi riêng. */
+function applyQlvt_(d){
+  Object.assign(Q, {
+    loaded:true, perm:Q.perm, catalog:d.catalog, norms:d.norms,
+    models:d.models||Q.models,
+    normLinks:d.normLinks||{},
+    stock:d.stock, sim:d.sim, alarmDict:d.alarmDict,
+    contacts:d.contacts, maintLog:d.maintLog, moveLog:d.moveLog, alarmLog:d.alarmLog,
+    alerts:d.alerts||Q.alerts, cfg:d.cfg||{},
+    anomalyOk:d.anomalyOk||{ keys:[] },
+  });
+  /* Bản nháp danh mục chỉ được dựng lại khi KHÔNG có sửa đổi treo — xem chú thích ở Q.catDraft. */
+  if (!Q.catDirty) Q.catDraft = null;
+  try { refreshAlerts(); } catch(e){}
+  qUpdateBadges_();
 }
 function setStatus(loading, msg, err){
   $('sSpin').classList.toggle('on', !!loading);
@@ -1037,9 +1331,9 @@ async function checkDataVersion_(){
 
     S.rev = n;
     const ai = String(d.rev.by || '').trim();
-    await reloadAll({ silent:true });
-    await loadQlvt(true);
+    await reloadAll({ silent:true, withQlvt:true });
     renderCurrent();
+    if (S.perm.manageUser) ensureUsers_(true);
     toast(ai && ai !== (S.user && S.user.name)
       ? `↻ ${ai} vừa thay đổi dữ liệu — đã cập nhật`
       : '↻ Dữ liệu trên Google Sheet vừa thay đổi — đã cập nhật', 'ok');
@@ -1103,6 +1397,12 @@ function updateSidebarBadges(){
 function nav(page){
   // Trang "Định mức thiết kế" đã gộp vào "Danh sách & Định mức máy" — mọi lối vào cũ đổi hướng
   if (page === 'design'){ S.filters.machineTab = 'design'; page = 'master'; }
+  /* Trang quản trị tài khoản: chặn cả ở đây, không chỉ ẩn mục trên sidebar. Có link
+   * cũ, có nút gọi nav('users') từ nơi khác, và có cả người gõ thẳng vào console. */
+  if (page === 'users' && !S.perm.manageUser){
+    toast('Chỉ Admin mới vào được mục Người dùng & Phân quyền','err');
+    page = 'dash';
+  }
   /* "Bộ đếm bảo dưỡng" đã gộp vào "Theo dõi bảo dưỡng" thành tab thứ 2. Giữ lối vào cũ để
    * mọi nút/link đang trỏ tới 'bdcounter' ở nơi khác trong app vẫn chạy, không phải sửa lan. */
   if (page === 'bdcounter'){ S.filters.trackingTab = 'counter'; page = 'tracking'; }
@@ -1111,7 +1411,7 @@ function nav(page){
   const el = $('pg-'+page); if (!el) return;
   el.classList.add('on');
   renderPage(page);
-  autoRefreshPage_(page);      // ← mở hạng mục nào thì tự tải lại đúng dữ liệu của hạng mục đó
+  ensurePageData_(page);       // ← mở hạng mục nào thì BẢO ĐẢM hạng mục đó có dữ liệu
   closeSB();
 }
 
@@ -1135,29 +1435,65 @@ const PAGE_SOURCE = {
   dash:'both', alerts:'both', analysis:'core', monthly:'core',
   tracking:'core', filter:'core', efficiency:'core', master:'core', spec:'core',
   stock:'qlvt', matcost:'qlvt', sim:'qlvt', vtcat:'qlvt',
+  users:'none',
 };
-const AUTO_REFRESH_MS = 45000;
+/* Từ khi có mốc dữ liệu (rev) hỏi mỗi 15 giây, việc tự tải lại theo trang chỉ còn
+ * là lưới an toàn — kéo dài TTL để bấm qua lại giữa các trang không đốt hạn ngạch. */
+const AUTO_REFRESH_MS = 300000;
 const _lastFetch = { core:0, qlvt:0 };
 let _autoBusy = false;
 
-async function autoRefreshPage_(page, force){
-  const src = PAGE_SOURCE[page]; if (!src) return;
-  if (_autoBusy) return;
+/**
+ * BẢO ĐẢM TRANG VỪA MỞ CÓ DỮ LIỆU.
+ *
+ * Khác biệt với bản cũ (autoRefreshPage_) nằm ở chỗ phân biệt hai việc:
+ *
+ *   · CHƯA CÓ GÌ  → phải tải NGAY, và trong lúc chờ thì hiện khung chờ. Bản cũ
+ *     có cờ _autoBusy nuốt luôn yêu cầu nếu tình cờ đang có lượt tải khác chạy,
+ *     nên trang mở ra trống rỗng và nằm im vĩnh viễn — người dùng phải tự bấm
+ *     "Đồng bộ". Đó chính là hiện tượng "bấm vào hạng mục, web chưa load dữ liệu".
+ *   · CÓ RỒI NHƯNG CŨ → làm mới trong nền, im lặng, giữ nguyên số đang hiện.
+ */
+async function ensurePageData_(page, force){
+  const src = PAGE_SOURCE[page];
+  if (!src || src === 'none'){
+    if (page === 'users') ensureUsers_();
+    return;
+  }
   const now = Date.now();
-  const needCore = (src==='core'||src==='both') && (force || now - _lastFetch.core > AUTO_REFRESH_MS);
-  const needQlvt = (src==='qlvt'||src==='both') && (force || now - _lastFetch.qlvt > AUTO_REFRESH_MS);
+  const coreEmpty = !(S.master.rows && S.master.rows.length);
+  const qlvtEmpty = !Q.loaded;
+
+  const needCore = (src==='core'||src==='both') &&
+    (force || coreEmpty || now - _lastFetch.core > AUTO_REFRESH_MS);
+  const needQlvt = (src==='qlvt'||src==='both') &&
+    (force || qlvtEmpty || now - _lastFetch.qlvt > AUTO_REFRESH_MS);
   if (!needCore && !needQlvt) return;
+
+  const urgent = (needCore && coreEmpty) || (needQlvt && qlvtEmpty);
+  /* Chỉ nhường đường khi CHỈ LÀ LÀM MỚI. Trang đang trống thì phải tải cho bằng được. */
+  if (_autoBusy && !urgent) return;
 
   _autoBusy = true;
   autoDot_(true);
   try {
-    if (needCore){ await reloadAll({ silent:true, fresh:true }); _lastFetch.core = Date.now(); _lastFetch.qlvt = Date.now(); }
-    else if (needQlvt){ await loadQlvt(true); _lastFetch.qlvt = Date.now(); }
+    if (needCore){
+      await reloadAll({ silent:true, withQlvt: needQlvt || qlvtEmpty });
+      _lastFetch.core = Date.now();
+      if (needQlvt || qlvtEmpty) _lastFetch.qlvt = Date.now();
+    } else if (needQlvt){
+      S.loading.qlvt = true; renderPage(page);
+      await loadQlvt(true);
+      _lastFetch.qlvt = Date.now();
+    }
     const cur = document.querySelector('.page.on');
     if (cur && cur.id === 'pg-'+page) renderPage(page);
   } catch(e){ /* mạng chập chờn — giữ nguyên bản đang hiện, lần mở sau thử lại */ }
   finally { _autoBusy = false; autoDot_(false); }
 }
+
+/* Giữ tên cũ để mọi lời gọi rải rác trong app không phải sửa. */
+function autoRefreshPage_(page, force){ return ensurePageData_(page, force); }
 
 /** Chấm báo "đang cập nhật" ở góc phải trên — đủ để biết, không đủ để làm phiền. */
 function autoDot_(on){
@@ -1205,6 +1541,15 @@ function renderPage(p){
 }
 
 function _renderPageInner_(p, el){
+  /* CHƯA CÓ DỮ LIỆU CHÍNH mà đang tải → hiện khung chờ thay vì bảng rỗng.
+   * Bảng rỗng và bảng "thật sự không có máy nào" trông y hệt nhau; người vận
+   * hành không có cách nào phân biệt, nên mặc định họ hiểu là web hỏng. */
+  const srcOf = (typeof PAGE_SOURCE === 'object') ? PAGE_SOURCE[p] : null;
+  if (el && (srcOf === 'core' || srcOf === 'both')
+      && !(S.master.rows && S.master.rows.length) && S.loading.core){
+    el.innerHTML = skeletonPage_(pageTitle_(p), p === 'dash' ? 'cards' : 'rows');
+    return;
+  }
   invalidateFarmCache_();   // dữ liệu máy có thể vừa đổi → dựng lại bảng tra trại
   _mIdxByCode = null;       // bảng tra Sheet 1 theo mã máy (qMachineOf_) — xoá cùng lúc,
                             // để hai bảng tra không bao giờ ở hai trạng thái khác nhau
@@ -1222,6 +1567,7 @@ function _renderPageInner_(p, el){
     case 'matcost':  el.innerHTML = viewMatCost(); afterMatCost(); break;
     case 'sim':      el.innerHTML = viewSim(); break;
     case 'vtcat':    el.innerHTML = viewVtCat(); break;
+    case 'users':    el.innerHTML = viewUsers(); break;
   }
 }
 
@@ -6546,6 +6892,13 @@ function closeOv(){
   document.body.style.overflow='';
 }
 document.addEventListener('DOMContentLoaded', ()=>{
+  /* Enter ở ô mật khẩu = bấm nút. Bỏ qua chi tiết này thì người dùng gõ xong
+   * nhấn Enter, không có gì xảy ra, và họ tưởng web treo. */
+  ['lu','lp'].forEach(id => { const el = $(id);
+    if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); }); });
+  ['ru','rn','rp','rp3','rp2'].forEach(id => { const el = $(id);
+    if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') doRegister(); }); });
+  bootSession();
   $('ov').addEventListener('click', e => { if (e.target.id==='ov') closeOv(); });
   // Chặn F5/reload không mất draft — capture ngay trước khi trang unload
   window.addEventListener('beforeunload', ()=>{ captureDraft(); });
@@ -6591,23 +6944,121 @@ function exportCsv(src, name){
   toast('Đã xuất '+name+'.csv','ok');
 }
 
-function doLogin(){
-  const u = ($('lu').value.trim()) || 'Admin';
-  S.user.name = u;
-  $('tName').textContent = u;
-  $('tAv').textContent = u.charAt(0).toUpperCase();
+/* ============================================================================
+ *  PHIÊN ĐĂNG NHẬP
+ * ----------------------------------------------------------------------------
+ *  Bản cũ: gõ tên gì cũng vào, mật khẩu không kiểm tra, ai cũng là admin. Nay
+ *  đăng nhập gọi thẳng Apps Script, đối chiếu Sheet 25 "Tài khoản" và nhận về
+ *  một token có chữ ký. Token nằm ở localStorage nên F5 hay đóng mở lại trình
+ *  duyệt vẫn còn phiên — nhưng nó CÓ HẠN, và bị vô hiệu ngay khi Admin khoá
+ *  tài khoản, vì mỗi lần dùng server đều đọc lại dòng tài khoản.
+ * ========================================================================== */
+const TOKEN_KEY = 'egreen_token_v1';
+
+function authTab(which){
+  const isLogin = which !== 'reg';
+  $('atabLogin').classList.toggle('on', isLogin);
+  $('atabReg').classList.toggle('on', !isLogin);
+  $('authLogin').style.display = isLogin ? '' : 'none';
+  $('authReg').style.display   = isLogin ? 'none' : '';
+  authMsg_('loginMsg',''); authMsg_('regMsg','');
+}
+
+function authMsg_(id, kind, text){
+  const el = $(id); if (!el) return;
+  el.className = 'aerr' + (kind ? ' ' + kind + ' show' : '');
+  el.innerHTML = text || '';
+}
+
+async function doLogin(){
+  const u = String(($('lu')||{}).value || '').trim();
+  const p = String(($('lp')||{}).value || '');
+  if (!u || !p){ authMsg_('loginMsg','bad','Nhập đủ tên đăng nhập và mật khẩu.'); return; }
+
+  const btn = $('btnLogin');
+  if (btn){ btn.disabled = true; btn.textContent = '⏳ Đang kiểm tra…'; }
+  authMsg_('loginMsg','');
+  try {
+    const d = await apiPost({ action:'authLogin', user:u, pass:p });
+    if (!d || !d.ok){
+      const msg = (d && d.error) || 'Không kết nối được máy chủ.';
+      authMsg_('loginMsg', (d && (d.pending || d.locked)) ? 'warn' : 'bad', esc(msg));
+      return;
+    }
+    startSession_(d);
+  } catch(e){
+    authMsg_('loginMsg','bad', esc(e.message));
+  } finally {
+    if (btn){ btn.disabled = false; btn.textContent = '🔐 Đăng nhập'; }
+  }
+}
+
+async function doRegister(){
+  const u  = String(($('ru') ||{}).value || '').trim();
+  const n  = String(($('rn') ||{}).value || '').trim();
+  const p  = String(($('rp') ||{}).value || '');
+  const p3 = String(($('rp3')||{}).value || '');
+  const r  = String(($('rr') ||{}).value || 'Kĩ thuật');
+  const ph = String(($('rp2')||{}).value || '').trim();
+
+  if (!u || !p){ authMsg_('regMsg','bad','Nhập đủ tên đăng nhập và mật khẩu.'); return; }
+  if (p !== p3){ authMsg_('regMsg','bad','Hai lần nhập mật khẩu không giống nhau.'); return; }
+  if (p.length < 6){ authMsg_('regMsg','bad','Mật khẩu tối thiểu 6 ký tự.'); return; }
+
+  const btn = $('btnReg');
+  if (btn){ btn.disabled = true; btn.textContent = '⏳ Đang gửi…'; }
+  authMsg_('regMsg','');
+  try {
+    const d = await apiPost({ action:'authRegister', user:u, pass:p, name:n, role:r, phone:ph });
+    if (!d || !d.ok){ authMsg_('regMsg','bad', esc((d && d.error) || 'Không gửi được đăng ký.')); return; }
+    authMsg_('regMsg','good','✓ Đã gửi đăng ký. Báo Admin duyệt giúp, sau đó đăng nhập bình thường.');
+    ['ru','rn','rp','rp3','rp2'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+  } catch(e){
+    authMsg_('regMsg','bad', esc(e.message));
+  } finally {
+    if (btn){ btn.disabled = false; btn.textContent = '✎ Gửi đăng ký'; }
+  }
+}
+
+/** Mở app sau khi xác thực xong. @param d kết quả authLogin (hoặc authMe). */
+function startSession_(d){
+  S.token = d.token || S.token || '';
+  const prof = d.profile || {};
+  S.user.login = prof.user || (d.perm && d.perm.user) || S.user.login || '';
+  S.user.name  = prof.name || (d.perm && d.perm.name) || S.user.login;
+  applyPerm_(d.perm, d.pending);
+  try { localStorage.setItem(TOKEN_KEY, S.token); } catch(e){}
+
   $('authWrap').style.display = 'none';
   $('app').style.display = 'flex';
+  S.booted = true;
   loadDrafts();                 // khôi phục bản nháp chưa lưu (nếu có)
   renderSmartGenMenu();          // sinh nút/menu Smartgen ở topbar
 
-  /* fresh:true — LẦN ĐẦU của bất kỳ tài khoản nào đều bỏ qua cache phía server.
-   * Không có cờ này thì người đăng nhập lúc 8h01 có thể nhận lại đúng gói dữ liệu mà
-   * server đã dựng cho người vào lúc 8h00, tức là mở web ra đã cầm số cũ ngay từ giây
-   * đầu tiên. Chỉ tốn thêm một lượt đọc sheet, mỗi phiên một lần.
-   * Từ lần thứ hai trở đi: nằm im, chỉ tải lại khi mốc dữ liệu đổi. */
-  reloadAll({ fresh:true })
+  /* MỘT LƯỢT GỌI LẤY TẤT CẢ — dữ liệu chính VÀ vật tư (full=1).
+   * Yêu cầu vận hành: đăng nhập phát là mọi hạng mục có dữ liệu, không phải bấm
+   * "Đồng bộ" rồi ngồi đợi ở từng trang một. */
+  reloadAll({ fresh:true, withQlvt:true })
     .then(() => { startAutoRefresh(); return autoSyncOnLogin(); });
+}
+
+/** F5 hay mở lại tab: còn token hợp lệ thì vào thẳng, không bắt gõ lại mật khẩu. */
+async function bootSession(){
+  let tk = '';
+  try { tk = localStorage.getItem(TOKEN_KEY) || ''; } catch(e){}
+  if (!tk){ authTab('login'); return; }
+  S.token = tk;
+  try {
+    const d = await apiGet('authMe');
+    if (d && d.ok && d.perm && d.perm.authed){
+      startSession_({ token: tk, perm: d.perm, pending: d.pending,
+                      profile: { user: d.perm.user, name: d.perm.name } });
+      return;
+    }
+  } catch(e){ /* mất mạng lúc mở web — cứ hiện màn đăng nhập */ }
+  S.token = '';
+  try { localStorage.removeItem(TOKEN_KEY); } catch(e){}
+  authTab('login');
 }
 
 /**
@@ -6676,8 +7127,260 @@ function setSyncFooter_(st){
   el.textContent = at ? ('Smartgen: ' + at) : 'Smartgen: chưa đồng bộ';
 }
 function doLogout(){
+  try { stopAutoRefresh(); } catch(e){}
+  S.token = '';
+  S.booted = false;
+  S.users = null;
+  S.perm = { role:'', authed:false, viewPrice:false, editPrice:false, editNorm:false,
+             editData:false, approveUser:false, manageUser:false, admin:false };
+  try { localStorage.removeItem(TOKEN_KEY); } catch(e){}
+  const lp = $('lp'); if (lp) lp.value = '';
   $('app').style.display = 'none';
   $('authWrap').style.display = 'flex';
+  authTab('login');
+}
+
+/* ============================================================================
+ *  HỘP TÀI KHOẢN — bấm vào tên mình ở góc phải trên
+ * ========================================================================== */
+function openAccountBox(){
+  const P = S.perm || {};
+  const line = (k, v) => `<div style="display:flex;justify-content:space-between;gap:14px;
+    padding:7px 0;border-bottom:1px solid var(--bd);font-size:12px">
+    <span style="color:var(--mu)">${k}</span><b>${v}</b></div>`;
+  const yn = b => b ? '<span class="b bg">Có</span>' : '<span class="b bmu">Không</span>';
+  openOv(`
+    <div class="mh"><h2>Tài khoản của tôi</h2><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      ${line('Tên đăng nhập', esc(S.user.login||'—'))}
+      ${line('Họ tên', esc(S.user.name||'—'))}
+      ${line('Chức danh', roleBadge_(P.role))}
+      ${line('Xem / sửa giá tiền', yn(P.viewPrice))}
+      ${line('Sửa định mức, danh mục', yn(P.editNorm))}
+      ${line('Nhập & sửa dữ liệu vận hành', yn(P.editData))}
+      ${line('Duyệt tài khoản đăng nhập', yn(P.approveUser))}
+
+      <div class="fsh" style="margin-top:16px;border-radius:8px">
+        <div class="fsn">🔑</div><div class="fst">Đổi mật khẩu</div></div>
+      <div class="fgrid fg2" style="padding:12px 0">
+        <div class="iw"><div class="il">Mật khẩu hiện tại</div><input class="inp" type="password" id="pwOld"></div>
+        <div class="iw"><div class="il">Mật khẩu mới (≥ 6 ký tự)</div><input class="inp" type="password" id="pwNew"></div>
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-r" onclick="closeOv();doLogout()">Đăng xuất</button>
+      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
+      <button class="btn bg-g" onclick="submitChangePw()">✓ Đổi mật khẩu</button>
+    </div>`);
+}
+
+async function submitChangePw(){
+  const o = String(($('pwOld')||{}).value || ''), n = String(($('pwNew')||{}).value || '');
+  if (!o || !n){ toast('Nhập đủ mật khẩu hiện tại và mật khẩu mới','err'); return; }
+  if (n.length < 6){ toast('Mật khẩu mới tối thiểu 6 ký tự','err'); return; }
+  const d = await apiPost({ action:'authChangePassword', oldPass:o, newPass:n });
+  if (!d || !d.ok){ toast((d && d.error) || 'Không đổi được mật khẩu','err'); return; }
+  closeOv();
+  toast('✓ Đã đổi mật khẩu','ok');
+}
+
+function roleBadge_(role){
+  const cls = { 'Admin':'admin', 'HCNS':'hcns', 'CSKH':'cskh', 'Kĩ thuật':'kt' }[role] || 'kt';
+  return `<span class="rb ${cls}">${esc(role||'—')}</span>`;
+}
+
+/* ============================================================================
+ *  TRANG · NGƯỜI DÙNG & PHÂN QUYỀN   (chỉ Admin)
+ * ----------------------------------------------------------------------------
+ *  Trang này trả lời đúng MỘT câu hỏi: "ai đang được vào web, với chức danh gì,
+ *  và ai đang chờ duyệt?" Vì vậy hàng chờ duyệt nằm TRÊN CÙNG, tách hẳn khỏi
+ *  danh sách chính — việc cần làm không được lẫn vào việc đã xong.
+ * ========================================================================== */
+const ROLE_LIST = ['Admin','HCNS','CSKH','Kĩ thuật'];
+const ROLE_DESC = {
+  'Admin':    'Toàn quyền, KỂ CẢ duyệt tài khoản đăng nhập.',
+  'HCNS':     'Mọi chức năng, trừ duyệt tài khoản đăng nhập.',
+  'CSKH':     'Mọi chức năng, trừ duyệt tài khoản và mọi thứ liên quan tới giá tiền.',
+  'Kĩ thuật': 'Quyền y hệt CSKH.',
+};
+
+async function ensureUsers_(force){
+  if (!S.perm.manageUser) return;
+  if (S.users && !force) return;
+  S.usersLoading = true;
+  try { renderCurrent(); } catch(e){}
+  try {
+    const d = await apiPost({ action:'authList' });
+    S.users = (d && d.ok) ? d.users : [];
+    S.usersErr = (d && d.ok) ? '' : ((d && d.error) || 'Không đọc được danh sách tài khoản');
+    S.pendingUsers = S.users.filter(u => u.status === 'Chờ duyệt').length;
+    applyPerm_(S.perm, S.pendingUsers);
+  } catch(e){ S.users = []; S.usersErr = e.message; }
+  finally { S.usersLoading = false; try { renderCurrent(); } catch(e){} }
+}
+
+function viewUsers(){
+  if (!S.perm.manageUser)
+    return '<div class="ph"><h1>Người dùng &amp; Phân quyền</h1></div><div class="empty">Chỉ Admin mới xem được mục này.</div>';
+  /* Chưa có danh sách trong tay → khung chờ. Dựng bảng rỗng rồi một giây sau thay
+   * bằng bảng đầy là kiểu nhấp nháy khiến người dùng tưởng vừa mất dữ liệu. */
+  if (!S.users) return skeletonPage_('Người dùng &amp; Phân quyền','rows');
+
+  const users = S.users || [];
+  const pending = users.filter(u => u.status === 'Chờ duyệt');
+  const rest    = users.filter(u => u.status !== 'Chờ duyệt');
+
+  const roleSel = (u, id) => `<select class="sel" id="${id}" style="padding:4px 8px;font-size:11px">
+    ${ROLE_LIST.map(r => `<option value="${r}" ${u.role===r?'selected':''}>${r}</option>`).join('')}</select>`;
+
+  const stBadge = st => st === 'Hoạt động' ? '<span class="b bg">Hoạt động</span>'
+                     : st === 'Khoá'      ? '<span class="b br">Khoá</span>'
+                                          : '<span class="b ba">Chờ duyệt</span>';
+
+  return `
+  <div class="ph"><h1>Người dùng &amp; Phân quyền</h1>
+    <p>Nguồn dữ liệu: Google Sheet <b>25. Tài khoản</b>. Mật khẩu lưu dưới dạng mã hoá — mở sheet cũng không đọc được.</p></div>
+
+  ${pending.length ? `
+  <div class="card">
+    <div class="ch"><h3>⏳ Chờ duyệt — ${pending.length} tài khoản</h3>
+      <button class="btn bg-gr sm" onclick="ensureUsers_(true)">↻ Làm mới</button></div>
+    <div class="tw"><table><thead><tr>
+      <th>Tài khoản</th><th>Họ tên</th><th>Chức danh đề nghị</th><th>Điện thoại</th><th>Ngày đăng ký</th><th>Duyệt với chức danh</th><th></th>
+    </tr></thead><tbody>
+      ${pending.map((u,i) => `<tr>
+        <td><b>${esc(u.user)}</b></td>
+        <td>${esc(u.name)}</td>
+        <td>${roleBadge_(u.role)}</td>
+        <td>${esc(u.phone||'—')}</td>
+        <td style="font-size:11px;color:var(--mu)">${esc(u.dangKy||'—')}</td>
+        <td>${roleSel(u,'pr'+i)}</td>
+        <td class="aact" style="display:flex;gap:5px">
+          <button class="btn bg-g sm" onclick="uApprove('${esc(u.user)}','pr${i}')">✓ Duyệt</button>
+          <button class="btn bg-r sm" onclick="uDelete('${esc(u.user)}')">✕ Từ chối</button>
+        </td></tr>`).join('')}
+    </tbody></table></div>
+  </div>` : ''}
+
+  <div class="card">
+    <div class="ch"><h3>Tài khoản — ${rest.length}</h3>
+      <div style="display:flex;gap:6px">
+        <button class="btn bg-b sm" onclick="openCreateUser()">+ Tạo tài khoản</button>
+        <button class="btn bg-gr sm" onclick="ensureUsers_(true)">↻ Làm mới</button>
+      </div></div>
+    ${S.usersErr ? `<div class="cb" style="color:var(--red);font-size:12px">${esc(S.usersErr)}</div>` : ''}
+    <div class="tw"><table><thead><tr>
+      <th>Tài khoản</th><th>Họ tên</th><th>Chức danh</th><th>Trạng thái</th>
+      <th>Điện thoại</th><th>Đăng nhập gần nhất</th><th>Người duyệt</th><th></th>
+    </tr></thead><tbody>
+      ${rest.length ? rest.map((u,i) => `<tr>
+        <td><b>${esc(u.user)}</b>${u.user===S.user.login?' <span class="b bb">bạn</span>':''}</td>
+        <td>${esc(u.name)}</td>
+        <td>${roleSel(u,'ur'+i)}</td>
+        <td>${stBadge(u.status)}</td>
+        <td>${esc(u.phone||'—')}</td>
+        <td style="font-size:11px;color:var(--mu)">${esc(u.lastLogin||'—')}</td>
+        <td style="font-size:11px;color:var(--mu)">${esc(u.duyetBoi||'—')}</td>
+        <td class="aact" style="display:flex;gap:5px;flex-wrap:wrap">
+          <button class="btn bg-b sm" onclick="uSetRole('${esc(u.user)}','ur${i}')">Lưu chức danh</button>
+          ${u.status==='Hoạt động'
+            ? `<button class="btn bg-a sm" onclick="uSetStatus('${esc(u.user)}','Khoá')">Khoá</button>`
+            : `<button class="btn bg-g sm" onclick="uSetStatus('${esc(u.user)}','Hoạt động')">Mở khoá</button>`}
+          <button class="btn bg-gr sm" onclick="uResetPw('${esc(u.user)}')">Đặt lại mật khẩu</button>
+          <button class="btn bg-r sm" onclick="uDelete('${esc(u.user)}')">Xoá</button>
+        </td></tr>`).join('') : '<tr><td colspan="8" class="empty">Chưa có tài khoản nào.</td></tr>'}
+    </tbody></table></div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><h3>Bảng quyền theo chức danh</h3></div>
+    <div class="tw"><table class="permgrid"><thead><tr>
+      <th>Chức năng</th>${ROLE_LIST.map(r=>`<th>${r}</th>`).join('')}
+    </tr></thead><tbody>
+      ${[['Xem &amp; sửa giá tiền', [1,1,0,0]],
+         ['Sửa định mức, danh mục vật tư', [1,1,1,1]],
+         ['Nhập &amp; sửa dữ liệu vận hành', [1,1,1,1]],
+         ['Đồng bộ Smartgen, ghi phiếu, báo bảo dưỡng', [1,1,1,1]],
+         ['Thao tác hệ thống (khởi tạo sheet)', [1,1,0,0]],
+         ['Duyệt tài khoản đăng nhập', [1,0,0,0]]]
+        .map(([k,v]) => `<tr><td>${k}</td>${v.map(x=>`<td>${x?'<span class="b bg">✓</span>':'<span class="b bmu">—</span>'}</td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    <div class="cb" style="font-size:11px;color:var(--mu);line-height:1.8">
+      ${ROLE_LIST.map(r=>`${roleBadge_(r)} ${ROLE_DESC[r]}`).join('<br>')}
+      <br><br>Ẩn nút trên web chỉ là phép lịch sự. Chốt chặn thật nằm ở Apps Script:
+      mọi lệnh ghi đều kiểm tra chức danh, và các trường tiền bị <b>cắt bỏ khỏi gói dữ liệu
+      trước khi rời máy chủ</b> — tài khoản CSKH / Kĩ thuật mở DevTools cũng không thấy con số nào.
+    </div>
+  </div>`;
+}
+
+async function uApprove(user, selId){
+  const role = ($(selId)||{}).value || 'Kĩ thuật';
+  const d = await apiPost({ action:'authApprove', user, role });
+  uAfter_(d, `Đã duyệt ${user} · ${role}`);
+}
+async function uSetRole(user, selId){
+  const role = ($(selId)||{}).value || 'Kĩ thuật';
+  const d = await apiPost({ action:'authSetRole', user, role });
+  uAfter_(d, `Đã đổi chức danh ${user} → ${role}`);
+}
+async function uSetStatus(user, status){
+  if (status === 'Khoá' && !confirm('Khoá tài khoản ' + user + '? Người này sẽ bị đăng xuất ngay ở mọi máy.')) return;
+  const d = await apiPost({ action:'authSetStatus', user, status });
+  uAfter_(d, `Đã đặt ${user} = ${status}`);
+}
+async function uDelete(user){
+  if (!confirm('Xoá hẳn tài khoản ' + user + ' khỏi Sheet 25? Không khôi phục được.')) return;
+  const d = await apiPost({ action:'authDelete', user });
+  uAfter_(d, 'Đã xoá ' + user);
+}
+async function uResetPw(user){
+  const np = prompt('Mật khẩu mới cho ' + user + ' (tối thiểu 6 ký tự):');
+  if (!np) return;
+  if (np.length < 6){ toast('Mật khẩu tối thiểu 6 ký tự','err'); return; }
+  const d = await apiPost({ action:'authResetPassword', user, newPass:np });
+  uAfter_(d, 'Đã đặt lại mật khẩu cho ' + user);
+}
+function uAfter_(d, okMsg){
+  if (!d || !d.ok){ toast((d && d.error) || 'Thao tác không thành công','err'); return; }
+  toast('✓ ' + okMsg, 'ok');
+  ensureUsers_(true);
+}
+
+function openCreateUser(){
+  openOv(`
+    <div class="mh"><h2>Tạo tài khoản</h2><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb"><div class="fgrid fg2">
+      <div class="iw"><div class="il">Tên đăng nhập</div><input class="inp" id="cuUser" placeholder="chữ không dấu, số, . _ -"></div>
+      <div class="iw"><div class="il">Họ tên</div><input class="inp" id="cuName"></div>
+      <div class="iw"><div class="il">Chức danh</div><select class="sel" id="cuRole">
+        ${ROLE_LIST.map(r=>`<option value="${r}">${r}</option>`).join('')}</select></div>
+      <div class="iw"><div class="il">Điện thoại</div><input class="inp" id="cuPhone"></div>
+      <div class="iw"><div class="il">Mật khẩu (≥ 6 ký tự)</div><input class="inp" type="password" id="cuPass"></div>
+    </div>
+    <div style="font-size:11px;color:var(--mu);padding:0 16px 6px">Tài khoản tạo ở đây được duyệt sẵn, dùng được ngay.</div></div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
+      <button class="btn bg-g" onclick="submitCreateUser()">✓ Tạo tài khoản</button>
+    </div>`);
+}
+async function submitCreateUser(){
+  const body = { action:'authCreate',
+    user: (($('cuUser')||{}).value||'').trim(), name: (($('cuName')||{}).value||'').trim(),
+    role: ($('cuRole')||{}).value, phone: (($('cuPhone')||{}).value||'').trim(),
+    pass: ($('cuPass')||{}).value || '' };
+  const d = await apiPost(body);
+  if (!d || !d.ok){ toast((d && d.error) || 'Không tạo được tài khoản','err'); return; }
+  closeOv(); toast('✓ Đã tạo tài khoản ' + body.user,'ok'); ensureUsers_(true);
+}
+
+/** Tên trang — dùng cho khung chờ. */
+function pageTitle_(p){
+  return ({ dash:'Tổng quan', alerts:'Cảnh báo', analysis:'Phân tích',
+    monthly:'Tổng kết hiệu quả tháng', tracking:'Theo dõi bảo dưỡng', filter:'Data thay lọc',
+    efficiency:'Hiệu quả vận hành', master:'Danh sách &amp; Định mức máy', spec:'Hạng mục bảo dưỡng',
+    stock:'Kho vật tư tại trại', matcost:'Chi phí vật tư', sim:'SIM &amp; Cảnh báo máy',
+    vtcat:'Danh mục vật tư', users:'Người dùng &amp; Phân quyền' })[p] || 'Đang tải';
 }
 
 /* ============================================================
@@ -6834,36 +7537,28 @@ function qItems_(onlyHour){
 /** Tải dữ liệu QLVT. Gọi sau reloadAll() — CỐ Ý tách riêng request để nếu module
  *  vật tư chưa cài trên Apps Script thì app cũ vẫn chạy bình thường, chỉ ẩn 4 trang. */
 async function loadQlvt(silent){
+  S.loading.qlvt = true;
   try {
     const url = new URL(API_URL);
     url.searchParams.set('action','qlvtBootstrap');
-    url.searchParams.set('user', (S.user && S.user.name) || 'admin');
-    const d = await (await fetch(url.toString())).json();
+    url.searchParams.set('user', (S.user && S.user.login) || (S.user && S.user.name) || '');
+    if (S.token) url.searchParams.set('token', S.token);
+    const d = await fetchJson_(url.toString(), {}, 'qlvtBootstrap');
     if (!d || !d.ok) throw new Error((d && d.error) || 'Chưa cài module vật tư trên Apps Script');
     if (d.rev) S.rev = Number(d.rev.n) || 0;
-    Object.assign(Q, {
-      loaded:true, perm:d.perm||Q.perm, catalog:d.catalog, norms:d.norms,
-      models:d.models||Q.models,
-      /* Vật tư nào có chu kỳ lấy tự động — quyết định ô nào khoá ở bảng định mức. */
-      normLinks:d.normLinks||{},
-      stock:d.stock, sim:d.sim, alarmDict:d.alarmDict,
-      contacts:d.contacts, maintLog:d.maintLog, moveLog:d.moveLog, alarmLog:d.alarmLog,
-      alerts:d.alerts||Q.alerts, cfg:d.cfg||{},
-      anomalyOk:d.anomalyOk||{ keys:[] },
-    });
-    /* Bản nháp danh mục chỉ được dựng lại khi KHÔNG có sửa đổi treo — xem chú thích ở Q.catDraft. */
-    if (!Q.catDirty) Q.catDraft = null;
-    /* Danh sách xác nhận vừa về → phải tính lại cảnh báo, nếu không những điểm đã
-     * duyệt vẫn hiện cho tới lần đồng bộ sau. loadQlvt() chạy song song với bootstrap
-     * và có thể xong trước, nên bọc try: lần gọi sau sẽ đúng. */
-    try { refreshAlerts(); } catch(e){}
+    if (d.perm) applyPerm_(d.perm);
+    applyQlvt_(d);
+    S.loadErr.qlvt = '';
     try { _lastFetch.qlvt = Date.now(); } catch(e){}
-    qUpdateBadges_();
     return true;
   } catch(e){
     Q.loaded = false;
+    S.loadErr.qlvt = e.message;
     if (!silent) toast('Vật tư: ' + e.message, 'err');
     return false;
+  } finally {
+    S.loading.qlvt = false;
+    autoDot_(false);
   }
 }
 
@@ -6893,11 +7588,33 @@ function qUpdateBadges_(){
 }
 
 /** Màn hình chờ dùng chung khi chưa tải được dữ liệu vật tư. */
+/* Khung chờ dùng chung. Nhìn ra ngay là "đang tải", không phải "hỏng rồi". */
+function skeletonPage_(what, kind){
+  const rows = (kind === 'cards')
+    ? '<div class="skel card"></div>'.repeat(4)
+    : '<div class="skel row"></div>'.repeat(9);
+  return `<div class="ph"><h1>${what}</h1></div>
+    <div class="card"><div class="cb skwrap">
+      <div class="skel h1"></div>${rows}
+      <div class="skmsg">Đang đọc dữ liệu từ Google Sheet…</div>
+    </div></div>`;
+}
+
+/**
+ * Màn hình khi trang vật tư chưa có dữ liệu.
+ *
+ * ĐIỂM SỬA QUAN TRỌNG: bản cũ chỉ có MỘT màn hình cho hai tình huống khác hẳn
+ * nhau — "đang tải" và "gọi hỏng". Người dùng vừa đăng nhập, bấm sang Kho vật tư
+ * trong lúc gói dữ liệu còn đang bay, và đọc được lời khuyên đi kiểm tra xem đã
+ * dán QLVT.gs vào Apps Script chưa. Không có gì hỏng cả; chỉ là chưa tới.
+ */
 function qNotReady_(what){
+  if (S.loading.qlvt || (!Q.loaded && !S.loadErr.qlvt)) return skeletonPage_(what, 'cards');
   return `<div class="ph"><h1>${what}</h1></div>
     <div class="empty"><div class="ei">📦</div>
-      Chưa đọc được dữ liệu vật tư từ Google Sheet.<br>
-      Kiểm tra: đã dán <b>QLVT.gs</b> vào Apps Script, đã chạy <b>setupQLVT</b>, và đã <b>deploy version mới</b> chưa.
+      Không đọc được dữ liệu vật tư từ Google Sheet.<br>
+      <span style="color:var(--red)">${esc(S.loadErr.qlvt || '')}</span><br>
+      Kiểm tra: đã dán <b>QLVT.gs</b> vào Apps Script, đã chạy <b>egSetupAll</b>, và đã <b>deploy version mới</b> chưa.
       <div style="margin-top:12px"><button class="btn bg-gr" onclick="loadQlvt().then(()=>renderCurrent())">↻ Thử lại</button></div>
     </div>`;
 }
@@ -7358,6 +8075,10 @@ function viewStockLog_(){
   const nhap = sumKind('Nhập');
   const xuatDung = sumKind('Xuất - Sử dụng');
   const nMangDi = rows.filter(r => qLoai_(g(r,'Loại phiếu')) === 'Xuất - Mang đi').length;
+  /* GIÁ TRỊ hàng mang đi phải hiện thành một số riêng, không được gộp vào "đã dùng".
+   * Đây là tài sản đang di chuyển giữa hai trại: trại giao 900 k thì trại nhận phải
+   * nhập đủ 900 k. Chỉ đếm số phiếu thì cuối tháng kho hụt mà không truy ra bao nhiêu. */
+  const tienMangDi = sumKind('Xuất - Mang đi');
 
   const items = qItems_(false);
   const chip = (on,label,onclick) => `<button class="fchip ${on?'on':''}" onclick="${onclick}">${label}</button>`;
@@ -7369,7 +8090,7 @@ function viewStockLog_(){
       <h1>Nhật ký nhập xuất vật tư</h1>
       <p>${nint_(src.length)} phiếu · lọc ${nint_(rows.length)}
         ${Q.perm.viewPrice?` · nhập <b style="color:var(--s3)">${fmtVnd_(nhap)}</b> · đã dùng <b style="color:var(--red)">${fmtVnd_(xuatDung)}</b>`:''}
-        ${nMangDi?` · <b style="color:var(--amb)">${nint_(nMangDi)} phiếu mang đi</b> (giảm tồn, không tính chi phí)`:''}
+        ${nMangDi?` · <b style="color:var(--amb)">${nint_(nMangDi)} phiếu mang đi</b>${Q.perm.viewPrice?` <b style="color:var(--amb)">${fmtVnd_(tienMangDi)}</b>`:''} <span style="font-size:11px;color:var(--mu)">(giảm tồn &amp; giảm tài sản kho · chi phí máy = 0)</span>`:''}
         <br><span style="font-size:11px;color:var(--mu)">Sổ cái “15. Nhật ký nhập xuất vật tư” — chỉ thêm, không sửa.
         Trại/đơn vị được <b>đóng băng</b> tại thời điểm ghi phiếu, nên máy điều chuyển sau này không làm đổi chi phí lịch sử.</span></p>
     </div>
@@ -7722,7 +8443,7 @@ function qmTypeHint(){
   const t = {
     'Nhập':            'Cấp hàng về trại — làm TĂNG tồn kho của máy này.',
     'Xuất - Sử dụng':  '↓ Giảm tồn VÀ tính CHI PHÍ cho máy này (vào bảng đ/kWh).',
-    'Xuất - Mang đi':  '↓ Chỉ giảm tồn. KHÔNG tính chi phí — vật tư mới rời trại chứ chưa tiêu hao.',
+    'Xuất - Mang đi':  '↓ Giảm tồn VÀ giảm giá trị tài sản kho của máy này, nhưng CHI PHÍ máy = 0 — vật tư mới rời trại chứ chưa tiêu hao. Nhớ ghi phiếu Nhập ở nơi nhận.',
     'Kiểm kê':         'GHI ĐÈ tồn về đúng số vừa đếm được. Dùng khi sổ sách lệch thực tế.',
   }[sel.value] || '';
   el.textContent = t;
