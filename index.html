@@ -1715,6 +1715,7 @@ function _renderPageInner_(p, el){
   invalidateFarmCache_();   // dữ liệu máy có thể vừa đổi → dựng lại bảng tra trại
   _mIdxByCode = null;       // bảng tra Sheet 1 theo mã máy (qMachineOf_) — xoá cùng lúc,
                             // để hai bảng tra không bao giờ ở hai trạng thái khác nhau
+  _unitCanon = null;        // bảng gộp cách viết tên đơn vị hợp tác
   switch(p){
     case 'dash':     el.innerHTML = viewDash(); afterDash(); break;
     case 'alerts':   el.innerHTML = viewAlerts(); break;
@@ -2353,9 +2354,48 @@ function applyAnalysisFilters_(rows){
     if (f.machine.size && !f.machine.has(code)) return false;
     if (f.region.size && !f.region.has(regionOf(r))) return false;
     if (f.type.size && !f.type.has(typeOf(r))) return false;
-    if (f.unit.size && !f.unit.has(String(r._byLetter[COL.DONVI]||'').trim())) return false;
+    if (f.unit.size && !f.unit.has(canonUnit_(r._byLetter[COL.DONVI]))) return false;
     return true;
   });
+}
+
+/* ============================================================================
+ *  GỘP CÁC CÁCH VIẾT TÊN ĐƠN VỊ HỢP TÁC
+ * ----------------------------------------------------------------------------
+ *  Sheet 1 đang có cả "Tư Nhân" và "Tư nhân". Với mắt người đó là một đơn vị; với code
+ *  là hai chuỗi khác nhau, nên thanh lọc mọc ra HAI chip trùng tên và bấm chip nào cũng
+ *  chỉ ra một nửa số máy — mà không có gì báo là đang thiếu nửa kia. Đây đúng cùng một
+ *  lớp lỗi với mã máy viết hoa/thường lẫn lộn (xem normalizeCodesInState_), nên xử lý
+ *  cùng một cách: quy về MỘT khoá so sánh, và lấy cách viết PHỔ BIẾN NHẤT làm cách hiển thị.
+ *
+ *  Cố ý KHÔNG tự sửa Sheet 1: gộp trên màn hình thì sai một lần là bấm bỏ chip, còn ghi
+ *  đè xuống sheet mà gộp nhầm hai đơn vị thật sự khác nhau thì không lấy lại được.
+ * ========================================================================== */
+function unitKey_(v){ return String(v==null?'':v).trim().toLowerCase().replace(/\s+/g,' '); }
+var _unitCanon = null;
+function canonUnit_(v){
+  const raw = String(v==null?'':v).trim();
+  if (!raw) return '';
+  if (!_unitCanon){
+    const dem = new Map();   // khoá → Map(cách viết → số lần)
+    (S.master.rows||[]).forEach(r => {
+      const s = String(r._byLetter?.[COL.DONVI]||'').trim();
+      if (!s) return;
+      const k = unitKey_(s);
+      if (!dem.has(k)) dem.set(k, new Map());
+      const m = dem.get(k);
+      m.set(s, (m.get(s)||0) + 1);
+    });
+    _unitCanon = new Map();
+    dem.forEach((m,k) => {
+      /* Nhiều nhất thắng; hoà thì lấy chuỗi nhỏ hơn theo alphabet để kết quả ổn định
+       * giữa các lần tải — chọn ngẫu nhiên thì chip nhảy tên mỗi lần F5. */
+      let best = null, n = -1;
+      m.forEach((c, s) => { if (c > n || (c === n && best !== null && s.localeCompare(best,'vi') < 0)){ best = s; n = c; } });
+      _unitCanon.set(k, best);
+    });
+  }
+  return _unitCanon.get(unitKey_(raw)) || raw;
 }
 
 /* Tổng công suất phát (kWh) và tổng giờ chạy theo từng ngày trong tháng,
@@ -2711,7 +2751,8 @@ function analysisFilterBarHtml_(pfx){
     const on = f[setName].has(value);
     return `<button class="fchip ${on?'on':''}" onclick="toggleAnalysisFilter('${setName}','${esc(value)}')">${esc(label ?? value)}</button>`;
   };
-  const units = [...new Set(S.master.rows.map(r=>String(r._byLetter[COL.DONVI]||'').trim()).filter(Boolean))].sort();
+  const units = [...new Set(S.master.rows.map(r=>canonUnit_(r._byLetter[COL.DONVI])).filter(Boolean))]
+                  .sort((a,b)=>a.localeCompare(b,'vi'));
   const picked = [...f.machine].sort();
 
   return `
@@ -7650,7 +7691,7 @@ const Q = {
   f:{
     bd:'', bdStatus:'',           // ô tìm · '' | 'overdue' | 'duesoon'
     bdRegion:new Set(),
-    stock:'', stockOnlyShort:false,
+    stock:'', stockOnlyShort:false, stockShowStopped:false,
     stockTab:'ton',                    // 'ton' = tồn kho · 'so' = nhật ký nhập xuất
     /* Bộ lọc trang Kho vật tư — ĐA CHỌN, cùng bộ ba với các trang khác (khu vực ·
      * loại hình · đơn vị hợp tác) để người dùng không phải học lại cách lọc ở mỗi trang. */
@@ -7947,6 +7988,7 @@ function qToggle(set, v){ if (set.has(v)) set.delete(v); else set.add(v); }
 function qClearStockFilters(){
   Q.f.stock = '';
   Q.f.stockOnlyShort = false;
+  Q.f.stockShowStopped = false;
   Q.f.stockRegion.clear(); Q.f.stockType.clear(); Q.f.stockUnit.clear();
   renderPage('stock');
 }
@@ -8062,9 +8104,25 @@ function qKhuVuc_(r){
 }
 function qDonVi_(r){
   const v = String(r['Đơn vị']||'').trim();
+  if (v) return canonUnit_(v);
+  const m = qMachineOf_(r['Mã máy']);
+  return m ? canonUnit_(m._byLetter[COL.DONVI]) : '';
+}
+/* Máy này còn chạy không? Sheet 14 nay có sẵn cột "Trạng thái" (rebuildStock ghi), nhưng
+ * file của người dùng có thể chưa chạy lại rebuild sau khi cập nhật code — nên lùi về
+ * Sheet 1. Quy tắc nhận biết phải TRÙNG KHÍT với activeMachineList_ bên QLVT.gs, nếu
+ * không thì web đếm một kiểu còn cảnh báo đếm một kiểu. */
+function qDangChay_(r){
+  const v = String(r['Trạng thái']||'').trim();
+  const raw = v || (() => { const m = qMachineOf_(r['Mã máy']);
+                            return m ? String(m._byLetter[COL.TT]||'').trim() : ''; })();
+  return !/không|dừng|chưa|thu hồi/i.test(raw);
+}
+function qTrangThai_(r){
+  const v = String(r['Trạng thái']||'').trim();
   if (v) return v;
   const m = qMachineOf_(r['Mã máy']);
-  return m ? String(m._byLetter[COL.DONVI]||'').trim() : '';
+  return m ? String(m._byLetter[COL.TT]||'').trim() : '';
 }
 
 function viewStockOnHand_(){
@@ -8083,6 +8141,10 @@ function viewStockOnHand_(){
 
   let rows = all.filter(r => {
     if (Q.f.stockOnlyShort && !(Number(r['Số vật tư thiếu'])>0)) return false;
+    /* Mặc định CHỈ hiện máy đang chạy — đó là việc hằng ngày. Máy dừng/thu hồi vẫn nằm
+     * trong Sheet 14 (vật tư gửi ở trại không biến mất khi máy dừng) nhưng để lẫn vào
+     * danh sách thì mỗi lần cấp hàng lại phải tự nhớ bỏ qua chúng. Bật chip để xem. */
+    if (!Q.f.stockShowStopped && !qDangChay_(r)) return false;
     if (fReg.size  && !fReg.has(qKhuVuc_(r)))   return false;
     if (fTyp.size  && !fTyp.has(qLoaiHinh_(r))) return false;
     if (fUnit.size && !fUnit.has(qDonVi_(r)))   return false;
@@ -8091,8 +8153,10 @@ function viewStockOnHand_(){
       .toLowerCase().includes(q);
   });
 
-  const nShort = all.filter(r=>Number(r['Số vật tư thiếu'])>0).length;
-  const nLoc = fReg.size + fTyp.size + fUnit.size + (Q.f.stockOnlyShort?1:0) + (q?1:0);
+  const nStopped = all.filter(r => !qDangChay_(r)).length;
+  const nShort = all.filter(r=>Number(r['Số vật tư thiếu'])>0 && qDangChay_(r)).length;
+  const nLoc = fReg.size + fTyp.size + fUnit.size + (Q.f.stockOnlyShort?1:0)
+             + (Q.f.stockShowStopped?1:0) + (q?1:0);
   const urgent = (Q.alerts.stock||[]).filter(a=>a.severity==='high');
 
   /* Ô tổng tính trên DANH SÁCH ĐANG LỌC, không phải toàn bộ: nếu lọc "Miền Nam" mà ô
@@ -8119,7 +8183,8 @@ function viewStockOnHand_(){
   return `
     <div class="ph">
       <h1>Kho vật tư gửi tại trại</h1>
-      <p>${all.length} máy · ${items.length} loại vật tư ·
+      <p>${nint_(all.length - nStopped)} máy đang chạy${nStopped?` · <span style="color:var(--mu)">${nint_(nStopped)} máy đã dừng/thu hồi (vẫn giữ trong sổ vì vật tư còn ở trại)</span>`:''} ·
+        ${items.length} loại vật tư ·
         <b style="color:var(--red)">${nint_(nShort)} máy đang thiếu</b>
         <br><span style="font-size:11px;color:var(--mu)">Ô hiển thị <b>tồn/tối thiểu</b> ·
         bấm vào <b>mã máy</b> để mở phiếu cho <b>toàn bộ vật tư của máy đó</b> — nhập, xuất, kiểm kê
@@ -8194,6 +8259,10 @@ function viewStockOnHand_(){
                value="${esc(Q.f.stock)}" oninput="Q.f.stock=this.value;renderPage('stock')">
         <button class="fchip ${Q.f.stockOnlyShort?'on':''}"
           onclick="Q.f.stockOnlyShort=!Q.f.stockOnlyShort;renderPage('stock')">Chỉ máy đang thiếu · ${nint_(nShort)}</button>
+        ${nStopped?`<button class="fchip ${Q.f.stockShowStopped?'on':''}"
+          onclick="Q.f.stockShowStopped=!Q.f.stockShowStopped;renderPage('stock')"
+          title="Máy dừng/thu hồi vẫn còn vật tư gửi tại trại — bật để kiểm kê hoặc điều chuyển chỗ hàng đó">
+          ${Q.f.stockShowStopped?'✓ ':''}Kể cả máy đã dừng · ${nint_(nStopped)}</button>`:''}
         ${nLoc?`<button class="btn bg-gr sm" onclick="qClearStockFilters()">↺ Bỏ lọc · ${nLoc}</button>`:''}
         <button class="btn bg-b sm" onclick="qPickMachine()">+ Lập phiếu</button>
         <button class="btn bg-gr sm" onclick="exportCsv(Q.stock,'ton-kho-vat-tu')">⤓ CSV</button>
@@ -8208,17 +8277,20 @@ function viewStockOnHand_(){
         ${items.map(v=>`<th style="text-align:right" title="${esc(v.ten)} — bấm tiêu đề để sửa đơn giá/định mức"
           onclick="qOpenNorm('${esc(v.vt)}')" style="text-align:right;cursor:pointer">${esc(v.ten)} <span style="opacity:.45">✎</span><br><span style="font-weight:400;color:var(--mu)">${esc(v.dvt)}</span></th>`).join('')}
       </tr></thead>
-      <tbody>${rows.map(r=>`<tr>
-        <td style="position:sticky;left:0;background:#fff;z-index:2;cursor:pointer"
+      <tbody>${rows.map(r=>{
+        const chay = qDangChay_(r);
+        return `<tr style="${chay?'':'background:#fafafa'}">
+        <td style="position:sticky;left:0;background:${chay?'#fff':'#fafafa'};z-index:2;cursor:pointer"
             onclick="qOpenMachineSheet('${esc(String(r['Mã máy']||''))}','')"
             title="Bấm để mở phiếu Nhập / Xuất / Kiểm kê cho TOÀN BỘ vật tư của máy này">
-          <span class="mm">${esc(String(r['Mã máy']||''))}</span>
+          <span class="mm" style="${chay?'':'opacity:.6'}">${esc(String(r['Mã máy']||''))}</span>
           <span style="opacity:.45;font-size:11px">📝</span>
-          ${Number(r['Số vật tư thiếu'])>0?`<span class="b br" style="margin-left:4px">${r['Số vật tư thiếu']}</span>`:''}</td>
+          ${chay?'':`<span class="b bmu" style="margin-left:4px" title="${esc(qTrangThai_(r))} — vật tư vẫn nằm ở trại, kiểm kê và điều chuyển bình thường">⏸ dừng</span>`}
+          ${chay && Number(r['Số vật tư thiếu'])>0?`<span class="b br" style="margin-left:4px">${r['Số vật tư thiếu']}</span>`:''}</td>
         <td style="font-size:11px">${esc(String(r['Trại']||''))}</td>
         <td style="font-size:11px;color:var(--mu)">${esc(qLoaiHinh_(r))}</td>
         ${items.map(v=>cellOf(r,v)).join('')}
-      </tr>`).join('') || '<tr><td colspan="99"><div class="empty">Không có máy nào khớp bộ lọc.</div></td></tr>'}
+      </tr>`;}).join('') || '<tr><td colspan="99"><div class="empty">Không có máy nào khớp bộ lọc.</div></td></tr>'}
       </tbody>
       <tfoot><tr style="position:sticky;bottom:0;background:#f1f5f9;font-weight:700">
         <td style="position:sticky;left:0;background:#f1f5f9;z-index:2">TỔNG</td>
@@ -8739,6 +8811,7 @@ function qOpenMachineSheet(code, focusVt){
   }));
   _mbCtx = { code: String(row['Mã máy']||c), model: model,
              trai: String(row['Trại']||''),
+             dungMay: !qDangChay_(row), trangThai: qTrangThai_(row),
              /* Gợi ý sẵn người vận hành của chính máy đó — phần lớn các phiếu là do
               * người này làm, gõ lại tên mỗi lần là việc thừa. Vẫn sửa được. */
              vanHanh: (() => { const m = qMachineOf_(row['Mã máy']);
@@ -8795,6 +8868,13 @@ function qmbHtml_(){
     </div><button class="mcl" onclick="closeOv()">✕</button></div>
 
     <div class="mb">
+      ${C.dungMay?`<div class="card" style="border-left:3px solid var(--amb);margin-bottom:10px">
+        <div class="cb" style="padding:9px 12px;font-size:12px">
+          <b style="color:var(--amb)">⏸ Máy này đang ở trạng thái “${esc(C.trangThai||'dừng')}”.</b>
+          Vẫn ghi phiếu được — vật tư gửi ở trại không biến mất khi máy dừng. Việc thường làm
+          lúc này là <b>Kiểm kê</b> để chốt số thực tế, hoặc <b>Mang đi</b> để chuyển hàng sang máy khác.
+          Máy dừng không sinh cảnh báo cấp hàng, nên không cần bù về tồn tối thiểu.
+        </div></div>`:''}
       <div class="fgrid fg2" style="margin-bottom:8px">
         <div class="iw"><div class="il">Thời điểm xảy ra sự vụ</div>
           <input class="inp" type="datetime-local" id="mbKhi" value="${esc(qmbNowLocal_())}">
