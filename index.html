@@ -492,6 +492,9 @@ const S = {
   filter:{ headers:[], rows:[] },
   efficiency:{ headers:[], rows:[] },   // Sheet 5 · Theo dõi hiệu quả vận hành
   monthly:{ headers:[], rows:[] },      // Sheet 9 · Tổng kết hiệu quả tháng
+  /* Sheet 22 · Lịch sử điều chuyển máy. KHÔNG nằm trong gói bootstrap — nạp riêng khi
+   * người dùng mở tab "Lịch sử điều chuyển" (xem loadTransfers_). */
+  transfers:{ headers:[], rows:[], loaded:false, loading:false, err:'', at:'' },
   dropdowns:{},
   alerts:{ alerts:[], towerStates:[], total:0 },
   user:{ name:'Admin', login:'', role:'' },
@@ -520,9 +523,16 @@ const S = {
     masterStatus:'',   // '', 'active', 'stopped', 'notinstalled'
     /* Trang gộp "Danh sách & Định mức máy" — 3 tab dùng CHUNG 1 bộ lọc (ô tìm, trạng thái,
      * khu vực) để chuyển tab không bị mất ngữ cảnh đang xem. */
-    machineTab:'info',            // 'info' | 'design' | 'sync'
+    machineTab:'info',            // 'info' | 'design' | 'sync' | 'move'
     machineRegion:new Set(),
     machineOnlyProblem:false,
+    /* Tab "Lịch sử điều chuyển" — nguồn sheet "22. Lịch sử điều chuyển máy".
+     * Bộ lọc riêng vì câu hỏi ở đây khác hẳn 3 tab kia: không hỏi "máy này thế nào"
+     * mà hỏi "trong khoảng thời gian này, máy chạy từ đâu sang đâu". */
+    moveQ:'', moveTu:'', moveDen:'',
+    moveUnit:new Set(),           // lọc theo đơn vị hợp tác — khớp CẢ cũ lẫn mới
+    moveFarm:new Set(),           // lọc theo trang trại   — khớp CẢ cũ lẫn mới
+    moveKind:'',                  // '' | 'unit' | 'farm' | 'status' | 'code'
     tracking:'',
     /* Trang gộp "Theo dõi bảo dưỡng" — 2 tab dùng chung ô tìm.
      *   'sheet'   : bảng ngang đúng như Sheet 2 (mặc định — xem được cả khi web sập)
@@ -893,36 +903,37 @@ function navEfficiencyToCode(code){
  *      Bản cũ để câu "Đã ghi phiếu" chạy SAU khi tải lại toàn bộ dữ liệu, tức là
  *      5–10 giây sau cú bấm — đúng khoảng lặng khiến người ta bấm lại.
  *
- *  4 · CÓ HẠN GIỜ. fetch mặc định chờ vô hạn; mạng trại chập chờn thì lớp phủ
- *      treo mãi và cả app coi như chết. 60 giây rồi báo lỗi rõ ràng.
+ *  4 · KHÔNG CÒN HẠN GIỜ CỨNG. Xem khối chú thích ngay bên dưới.
  * ========================================================================== */
-/* HAI NGÂN SÁCH THỜI GIAN, VÌ CÓ HAI LOẠI REQUEST KHÁC HẲN NHAU.
+/* BỎ HẲN HẠN GIỜ — VÌ HẠN GIỜ Ở ĐÂY LÀM HẠI NHIỀU HƠN LÀM LỢI.
  *
- * Một con số duy nhất 60 giây là sai ở cả hai đầu:
- *   · Với lệnh ghi hay hỏi mốc dữ liệu, 60 giây là QUÁ DÀI — hỏng từ giây thứ ba
- *     mà vẫn bắt người ta nhìn lớp phủ thêm gần một phút.
- *   · Với gói bootstrap lần đầu trong ngày, 60 giây là QUÁ NGẮN. Lượt đó phải đọc
- *     16 sheet, dựng 6 bộ cảnh báo rồi nén cả gói lại — trên 79 máy có thể vượt
- *     một phút một cách hoàn toàn bình thường. Cắt ở 60 giây là TỰ HUỶ ĐÚNG LƯỢT
- *     GỌI ĐÃ GẦN XONG, rồi lượt sau lại bắt đầu từ con số không: cache chưa kịp
- *     ghi nên lần thử lại cũng chậm y hệt, và web rơi vào vòng lặp không bao giờ
- *     tải xong. Đây chính là lỗi "bootstrap quá 60 giây không phản hồi".
+ * Bản cũ cắt request ở 45 giây (lệnh thường) và 210 giây (gói bootstrap). Nghe thì
+ * hợp lý, chạy thật thì sai:
+ *
+ *   · Lệnh ghi lớn KHÔNG hỏng, chỉ chậm. Ghi phiếu vật tư hàng loạt, dựng lại Sheet
+ *     11/14, đồng bộ cột Sheet 2 — những việc đó đụng vào vài nghìn ô, Apps Script
+ *     hoàn toàn có thể mất hơn một phút mà vẫn đang chạy đúng. Cắt ở giây thứ 45,
+ *     TRÌNH DUYỆT bỏ cuộc chứ SERVER KHÔNG DỪNG: nó vẫn ghi tiếp và ghi xong. Kết
+ *     quả là web báo "không phản hồi", người dùng bấm lại, và lệnh chạy hai lần.
+ *     Đây là cách chắc chắn nhất để đẻ ra phiếu trùng.
+ *
+ *   · Hạn giờ chỉ cứu được đúng một tình huống — mạng đứt hẳn. Mà tình huống đó
+ *     fetch tự ném lỗi mạng, không cần ai canh giờ hộ.
+ *
+ * NÊN: để fetch chờ đến khi có câu trả lời. Bù lại bằng thứ thật sự hữu ích — lớp
+ * phủ đếm giây (egBusyTick_) để người dùng THẤY là nó đang chạy chứ không chết, và
+ * chốt chống-bấm-hai-lần _postFlight vẫn giữ nguyên.
  */
-const API_TIMEOUT_MS = 45000;        // lệnh ghi, hỏi mốc, đăng nhập…
-const BOOTSTRAP_TIMEOUT_MS = 210000; // gói dữ liệu lớn — dài hơn hẳn hạn của Apps Script
-
 /* Action đi qua POST nhưng KHÔNG đổi dữ liệu → không hiện lớp chặn, không báo "đã ghi". */
-const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','materialCost','smartgenStatus',
+const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','bdTransfers','materialCost','smartgenStatus',
                        'authMe','authList','authLogin','authRegister'];
 /* Action chạy nền, có thanh trạng thái riêng → cũng không hiện lớp chặn. */
 const POST_BACKGROUND = ['smartgenRun','smartgenAutoSync'];
 
-async function fetchJson_(url, opt, label, budgetMs){
-  const budget = budgetMs || API_TIMEOUT_MS;
-  const ctl = ('AbortController' in window) ? new AbortController() : null;
-  const timer = setTimeout(() => { try { ctl && ctl.abort(); } catch(e){} }, budget);
+async function fetchJson_(url, opt, label){
   try {
-    const res = await fetch(url, Object.assign({}, opt, ctl ? { signal: ctl.signal } : {}));
+    /* KHÔNG AbortController, KHÔNG setTimeout: dữ liệu lớn cứ chờ cho xong. */
+    const res = await fetch(url, opt || {});
     const txt = await res.text();
     try { return JSON.parse(txt); }
     catch (e){
@@ -931,20 +942,18 @@ async function fetchJson_(url, opt, label, budgetMs){
       throw new Error('Apps Script trả về nội dung không đọc được. Nhiều khả năng bản deploy đã cũ — deploy lại "Web app · Anyone".');
     }
   } catch (e){
-    if (e && e.name === 'AbortError')
-      throw new Error((label||'Yêu cầu') + ' không phản hồi sau ' + Math.round(budget/1000)
-        + ' giây. Apps Script đang bận hoặc mạng chập chờn — bấm ↻ Đồng bộ để thử lại.');
-    throw e;
-  } finally { clearTimeout(timer); }
+    throw new Error((label||'Yêu cầu') + ' lỗi: ' + (e && e.message ? e.message : e)
+      + ' — kiểm tra mạng rồi bấm ↻ Đồng bộ để thử lại.');
+  }
 }
 
-async function apiGet(action, params, budgetMs){
+async function apiGet(action, params){
   const url = new URL(API_URL);
   url.searchParams.set('action', action);
   if (params) Object.keys(params).forEach(k => url.searchParams.set(k, params[k]));
   if (S.token) url.searchParams.set('token', S.token);
   if (S.user && S.user.login) url.searchParams.set('user', S.user.login);
-  return fetchJson_(url.toString(), {}, action, budgetMs);
+  return fetchJson_(url.toString(), {}, action);
 }
 
 const _postFlight = new Map();     // chữ ký lệnh → lời hứa đang bay
@@ -977,7 +986,13 @@ async function apiPost(body){
       }, action);
       /* Ghi xong thì tự đón mốc mới của CHÍNH MÌNH — nếu không, 15 giây sau máy mình sẽ
        * báo "có người vừa thay đổi dữ liệu" cho đúng thay đổi mình vừa làm. */
-      if (writes && d && d.ok){ _revPending = null; hideNewData_(); syncRevAfterWrite_(); }
+      if (writes && d && d.ok){
+        /* LƯU THÀNH CÔNG = dữ liệu gõ dở đã nằm an toàn trên Google Sheet. Đây là một
+         * trong ba chỗ duy nhất được phép gỡ cờ _formDirty (xem chú thích ở cờ đó). */
+        clearFormDirty_();
+        clearAutoDraft();          // nháp đã lên Sheet — giữ lại chỉ gây hiểu nhầm
+        _revPending = null; hideNewData_(); syncRevAfterWrite_();
+      }
       if (!quiet && d && d.ok){
         toast('✓ Đã ghi vào Google Sheet — đang cập nhật màn hình…', 'ok');
         autoDot_(true);
@@ -998,11 +1013,29 @@ async function apiPost(body){
 
 /** Lớp phủ chặn thao tác trong lúc ghi. Cố ý CHẶN CẢ MÀN HÌNH: khoá riêng cái nút
  *  vừa bấm không đủ, vì nhiều màn hình có 2–3 nút cùng ghi một chỗ. */
+let _busyTick = null, _busyMsg = '', _busyT0 = 0;
 function egBusy_(on, msg){
   const el = document.getElementById('busyOv');
   if (!el) return;
-  if (msg){ const t = document.getElementById('busyTxt'); if (t) t.textContent = msg; }
+  if (msg) _busyMsg = msg;
   el.classList.toggle('show', !!on);
+
+  /* ĐẾM GIÂY TRONG LÚC CHỜ — thay cho hạn giờ đã bỏ.
+   * Không còn cắt request ở 45 giây nữa, nên phải cho người dùng thấy nó ĐANG chạy.
+   * Một lớp phủ đứng im 90 giây và một lớp phủ đứng im vì app chết trông giống hệt
+   * nhau; có con số nhích lên từng giây thì không ai bấm lại lần hai. */
+  if (_busyTick){ clearInterval(_busyTick); _busyTick = null; }
+  const t = document.getElementById('busyTxt');
+  if (on){
+    _busyT0 = Date.now();
+    if (t) t.textContent = _busyMsg;
+    _busyTick = setInterval(() => {
+      const s = Math.round((Date.now() - _busyT0) / 1000);
+      if (!t) return;
+      t.textContent = _busyMsg + (s >= 5 ? ` · ${s}s` : '')
+        + (s >= 40 ? ' — dữ liệu lớn, xin đừng bấm lại' : '');
+    }, 1000);
+  }
 }
 
 /* Khoá so sánh mã máy — bỏ khoảng trắng thừa và không phân biệt hoa/thường. */
@@ -1108,7 +1141,7 @@ async function reloadAll(opt){
      * Server vẫn hỗ trợ full=1; giữ lại cho lần gọi nào thật sự cần một gói duy nhất. */
     const qlvtP = wantQ ? loadQlvt(true) : null;
 
-    const d = await apiGet('bootstrap', Object.keys(params).length ? params : null, BOOTSTRAP_TIMEOUT_MS);
+    const d = await apiGet('bootstrap', Object.keys(params).length ? params : null);
     if (!d.ok) throw new Error(d.error||'Lỗi bootstrap');
     if (d.rev) S.rev = Number(d.rev.n) || 0;
     if (d.perm) applyPerm_(d.perm, d.pending);
@@ -1298,9 +1331,19 @@ document.addEventListener('click', (e) => {
 
 async function runSmartGenTask(taskId, extraParams){
   if (_smartgenRunning){ toast('Đang có 1 tác vụ Smartgen chạy dở, đợi xong đã', 'err'); return; }
+  /* Máy KHÁC đang chạy cũng phải chặn. Hai lượt song song vừa ăn tranh hạn ngạch
+   * Apps Script vừa có thể ghi đè nhau giữa chừng — server có LockService chặn, nhưng
+   * chặn ngay ở đây thì người dùng biết lý do thay vì ngồi chờ rồi nhận về "skipped". */
+  if (_sgServerBusy){ toast('⚡ Một máy khác đang chạy đồng bộ Smartgen — đợi xong đã', 'err'); return; }
+
   const task = SMARTGEN_TASKS.find(t => t.id === taskId);
 
   _smartgenRunning = true;
+  /* Từ giây này tới lúc xong: KHÔNG đồng bộ Google Sheet. Dọn luôn hàng chờ cũ để
+   * không có lần tải lại nào lọt vào giữa lượt ghi của Smartgen. */
+  _sgWasBusy = true;
+  _revPending = null;
+  hideNewData_();
   renderSmartGenMenu();
   setStatus(true, `Đang đồng bộ ${task ? task.label : taskId} từ Smartgen… có thể mất 1-2 phút`);
 
@@ -1336,6 +1379,11 @@ async function runSmartGenTask(taskId, extraParams){
     setStatus(false, '❌ ' + e.message, true);
   } finally {
     _smartgenRunning = false;
+    _sgServerBusy = false;
+    /* Đã tự reloadAll() ở nhánh thành công rồi, nên hạ cờ cạnh-xuống để nhịp poll kế
+     * tiếp không tải lại thêm một lần nữa cho cùng một lượt đồng bộ. */
+    _sgWasBusy = false;
+    syncRevAfterWrite_();
     renderSmartGenMenu();
   }
 }
@@ -1384,17 +1432,64 @@ async function runSmartGenTask(taskId, extraParams){
  *      bằng dữ liệu CŨ vì lệnh ghi chưa tới nơi.
  * ============================================================ */
 const REV_POLL_MS   = 15000;
-const EDIT_GRACE_MS = 45000;     // im bàn phím bao lâu thì coi là đã nhập xong
 let _revTimer   = null;
 let _revBusy    = false;
 let _revPending = null;          // {n, by} — thay đổi của người khác đang chờ áp
 let _editDepth  = 0;             // đếm biểu mẫu tự khai báo đang mở
-let _lastTypeAt = 0;             // mốc gõ phím gần nhất vào một ô NHẬP LIỆU
 let _writeInFlight = 0;          // số lệnh ghi đang bay lên server
+
+/* ============================================================
+ *  CỜ "ĐANG NHẬP DỞ"  ·  _formDirty
+ * ------------------------------------------------------------
+ *  BẢN CŨ dùng đồng hồ: gõ xong im 45 giây thì coi như đã nhập xong và cho phép
+ *  tải lại. Sai ở chỗ 45 giây là một khoảng thời gian RẤT BÌNH THƯỜNG giữa chừng
+ *  một biểu mẫu — KTV gõ nửa phiếu rồi quay sang gọi điện hỏi lại số ODO, hoặc mở
+ *  ảnh chụp màn hình ra đối chiếu. Quay lại thì cả biểu mẫu đã bị vẽ lại sạch sẽ.
+ *
+ *  BẢN NÀY dùng đúng thứ mà yêu cầu nghiệp vụ nói: hễ đã CHẠM VÀO một ô nhập liệu
+ *  thì KHÔNG tự cập nhật nữa, cho tới khi có một trong ba việc xảy ra:
+ *    1 · bấm Lưu và server trả về thành công  → apiPost gỡ cờ
+ *    2 · đóng biểu mẫu (nháp đã được cất vào bộ nhớ tạm) → closeOv gỡ cờ
+ *    3 · tự bấm "Cập nhật ngay" trên thanh báo → applyPendingData gỡ cờ
+ *  Không có đồng hồ nào tự gỡ cờ hộ. Đây là chủ ý: dữ liệu đang gõ dở của người
+ *  vận hành quan trọng hơn việc màn hình mới thêm vài phút.
+ * ============================================================ */
+let _formDirty = false;
+function markFormDirty_(){ _formDirty = true; }
+/** Gọi khi dữ liệu đang gõ dở đã AN TOÀN (đã lưu server, hoặc đã cất vào nháp). */
+function clearFormDirty_(){ _formDirty = false; }
 
 /** Cho code khác tự khai "đang mở biểu mẫu" — dùng cặp, luôn endEdit trong finally. */
 function beginEdit(){ _editDepth++; }
 function endEdit(){ _editDepth = Math.max(0, _editDepth - 1); }
+
+/* ============================================================
+ *  CỔNG ĐỒNG BỘ SMARTGEN  ·  không để hai luồng ghi giẫm lên nhau
+ * ------------------------------------------------------------
+ *  Một lượt Smartgen ghi rải rác vào Sheet 2 và Sheet 5 suốt vài phút, mỗi lần ghi
+ *  lại bơm mốc dữ liệu +1. Nếu web cứ thấy mốc đổi là tải lại thì nó tải về đúng
+ *  TRẠNG THÁI DỞ DANG: nửa số máy đã có số hôm nay, nửa còn lại vẫn trống — rồi 15
+ *  giây sau lại tải một bản dở dang khác. Bảng nhấp nháy, số liệu sai, và mỗi lượt
+ *  tải lại đó còn ăn tranh hạn ngạch Apps Script của chính lượt đồng bộ đang chạy.
+ *
+ *  QUY TẮC: Smartgen đang chạy (của mình HOẶC của máy khác — biết qua cờ sg ở
+ *  action=version) thì TUYỆT ĐỐI không đồng bộ Google Sheet. Cờ tắt = đồng bộ xong,
+ *  lúc đó mới tải lại ĐÚNG MỘT LẦN để lấy bản đã hoàn chỉnh.
+ * ============================================================ */
+let _sgServerBusy = false;       // có ai đó đang chạy Smartgen (theo server)
+let _sgWasBusy    = false;       // nhịp trước có bận không → dò cạnh xuống (xong)
+
+function sgBusyNow_(){ return _sgServerBusy || _smartgenRunning; }
+
+function showSgBar_(sg){
+  const el = $('newData'), tx = $('newDataTxt');
+  if (!el || !tx) return;
+  const ai = sg && sg.by ? String(sg.by).trim() : '';
+  const gy = sg && sg.secs ? ` · đã chạy ${Math.round(sg.secs)}s` : '';
+  tx.innerHTML = `⚡ Đang lấy dữ liệu từ Smartgen${ai ? ` (${esc(ai)} khởi động)` : ''}${gy}`
+    + ` · tạm hoãn cập nhật màn hình cho tới khi xong`;
+  el.classList.add('show');
+}
 
 /** Ô này có phải chỗ NHẬP LIỆU không? Ô tìm kiếm/lọc thì không tính. */
 function isEntryField_(el){
@@ -1411,17 +1506,18 @@ function isUserBusy_(){
   if (_editDepth > 0) return true;
   if (_writeInFlight > 0) return true;
   const ov = $('ov');
-  if (ov && ov.classList.contains('show')) return true;
+  if (ov && ov.classList.contains('show')) return true;   // biểu mẫu phụ đang mở
   try { if (Q && Q.catDirty) return true; } catch(e){}
-  if (isEntryField_(document.activeElement)) return true;
-  if (_lastTypeAt && (Date.now() - _lastTypeAt) < EDIT_GRACE_MS) return true;
+  if (_formDirty) return true;                            // đã gõ, chưa Lưu — xem chú thích _formDirty
+  if (isEntryField_(document.activeElement)) return true; // con trỏ đang nằm trong ô nhập
   return false;
 }
 
 /* Bắt Ở TẦNG CAPTURE trên document: các ô nhập được dựng lại liên tục bằng innerHTML
- * nên không thể gắn tay từng ô — gắn một lần ở đây là bắt được cả những ô sinh ra sau. */
-document.addEventListener('input',  e => { if (isEntryField_(e.target)) _lastTypeAt = Date.now(); }, true);
-document.addEventListener('change', e => { if (isEntryField_(e.target)) _lastTypeAt = Date.now(); }, true);
+ * nên không thể gắn tay từng ô — gắn một lần ở đây là bắt được cả những ô sinh ra sau.
+ * Chạm vào ô nhập liệu = bật cờ bẩn; từ đó không có lần tự-tải-lại nào cho tới khi Lưu. */
+document.addEventListener('input',  e => { if (isEntryField_(e.target)) markFormDirty_(); }, true);
+document.addEventListener('change', e => { if (isEntryField_(e.target)) markFormDirty_(); }, true);
 
 function showNewData_(by){
   const el = $('newData'), tx = $('newDataTxt');
@@ -1436,12 +1532,19 @@ function hideNewData_(){ const el = $('newData'); if (el) el.classList.remove('s
 
 /** Người dùng chủ động bấm "Cập nhật ngay". */
 async function applyPendingData(){
+  /* Smartgen còn đang chạy thì KHÔNG cho ép cập nhật, kể cả khi bấm nút: kéo về lúc
+   * này là kéo đúng bản ghi dở. Nói rõ lý do thay vì im lặng không làm gì. */
+  if (sgBusyNow_()){
+    toast('⚡ Smartgen đang chạy — đợi xong sẽ tự cập nhật, kéo về lúc này sẽ ra số liệu dở dang', 'info');
+    return;
+  }
   if (!_revPending) { hideNewData_(); return; }
   const ov = $('ov');
   if (ov && ov.classList.contains('show')){
-    if (!confirm('Cập nhật ngay sẽ đóng biểu mẫu đang mở. Những gì chưa bấm Lưu có thể mất. Tiếp tục?')) return;
-    closeOv();
+    if (!confirm('Cập nhật ngay sẽ đóng biểu mẫu đang mở.\n\nNhững gì đã gõ mà chưa bấm Lưu sẽ được cất vào bộ nhớ tạm và khôi phục khi mở lại biểu mẫu. Tiếp tục?')) return;
+    closeOv();          // closeOv tự cất nháp + gỡ cờ đang-nhập-dở
   }
+  clearFormDirty_();    // người dùng đã tự quyết định: dữ liệu gõ dở coi như xử lý xong
   await applyRev_(_revPending);
 }
 
@@ -1473,35 +1576,77 @@ function stopAutoRefresh(){ if (_revTimer) clearInterval(_revTimer); _revTimer =
 
 async function checkDataVersion_(){
   if (_revBusy) return;
-
-  /* ĐANG NHẬP DỞ MÀ ĐÃ CÓ THAY ĐỔI CHỜ SẴN: không cần hỏi server lại, chỉ nhắc thanh
-   * báo còn đó. Hỏi thêm cũng không làm được gì khác. */
-  if (_revPending && isUserBusy_()){ showNewData_(_revPending.by); return; }
-
-  /* Nhập xong rồi mà vẫn còn thay đổi treo → áp ngay, không đợi người dùng bấm.
-   * Đây mới là hành vi đúng: người dùng không phải nhớ mình đang nợ một lần cập nhật. */
-  if (_revPending && !isUserBusy_()){ await applyRev_(_revPending); return; }
-
   _revBusy = true;
   try {
-    const d = await apiGet('version');
+    /* Hỏi mốc TRƯỚC MỌI QUYẾT ĐỊNH — vì gói trả về còn chứa cờ Smartgen, mà cờ đó
+     * quyết định có được phép đồng bộ hay không. Request này chỉ đọc 1 dòng
+     * ScriptProperties nên rẻ, hỏi thừa cũng không tốn gì. */
+    let d = null;
+    try { d = await apiGet('version'); }
+    catch(e){
+      /* Mất mạng chốc lát là chuyện thường. Im lặng bỏ qua: báo lỗi mỗi 15 giây thì
+       * người dùng sẽ tắt luôn cả những cảnh báo thật. */
+      return;
+    }
     if (!d || !d.ok || !d.rev) return;
+
+    /* ---- CỔNG 1 · SMARTGEN ĐANG CHẠY THÌ KHÔNG ĐỒNG BỘ GOOGLE SHEET -------------
+     * Cờ sg do server giữ, nên máy nào cũng thấy — kể cả máy KHÔNG phải người bấm
+     * nút. Trong lúc bận: ghi nhận mốc mới nhất vào hàng chờ nhưng KHÔNG tải lại. */
+    const sg = d.sg || {};
+    _sgServerBusy = !!sg.busy;
+
+    if (sgBusyNow_()){
+      const n0 = Number(d.rev.n) || 0;
+      if (S.rev != null && n0 !== S.rev) _revPending = { n:n0, by:String(d.rev.by||''), sg:true };
+      showSgBar_(sg);
+      _sgWasBusy = true;
+      return;
+    }
+
+    /* CẠNH XUỐNG: nhịp trước còn bận, nhịp này đã rảnh = LƯỢT ĐỒNG BỘ VỪA XONG.
+     * Đây chính là lúc — và là lúc DUY NHẤT — được phép kéo dữ liệu mới về, vì bây
+     * giờ Sheet mới ở trạng thái hoàn chỉnh. Vẫn phải tôn trọng cờ "đang nhập dở":
+     * Smartgen xong không phải là lý do để xoá biểu mẫu người ta đang gõ. */
+    if (_sgWasBusy){
+      _sgWasBusy = false;
+      hideNewData_();
+      const n1 = Number(d.rev.n) || 0;
+      if (isUserBusy_()){
+        _revPending = { n:n1, by:'Smartgen' };
+        showNewData_('Smartgen');
+      } else {
+        await applyRev_({ n:n1, by:'Smartgen' });
+        toast('⚡ Smartgen đồng bộ xong — đã cập nhật số liệu mới', 'ok');
+      }
+      return;
+    }
+
+    /* ---- CỔNG 2 · ĐANG NHẬP DỞ THÌ HOÃN ---------------------------------------- */
     const n = Number(d.rev.n) || 0;
     if (S.rev === null || S.rev === undefined){ S.rev = n; return; }
+
+    if (_revPending){
+      // Đã có thay đổi treo sẵn: cập nhật mốc mới nhất rồi xử theo trạng thái người dùng.
+      if (n !== S.rev) _revPending = { n:n, by:String(d.rev.by||'') };
+      if (isUserBusy_()){ showNewData_(_revPending.by); return; }
+      /* Nhập xong rồi mà vẫn còn thay đổi treo → áp ngay, không đợi người dùng bấm.
+       * Người vận hành không phải nhớ mình đang nợ một lần cập nhật. */
+      await applyRev_(_revPending);
+      return;
+    }
+
     if (n === S.rev) return;
 
     /* MẤU CHỐT: tải lại là VẼ LẠI TOÀN BỘ TRANG. Nếu ngay lúc đó người dùng đang gõ
      * thì mọi thứ chưa bấm Lưu biến mất — đúng lỗi mà anh Vân gặp. Nên: xếp vào hàng
-     * chờ, hiện thanh báo, và tự áp ở nhịp sau khi người dùng đã nhập xong. */
+     * chờ, hiện thanh báo, và tự áp ngay khi người dùng đã Lưu hoặc đóng biểu mẫu. */
     if (isUserBusy_()){
       _revPending = { n:n, by:String(d.rev.by||'') };
       showNewData_(_revPending.by);
       return;
     }
     await applyRev_({ n:n, by:String(d.rev.by||'') });
-  } catch(e){
-    /* Mất mạng chốc lát là chuyện thường. Im lặng bỏ qua: báo lỗi mỗi 15 giây thì
-     * người dùng sẽ tắt luôn cả những cảnh báo thật. */
   } finally { _revBusy = false; }
 }
 
@@ -3364,7 +3509,13 @@ function machineFilterMatch_(code, m){
   return true;
 }
 
-function setMachineTab(t){ S.filters.machineTab = t; renderPage('master'); }
+function setMachineTab(t){
+  S.filters.machineTab = t;
+  /* Sổ điều chuyển nạp theo yêu cầu, không nằm trong gói bootstrap: nó chỉ được xem
+   * vài lần mỗi tuần, cõng nó theo mọi lần đăng nhập của 79 máy là lãng phí. */
+  if (t === 'move' && !S.transfers.loaded && !S.transfers.loading) loadTransfers_();
+  renderPage('master');
+}
 function toggleMachineRegion(r){
   const set = S.filters.machineRegion;
   if (set.has(r)) set.delete(r); else set.add(r);
@@ -3412,8 +3563,9 @@ function viewMaster(){
         ${tabBtn('info','📋 Thông tin máy')}
         ${tabBtn('design','⚙ Định mức thiết kế', nProblem?{n:nProblem, cls:'ba'}:null)}
         ${tabBtn('sync','🔗 Đối soát đồng bộ', rec.totalMissing?{n:rec.totalMissing, cls:'br'}:null)}
+        ${tabBtn('move','🔄 Lịch sử điều chuyển', S.transfers.loaded?{n:S.transfers.rows.length, cls:'bmu'}:null)}
       </div>
-      ${tab!=='sync' ? `
+      ${(tab!=='sync' && tab!=='move') ? `
       <div class="msg">
         <span class="mslbl">Trạng thái</span>
         ${chip('', 'Tất cả', all.length)}
@@ -3436,7 +3588,12 @@ function viewMaster(){
       </div>` : ''}
     </div>
 
-    ${tab==='info' ? masterInfoTabHtml_() : (tab==='design' ? masterDesignTabHtml_() : masterSyncTabHtml_())}
+    ${tab==='move' ? masterMoveFiltersHtml_() : ''}
+
+    ${tab==='info'  ? masterInfoTabHtml_()
+    : tab==='design'? masterDesignTabHtml_()
+    : tab==='move'  ? masterMoveTabHtml_()
+    :                 masterSyncTabHtml_()}
   `;
 }
 
@@ -3591,6 +3748,268 @@ function machinesMissingDesign_(){
     });
   });
   return out;
+}
+
+
+/* ============================================================================
+ *  TAB 4 · LỊCH SỬ ĐIỀU CHUYỂN  ·  nguồn sheet "22. Lịch sử điều chuyển máy"
+ * ----------------------------------------------------------------------------
+ *  CÂU HỎI TAB NÀY TRẢ LỜI: "máy nào đã đổi chủ / đổi trại / đổi trạng thái, lúc
+ *  nào, ai ghi". Ba tab kia đều nói về HIỆN TRẠNG; chỗ này là thứ duy nhất nói về
+ *  QUÁ KHỨ, và nó chính là căn cứ khi hai đơn vị tranh nhau một máy hoặc khi đối
+ *  chiếu chi phí vật tư của một trại theo tháng.
+ *
+ *  VÌ SAO LỌC PHẢI KHỚP CẢ CỘT CŨ LẪN CỘT MỚI: một dòng điều chuyển luôn có hai vế
+ *  ("GF → CPG"). Lọc theo đơn vị "GF" mà chỉ dò cột mới thì lần máy RỜI KHỎI GF
+ *  biến mất khỏi kết quả — đúng cái lần quan trọng nhất. Nên mọi bộ lọc ở đây đều
+ *  khớp theo kiểu "có mặt ở một trong hai vế".
+ * ========================================================================== */
+
+async function loadTransfers_(){
+  if (S.transfers.loading) return;
+  S.transfers.loading = true;
+  S.transfers.err = '';
+  renderPage('master');
+  try {
+    const d = await apiPost({ action:'bdTransfers' });
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Không đọc được sổ điều chuyển');
+    S.transfers.headers = d.headers || [];
+    S.transfers.rows    = d.rows || [];
+    S.transfers.loaded  = true;
+    S.transfers.at      = new Date().toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'});
+    if (d.thieuSheet)
+      S.transfers.err = 'Chưa có sheet "22. Lịch sử điều chuyển máy". Chạy setupBaoDuong() trong Apps Script để dựng.';
+  } catch(e){
+    S.transfers.err = e.message;
+  } finally {
+    S.transfers.loading = false;
+    renderPage('master');
+  }
+}
+
+/** Nạp lại sổ theo yêu cầu (nút ↻). Có sẵn dữ liệu rồi vẫn cho gọi lại. */
+function reloadTransfers_(){ S.transfers.loaded = false; loadTransfers_(); }
+
+/* Gom giá trị của một cặp cột cũ/mới thành tập giá trị để dựng chip lọc. */
+function moveValues_(oldH, newH){
+  const set = new Map();          // dạng viết chuẩn → số lần xuất hiện
+  (S.transfers.rows||[]).forEach(r => {
+    [r[oldH], r[newH]].forEach(v => {
+      const t = String(v==null?'':v).trim();
+      if (!t) return;
+      set.set(t, (set.get(t)||0) + 1);
+    });
+  });
+  return [...set.entries()].sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0],'vi'));
+}
+
+function moveMatch_(r){
+  const f = S.filters;
+
+  if (f.moveUnit.size){
+    const a = String(r['Đơn vị hợp tác cũ']||'').trim(), b = String(r['Đơn vị hợp tác mới']||'').trim();
+    if (!f.moveUnit.has(a) && !f.moveUnit.has(b)) return false;
+  }
+  if (f.moveFarm.size){
+    const a = String(r['Trang trại cũ']||'').trim(), b = String(r['Trang trại mới']||'').trim();
+    if (!f.moveFarm.has(a) && !f.moveFarm.has(b)) return false;
+  }
+  if (f.machineRegion.size){
+    const a = String(r['Khu vực cũ']||'').trim(), b = String(r['Khu vực mới']||'').trim();
+    if (!f.machineRegion.has(a) && !f.machineRegion.has(b)) return false;
+  }
+
+  /* LOẠI THAY ĐỔI — suy từ chính hai vế cũ/mới, KHÔNG dò chữ trong ô "Nội dung thay
+   * đổi". Ô đó là văn bản do người ghi, dò chuỗi trên nó là kiểu lọc hỏng ngay lần
+   * đầu ai đó viết hoa khác đi. */
+  const diff = (a,b) => String(r[a]||'').trim() !== String(r[b]||'').trim();
+  if (f.moveKind === 'unit'   && !diff('Đơn vị hợp tác cũ','Đơn vị hợp tác mới')) return false;
+  if (f.moveKind === 'farm'   && !diff('Trang trại cũ','Trang trại mới'))         return false;
+  if (f.moveKind === 'status' && !diff('Trạng thái cũ','Trạng thái mới'))         return false;
+  if (f.moveKind === 'code'   && !diff('Mã máy cũ','Mã máy mới'))                 return false;
+
+  const d = String(r['Ngày ghi nhận']||'').slice(0,10);
+  if (f.moveTu  && d && d < f.moveTu)  return false;
+  if (f.moveDen && d && d > f.moveDen) return false;
+
+  const q = String(f.moveQ||'').trim().toLowerCase();
+  if (q){
+    const hay = [r['Mã máy'], r['Mã máy cũ'], r['Mã máy mới'], r['Nội dung thay đổi'],
+                 r['Đơn vị hợp tác cũ'], r['Đơn vị hợp tác mới'],
+                 r['Trang trại cũ'], r['Trang trại mới'],
+                 r['Người cập nhật'], r['Ghi chú']].join(' ').toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+function moveFiltered_(){ return (S.transfers.rows||[]).filter(moveMatch_); }
+
+/* Chip lọc truyền INDEX chứ không truyền giá trị vào onclick.
+ * Lý do: esc() đổi dấu nháy đơn thành &#39;, trình duyệt lại giải mã ngược khi phân
+ * tích thuộc tính onclick — một tên trại có dấu nháy sẽ cắt đôi chuỗi JS và cái chip
+ * đó chết lặng. Chỉ số thì không bao giờ có ký tự cần thoát. */
+let _moveChips = { moveUnit:[], moveFarm:[], machineRegion:[] };
+
+function toggleMoveSet_(which, i){
+  const v = (_moveChips[which]||[])[i];
+  if (v === undefined) return;
+  const set = S.filters[which];
+  if (set.has(v)) set.delete(v); else set.add(v);
+  renderPage('master');
+}
+function setMoveKind_(k){ S.filters.moveKind = (S.filters.moveKind === k) ? '' : k; renderPage('master'); }
+function setMoveDate_(which, v){ S.filters[which] = v; renderPage('master'); }
+function onMoveSearch_(v){
+  S.filters.moveQ = v;
+  const tb = $('moveTableBody');
+  if (tb) tb.innerHTML = moveRowsHtml_();
+  const c = $('moveCount'); if (c) c.textContent = moveFiltered_().length;
+}
+function clearMoveFilters_(){
+  const f = S.filters;
+  f.moveQ = ''; f.moveTu = ''; f.moveDen = ''; f.moveKind = '';
+  f.moveUnit.clear(); f.moveFarm.clear(); f.machineRegion.clear();
+  renderPage('master');
+}
+
+function masterMoveFiltersHtml_(){
+  if (!S.transfers.loaded) return '';
+  const f = S.filters;
+  const units = moveValues_('Đơn vị hợp tác cũ','Đơn vị hợp tác mới');
+  const farms = moveValues_('Trang trại cũ','Trang trại mới');
+  const regs  = moveValues_('Khu vực cũ','Khu vực mới');
+
+  _moveChips = {
+    moveUnit:       units.slice(0,14).map(x => x[0]),
+    moveFarm:       farms.slice(0,14).map(x => x[0]),
+    machineRegion:  regs.map(x => x[0])
+  };
+  const chip = (which, v, n, i) => `<button class="fchip ${S.filters[which].has(v)?'on':''}"
+      onclick="toggleMoveSet_('${which}',${i})">${esc(v)} <span class="b bmu">${n}</span></button>`;
+
+  const kind = (k,label) => `<button class="fchip ${f.moveKind===k?'on':''}" onclick="setMoveKind_('${k}')">${label}</button>`;
+
+  const nAll = (S.transfers.rows||[]).length, nShow = moveFiltered_().length;
+  const hasFilter = f.moveQ || f.moveTu || f.moveDen || f.moveKind
+                 || f.moveUnit.size || f.moveFarm.size || f.machineRegion.size;
+
+  return `
+  <div class="msf" style="flex-direction:column;align-items:stretch;gap:10px">
+    <div class="msg">
+      <span class="mslbl">Loại thay đổi</span>
+      ${kind('unit','🏢 Đổi đơn vị')}
+      ${kind('farm','🚜 Đổi trại')}
+      ${kind('status','⚙ Đổi trạng thái')}
+      ${kind('code','🔖 Đổi mã máy')}
+    </div>
+    ${regs.length ? `<div class="msg"><span class="mslbl">Khu vực</span>
+      ${_moveChips.machineRegion.map((v,i) => chip('machineRegion', v, regs[i][1], i)).join('')}</div>` : ''}
+    ${units.length ? `<div class="msg"><span class="mslbl">Đơn vị</span>
+      ${_moveChips.moveUnit.map((v,i) => chip('moveUnit', v, units[i][1], i)).join('')}</div>` : ''}
+    ${farms.length ? `<div class="msg"><span class="mslbl">Trang trại</span>
+      ${_moveChips.moveFarm.map((v,i) => chip('moveFarm', v, farms[i][1], i)).join('')}</div>` : ''}
+    <div class="msg" style="align-items:center">
+      <span class="mslbl">Từ ngày</span>
+      <input class="si" type="date" style="max-width:150px" value="${esc(f.moveTu)}"
+             onchange="setMoveDate_('moveTu', this.value)">
+      <span class="mslbl">đến</span>
+      <input class="si" type="date" style="max-width:150px" value="${esc(f.moveDen)}"
+             onchange="setMoveDate_('moveDen', this.value)">
+      <input class="si" id="moveSearch" style="max-width:280px" autocomplete="off"
+             placeholder="🔍 Tìm mã máy, đơn vị, trại, người ghi…"
+             value="${esc(f.moveQ)}" oninput="onMoveSearch_(this.value)">
+      ${hasFilter ? `<button class="btn bg-gr sm" onclick="clearMoveFilters_()">✕ Bỏ lọc</button>` : ''}
+      <button class="btn bg-gr sm" onclick="reloadTransfers_()" title="Nạp lại sổ từ Google Sheet">↻ Nạp lại</button>
+      <button class="btn bg-gr sm" onclick="exportMoveCsv_()">⤓ CSV</button>
+      <span class="b bmu"><span id="moveCount">${nShow}</span>/${nAll} lần điều chuyển</span>
+    </div>
+  </div>`;
+}
+
+/* Một vế "cũ → mới". Giống nhau thì hiện dấu — cho mắt lướt nhanh xuống đúng cột đã đổi. */
+function moveCell_(r, oldH, newH){
+  const a = String(r[oldH]||'').trim(), b = String(r[newH]||'').trim();
+  if (a === b) return `<td style="font-size:11px;color:var(--mu)">${esc(a)||'—'}</td>`;
+  return `<td style="font-size:11px">${esc(a)||'<i>(trống)</i>'} → <b>${esc(b)||'<i>(trống)</i>'}</b></td>`;
+}
+
+function moveRowsHtml_(){
+  const rows = moveFiltered_();
+  if (!rows.length)
+    return '<tr><td colspan="8"><div class="empty">Không có lần điều chuyển nào khớp bộ lọc.</div></td></tr>';
+  return rows.map(r => {
+    const code = String(r['Mã máy']||r['Mã máy mới']||'').trim();
+    const odo  = r['ODO khi chuyển (h)'];
+    return `<tr>
+      <td style="white-space:nowrap">${esc(String(r['Ngày ghi nhận']||'').slice(0,16))}</td>
+      <td><span class="mm">${esc(code)}</span></td>
+      ${moveCell_(r,'Đơn vị hợp tác cũ','Đơn vị hợp tác mới')}
+      ${moveCell_(r,'Trang trại cũ','Trang trại mới')}
+      ${moveCell_(r,'Khu vực cũ','Khu vực mới')}
+      ${moveCell_(r,'Trạng thái cũ','Trạng thái mới')}
+      <td style="text-align:right">${(odo===''||odo==null)?'—':nfd_(bdN_(odo))}</td>
+      <td style="font-size:11px">${esc(r['Người cập nhật']||'—')}
+        ${r['Ghi chú'] ? `<div style="font-size:10px;color:var(--mu)">${esc(r['Ghi chú'])}</div>` : ''}</td>
+    </tr>`;
+  }).join('');
+}
+
+function masterMoveTabHtml_(){
+  if (S.transfers.loading)
+    return `<div class="card"><div class="cb"><div class="empty"><div class="ei">⏳</div>
+      Đang đọc sheet "22. Lịch sử điều chuyển máy"…</div></div></div>`;
+
+  if (S.transfers.err && !S.transfers.rows.length)
+    return `<div class="card"><div class="cb"><div class="empty"><div class="ei">⚠️</div>
+      ${esc(S.transfers.err)}<br><br>
+      <button class="btn bg-g sm" onclick="reloadTransfers_()">↻ Thử lại</button></div></div></div>`;
+
+  if (!S.transfers.loaded)
+    return `<div class="card"><div class="cb"><div class="empty"><div class="ei">🔄</div>
+      Chưa nạp sổ điều chuyển.<br><br>
+      <button class="btn bg-g sm" onclick="loadTransfers_()">Nạp sổ điều chuyển</button></div></div></div>`;
+
+  if (!S.transfers.rows.length)
+    return `<div class="card"><div class="cb"><div class="empty"><div class="ei">🔄</div>
+      Sổ điều chuyển chưa có dòng nào. Mỗi lần sửa đơn vị / trại / khu vực / trạng thái / mã máy
+      ở tab <b>Thông tin máy</b>, hệ thống sẽ tự ghi một dòng vào đây.</div></div></div>`;
+
+  return `
+    <div class="card">
+      <div class="ch"><h3>Lịch sử điều chuyển · sheet "22. Lịch sử điều chuyển máy"</h3>
+        <span class="b bmu">nạp lúc ${esc(S.transfers.at)}</span></div>
+      <div class="cb" style="padding:8px 16px 0;font-size:11px;color:var(--mu);line-height:1.6">
+        Sổ chỉ THÊM dòng, không sửa dòng cũ. Mỗi dòng là một lần máy đổi đơn vị, đổi trại,
+        đổi khu vực, đổi trạng thái hoặc đổi mã — ghi kèm số giờ ODO tại thời điểm chuyển
+        để đối chiếu chi phí vật tư giữa hai bên.
+      </div>
+      <div class="tw" style="max-height:66vh"><table>
+        <thead><tr>
+          <th>Ngày ghi nhận</th><th>Mã máy</th>
+          <th>Đơn vị: cũ → mới</th><th>Trang trại: cũ → mới</th>
+          <th>Khu vực</th><th>Trạng thái</th>
+          <th style="text-align:right">ODO (h)</th><th>Người ghi</th>
+        </tr></thead>
+        <tbody id="moveTableBody">${moveRowsHtml_()}</tbody>
+      </table></div>
+    </div>`;
+}
+
+function exportMoveCsv_(){
+  const rows = moveFiltered_().map(r => ({
+    'Ngày ghi nhận': String(r['Ngày ghi nhận']||''),
+    'Mã máy': r['Mã máy']||'',
+    'Đơn vị cũ': r['Đơn vị hợp tác cũ']||'',   'Đơn vị mới': r['Đơn vị hợp tác mới']||'',
+    'Trang trại cũ': r['Trang trại cũ']||'',    'Trang trại mới': r['Trang trại mới']||'',
+    'Khu vực cũ': r['Khu vực cũ']||'',          'Khu vực mới': r['Khu vực mới']||'',
+    'Trạng thái cũ': r['Trạng thái cũ']||'',    'Trạng thái mới': r['Trạng thái mới']||'',
+    'Mã máy cũ': r['Mã máy cũ']||'',            'Mã máy mới': r['Mã máy mới']||'',
+    'ODO khi chuyển (h)': r['ODO khi chuyển (h)']??'',
+    'Nội dung thay đổi': r['Nội dung thay đổi']||'',
+    'Người cập nhật': r['Người cập nhật']||'',  'Ghi chú': r['Ghi chú']||''
+  }));
+  exportCsv({ headers: Object.keys(rows[0] || {'Ngày ghi nhận':1}), rows }, 'lich-su-dieu-chuyen-may');
 }
 
 function masterSyncTabHtml_(){
@@ -7086,10 +7505,30 @@ function statusBadge(s){
   return s ? `<span class="b bmu">${esc(s)}</span>` : '';
 }
 
-function openOv(html){ $('mdl').innerHTML = html; $('ov').classList.add('show'); document.body.style.overflow='hidden'; }
+/**
+ * MỞ BIỂU MẪU PHỤ.
+ *
+ * Ngoài việc vẽ nội dung, hàm này còn TỰ ĐỘNG bắt lấy bộ nháp của biểu mẫu — không
+ * cần mỗi chỗ gọi phải tự khai setDraftContext như trước. Xem autoDraftKey_().
+ *
+ * @param {string} html  nội dung modal
+ * @param {string} [key] khoá nháp tự đặt. Bỏ trống thì tự suy ra từ tiêu đề + danh
+ *                       sách ô nhập của chính modal đó.
+ */
+function openOv(html, key){
+  $('mdl').innerHTML = html;
+  $('ov').classList.add('show');
+  document.body.style.overflow='hidden';
+  try { autoDraftAttach_(key); } catch(e){ /* nháp hỏng không được làm hỏng việc mở form */ }
+}
 function closeOv(){
   captureDraft();               // lưu bộ nhớ nếu chưa kịp nhấn "Lưu"
   clearDraftContext();
+  /* Nháp đã nằm trong localStorage → dữ liệu gõ dở KHÔNG còn nguy cơ mất khi trang
+   * vẽ lại, nên gỡ cờ để việc tự-cập-nhật được chạy tiếp. Thứ tự bắt buộc: cất nháp
+   * TRƯỚC, gỡ cờ SAU. Đảo lại là mở đúng cửa sổ vài mili giây cho một lần tải lại
+   * chen vào giữa — và đó là lúc mất dữ liệu. */
+  clearFormDirty_();
   _currentEffModalRow = null;
   $('ov').classList.remove('show');
   document.body.style.overflow='';
@@ -7297,6 +7736,15 @@ async function autoSyncOnLogin(){
   try { st = await apiPost({ action:'smartgenStatus' }); } catch(e){ return; }
   if (!st || !st.ok) return;
 
+  /* MÁY KHÁC ĐANG CHẠY DỞ: không khởi động lượt thứ hai. Chỉ bật cổng hoãn-đồng-bộ
+   * rồi để nhịp poll theo dõi; xong lượt đó nó sẽ tự kéo dữ liệu mới về. */
+  if (st.sg && st.sg.busy){
+    _sgServerBusy = true; _sgWasBusy = true;
+    showSgBar_(st.sg);
+    setSyncFooter_(st);
+    return;
+  }
+
   if (!st.needsSync){
     try { localStorage.setItem(flagKey, today); } catch(e){}
     setSyncFooter_(st);
@@ -7305,6 +7753,9 @@ async function autoSyncOnLogin(){
 
   toast('Đang tự động lấy dữ liệu Smartgen cho hôm nay…','info');
   setStatus(true, '⚡ Đang đồng bộ Smartgen (tự động)…');
+  /* Khoá cổng đồng bộ Google Sheet trong suốt lượt chạy — xem sgBusyNow_(). */
+  _smartgenRunning = true; _sgWasBusy = true;
+  _revPending = null; hideNewData_();
   try {
     const res = await apiPost({ action:'smartgenAutoSync' });
     try { localStorage.setItem(flagKey, today); } catch(e){}
@@ -7329,6 +7780,15 @@ async function autoSyncOnLogin(){
   } catch(e){
     setStatus(false, '❌ Đồng bộ tự động lỗi: '+e.message, true);
     toast('Đồng bộ tự động lỗi — có thể bấm nút Đồng bộ Smartgen để thử lại','err');
+  } finally {
+    /* Mở lại cổng dù thành công hay lỗi. Quên finally ở đây là web đứng im không bao
+     * giờ tự cập nhật nữa, mà không có dấu hiệu gì cho biết vì sao. */
+    _smartgenRunning = false;
+    _sgServerBusy = false;
+    _sgWasBusy = false;
+    hideNewData_();
+    syncRevAfterWrite_();
+    renderSmartGenMenu();
   }
 }
 
@@ -7634,22 +8094,129 @@ function setDraftContext(key, fieldIds){
   }
 }
 function captureDraft(){
-  if (!_currentDraftKey || !_currentDraftFields.length) return;
+  /* Có khai báo tay (setDraftContext) thì đi đường cũ — 3 biểu mẫu lớn đang dùng nó
+   * và chúng lưu nháp theo mã máy, chính xác hơn khoá tự suy. */
+  if (_currentDraftKey && _currentDraftFields.length){
+    const data = {};
+    let hasVal = false;
+    _currentDraftFields.forEach(id => {
+      const el = document.getElementById(id);
+      if (el && (el.value||'').toString().trim() !== ''){ data[id] = el.value; hasVal = true; }
+    });
+    if (!S.drafts) S.drafts = {};
+    if (hasVal){ S.drafts[_currentDraftKey] = data; saveDrafts(); }
+    else if (S.drafts[_currentDraftKey]){ delete S.drafts[_currentDraftKey]; saveDrafts(); }
+    return;
+  }
+  autoDraftCapture_();
+}
+
+/* ============================================================================
+ *  NHÁP TỰ ĐỘNG CHO MỌI BIỂU MẪU PHỤ
+ * ----------------------------------------------------------------------------
+ *  VẤN ĐỀ: chỉ 3 biểu mẫu (máy · theo dõi bảo dưỡng · hiệu quả vận hành) tự khai
+ *  setDraftContext, nên chỉ 3 chỗ đó giữ được dữ liệu khi lỡ tay đóng modal. Còn
+ *  phiếu vật tư, ghi nhận sửa chữa, nhập chỉ số công tơ, thanh toán SIM… đóng nhầm
+ *  là mất trắng. Mà đóng nhầm rất dễ: bấm ra ngoài vùng modal cũng đóng.
+ *
+ *  CÁCH LÀM: không bắt mỗi biểu mẫu phải tự khai nữa. openOv() quét luôn mọi ô nhập
+ *  bên trong modal vừa mở, tự đặt một khoá, khôi phục nếu có nháp cũ; closeOv() cất
+ *  lại. Không phải sửa hàng chục chỗ gọi và biểu mẫu mới viết sau này cũng tự có.
+ *
+ *  KHOÁ PHẢI ỔN ĐỊNH GIỮA HAI LẦN MỞ, NHƯNG KHÁC NHAU GIỮA HAI BIỂU MẪU. Ghép từ:
+ *  trang đang xem + tiêu đề modal + chữ ký danh sách ô nhập. Đổi biểu mẫu là đổi
+ *  chữ ký, nên nháp của phiếu này không bao giờ chui nhầm vào phiếu kia. Chữ ký còn
+ *  là chốt an toàn khi code đổi: thêm/bớt một ô là khoá đổi theo, nháp cũ (đã lệch
+ *  cấu trúc) tự bị bỏ qua thay vì điền sai chỗ.
+ * ========================================================================== */
+let _autoDraftKey = null;
+
+/** Các ô nhập THẬT trong modal. Loại ô tìm kiếm, nút, ô chọn file, ô tự khai bỏ qua. */
+function autoDraftFields_(){
+  const mdl = $('mdl');
+  if (!mdl) return [];
+  return Array.prototype.slice.call(mdl.querySelectorAll('input,select,textarea'))
+    .filter(el => !el.disabled && !el.readOnly
+      && ['button','submit','reset','file','image','hidden'].indexOf(el.type) < 0
+      && !(el.classList && el.classList.contains('si'))
+      && !el.hasAttribute('data-nodraft'));
+}
+
+/** Tên ô trong bộ nháp. Ưu tiên id/name; không có thì dùng vị trí — đủ ổn định vì
+ *  khoá nháp đã gắn chữ ký cấu trúc, cấu trúc đổi là khoá đổi. */
+function autoDraftFieldKey_(el, i){ return el.id || el.name || ('#' + i); }
+
+function autoDraftSig_(els){
+  const raw = els.map((el,i) => autoDraftFieldKey_(el,i) + ':' + (el.type||el.tagName)).join('|');
+  let h = 0;
+  for (let i = 0; i < raw.length; i++){ h = ((h << 5) - h + raw.charCodeAt(i)) | 0; }
+  return (h >>> 0).toString(36);
+}
+
+function autoDraftAttach_(key){
+  _autoDraftKey = null;
+  const els = autoDraftFields_();
+  if (!els.length) return;                      // modal chỉ để xem → không cần nháp
+
+  if (key) _autoDraftKey = 'auto:' + key;
+  else {
+    const mdl = $('mdl');
+    const h2 = mdl.querySelector('.mh h2');
+    const title = h2 ? String(h2.textContent||'').replace(/\s+/g,' ').trim().slice(0,60) : '';
+    const pg = document.querySelector('.page.on');
+    _autoDraftKey = 'auto:' + (pg ? pg.id : '?') + ':' + title + ':' + autoDraftSig_(els);
+  }
+
+  if (!S.drafts) loadDrafts();
+  const d = S.drafts[_autoDraftKey];
+  if (!d) return;
+
+  let n = 0;
+  els.forEach((el, i) => {
+    const k = autoDraftFieldKey_(el, i);
+    if (!(k in d)) return;
+    const v = d[k];
+    if (el.type === 'checkbox' || el.type === 'radio'){
+      if (el.checked !== !!v){ el.checked = !!v; n++; }
+    } else if (el.value !== v){ el.value = v; n++; }
+  });
+  if (n) toast(`↺ Đã khôi phục ${n} ô nhập dở lần trước`, 'info');
+}
+
+function autoDraftCapture_(){
+  if (!_autoDraftKey) return;
+  const els = autoDraftFields_();
   const data = {};
-  let hasVal = false;
-  _currentDraftFields.forEach(id => {
-    const el = document.getElementById(id);
-    if (el && (el.value||'').toString().trim() !== ''){ data[id] = el.value; hasVal = true; }
+  let has = false;
+  els.forEach((el, i) => {
+    const k = autoDraftFieldKey_(el, i);
+    if (el.type === 'checkbox' || el.type === 'radio'){
+      if (el.checked){ data[k] = true; has = true; }
+    } else {
+      const v = (el.value == null ? '' : String(el.value));
+      if (v.trim() !== ''){ data[k] = v; has = true; }
+    }
   });
   if (!S.drafts) S.drafts = {};
-  if (hasVal){ S.drafts[_currentDraftKey] = data; saveDrafts(); }
-  else if (S.drafts[_currentDraftKey]){ delete S.drafts[_currentDraftKey]; saveDrafts(); }
+  if (has) S.drafts[_autoDraftKey] = data;
+  else delete S.drafts[_autoDraftKey];
+  saveDrafts();
+}
+
+/** Gọi sau khi LƯU THÀNH CÔNG: nháp đã lên Google Sheet, giữ lại chỉ gây nhầm lẫn
+ *  (mở lại biểu mẫu thấy số cũ hiện ra, tưởng chưa lưu được). */
+function clearAutoDraft(){
+  if (_autoDraftKey && S.drafts && S.drafts[_autoDraftKey]){
+    delete S.drafts[_autoDraftKey];
+    saveDrafts();
+  }
+  _autoDraftKey = null;
 }
 function clearDraft(key){
   if (!S.drafts) return;
   if (S.drafts[key]){ delete S.drafts[key]; saveDrafts(); }
 }
-function clearDraftContext(){ _currentDraftKey = null; _currentDraftFields = []; }
+function clearDraftContext(){ _currentDraftKey = null; _currentDraftFields = []; _autoDraftKey = null; }
 
 /* ==== QLVT MODULE ==== */
 /* ============================================================================
@@ -7758,7 +8325,7 @@ async function loadQlvt(silent){
     if (S.token) url.searchParams.set('token', S.token);
     /* Gói vật tư cũng là gói lớn (10 sheet + 5 bộ cảnh báo) — dùng chung ngân sách
      * thời gian với bootstrap, không phải hạn ngắn của các lệnh ghi. */
-    const d = await fetchJson_(url.toString(), {}, 'qlvtBootstrap', BOOTSTRAP_TIMEOUT_MS);
+    const d = await fetchJson_(url.toString(), {}, 'qlvtBootstrap');
     if (!d || !d.ok) throw new Error((d && d.error) || 'Chưa cài module vật tư trên Apps Script');
     if (d.rev) S.rev = Number(d.rev.n) || 0;
     if (d.perm) applyPerm_(d.perm);
