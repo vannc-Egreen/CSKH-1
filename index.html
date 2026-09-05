@@ -8483,8 +8483,8 @@ async function zaloDiagToken(){
       <h4 style="margin:0 0 6px">Cấu hình đang lưu</h4>
       ${chk(d.coAppId,'App ID'+(d.appId?' — '+esc(d.appId):''))}
       ${chk(d.coSecret,'App Secret')}
-      ${chk(d.coAccessToken,'Access token'+(d.accessToken?' — '+esc(d.accessToken):'')+(d.tuoiTokenPhut!=null?` (lưu cách đây ${d.tuoiTokenPhut} phút)`:''))}
-      ${chk(d.coRefreshToken,'Refresh token — thiếu cái này thì 1 giờ nữa là chết')}
+      ${chk(d.coAccessToken,'Access token'+(d.accessToken?' — '+esc(d.accessToken):'')+(d.doDaiAccess?` · ${d.doDaiAccess} ký tự`:'')+(d.tuoiTokenPhut!=null?` · lưu cách đây ${d.tuoiTokenPhut} phút`:''))}
+      ${chk(d.coRefreshToken,'Refresh token'+(d.doDaiRefresh?` · ${d.doDaiRefresh} ký tự`:'')+' — thiếu cái này thì 1 giờ nữa là chết')}
       <h4 style="margin:12px 0 6px">Các bước đã thử</h4>
       <div style="font-family:monospace;font-size:11px;line-height:1.8;background:#f8fafc;padding:10px;border-radius:8px">
         ${(d.buoc||[]).map(x=>esc(x)).join('<br>')}
