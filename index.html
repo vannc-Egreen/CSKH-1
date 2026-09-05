@@ -8255,19 +8255,30 @@ function zaloOpenKtv(phone){
           <input class="fi" id="zkPhone" value="${v('Số điện thoại')}" placeholder="0912 345 678"></div>
         <div class="iw"><div class="il">Chức vụ</div>
           <select class="fi" id="zkRole">
-            <option value="Kỹ thuật" ${r&&/kỹ thuật/i.test(String(r['Chức vụ']))?'selected':''}>Kỹ thuật</option>
-            <option value="Vận hành" ${r&&/vận hành/i.test(String(r['Chức vụ']))?'selected':''}>Vận hành</option>
+            ${['Kỹ thuật','Vận hành','CSKH'].map(x =>
+              `<option value="${x}" ${r && String(r['Chức vụ']).trim()===x ? 'selected':''}>${x}</option>`).join('')}
           </select></div>
       </div>
 
-      <div style="margin:12px 0 6px;font-size:11px;color:var(--mu);line-height:1.7">
-        <b>PHẠM VI PHỤ TRÁCH</b> — quyết định máy nào của người này. Nhiều giá trị thì ngăn bằng dấu phẩy.
-        Gõ đúng chữ <code>Tất cả</code> để nhận toàn bộ.
-        <b style="color:var(--red)">Để trống hết bốn ô = người này không nhận cảnh báo nào.</b>
-        Đây là chủ ý: thà im lặng còn hơn gửi nhầm vài trăm tin rồi bị tắt thông báo.
+      <div style="margin:12px 0 6px;font-size:11px;color:var(--mu);line-height:1.75">
+        <b>PHẠM VI PHỤ TRÁCH</b> — quyết định máy nào là của người này. Bốn ô KHÔNG bình đẳng:
+        <br>· <b>Khu vực</b> chọn vùng. Để <b>Đơn vị</b> và <b>Trại</b> trống nghĩa là
+          <b>toàn bộ máy thuộc khu vực đó</b>.
+        <br>· Điền <b>Đơn vị</b> hoặc <b>Trại</b> là để <b>thu hẹp</b> lại trong khu vực đã chọn,
+          không phải để cộng thêm.
+        <br>· <b>Mã máy cụ thể</b> thì ngược lại — <b>cộng thêm</b> vào phạm vi, kể cả máy ngoài khu vực.
+          Nhiều mã thì ngăn bằng dấu phẩy.
+        <br>· Chỉ phụ trách đúng vài máy lẻ? Để <b>Khu vực</b> trống và chỉ điền mã máy.
+        <br><b style="color:var(--red)">Để trống hết bốn ô = người này không nhận cảnh báo nào.</b>
+          Đây là chủ ý: thà im lặng còn hơn gửi nhầm vài trăm tin rồi bị tắt thông báo vĩnh viễn.
       </div>
       <div class="fgrid fg3">
-        <div class="iw"><div class="il">Khu vực</div><input class="fi" id="zkKhu" list="zdlKhu" value="${v('Khu vực phụ trách')}" placeholder="VD: Miền Bắc">${dl('zdlKhu', o.khu)}</div>
+        <div class="iw"><div class="il">Khu vực <span style="color:var(--red)">*</span></div>
+          <select class="fi" id="zkKhu">
+            <option value="">— chưa chọn (chỉ nhận đúng mã máy liệt kê bên dưới) —</option>
+            ${['Tất cả'].concat(o.khu).map(x =>
+              `<option value="${esc(x)}" ${r && String(r['Khu vực phụ trách']).trim()===x ? 'selected':''}>${esc(x)}</option>`).join('')}
+          </select></div>
         <div class="iw"><div class="il">Đơn vị</div><input class="fi" id="zkDv" list="zdlDv" value="${v('Đơn vị phụ trách')}">${dl('zdlDv', o.donVi)}</div>
         <div class="iw"><div class="il">Trại</div><input class="fi" id="zkTrai" list="zdlTrai" value="${v('Trại phụ trách')}">${dl('zdlTrai', o.trai)}</div>
         <div class="iw"><div class="il">Mã máy cụ thể</div><input class="fi" id="zkMay" value="${v('Mã máy phụ trách')}" placeholder="VD: NS250KVA19, NS100KVA07"></div>
