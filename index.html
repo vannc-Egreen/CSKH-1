@@ -8173,6 +8173,7 @@ function viewZalo(){
     </div>
     <div style="padding:0 16px 14px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn bg-b sm" onclick="zaloOpenCfg()">⚙️ Cấu hình Zalo OA</button>
+      <button class="btn bg-b sm" onclick="zaloDiagToken()" title="Thử kết nối và nói ra token hỏng vì lý do gì">🩺 Kiểm tra kết nối</button>
       <button class="btn bg-a sm" onclick="zaloScanFollowers(true)" title="Đọc danh sách người đang quan tâm OA và khớp với Sheet 26 theo tên — không cần webhook">🔗 Quét người quan tâm OA</button>
       <button class="btn bg-gr sm" onclick="zaloSetupSheet()">Tạo/nâng cấp sheet 26 &amp; 27</button>
     </div>
@@ -8396,6 +8397,38 @@ async function zaloSendNow(){
       </tbody></table></div>
     </div>
     <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`);
+  await ensureZalo_(true);
+}
+
+/* Zalo trả đúng một câu "Access token is invalid" cho ít nhất bốn nguyên nhân khác nhau
+ * và không nói là nguyên nhân nào. Hàm này bắt server thử lần lượt từng khả năng rồi
+ * nói ra cái nào đúng — thay vì để người dùng ngồi đoán giữa "dán sai token", "token hết
+ * hạn", "token của app cũ" và "chưa được duyệt quyền". */
+async function zaloDiagToken(){
+  const d = await apiPost({ action:'zaloDiagToken' });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không chẩn đoán được','err'); return; }
+  const good = /BÌNH THƯỜNG|ĐÃ SỬA XONG/.test(d.ketLuan||'');
+  const chk = (b,t) => `<div style="padding:2px 0">${b?'✅':'❌'} ${t}</div>`;
+  openOv(`
+    <div class="mh"><div><h2>🩺 Kiểm tra kết nối Zalo OA</h2><p>Thử từng khả năng để biết hỏng ở đâu</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb" style="font-size:11px">
+      <div style="padding:12px;border-radius:8px;background:${good?'#f0fdf4':'#fef2f2'};margin-bottom:12px;line-height:1.7">
+        <b style="color:${good?'var(--g)':'var(--red)'}">${esc(d.ketLuan||'')}</b>
+        ${d.viecCanLam?`<br><br><b>Việc cần làm:</b> ${esc(d.viecCanLam)}`:''}
+      </div>
+      <h4 style="margin:0 0 6px">Cấu hình đang lưu</h4>
+      ${chk(d.coAppId,'App ID'+(d.appId?' — '+esc(d.appId):''))}
+      ${chk(d.coSecret,'App Secret')}
+      ${chk(d.coAccessToken,'Access token'+(d.accessToken?' — '+esc(d.accessToken):'')+(d.tuoiTokenPhut!=null?` (lưu cách đây ${d.tuoiTokenPhut} phút)`:''))}
+      ${chk(d.coRefreshToken,'Refresh token — thiếu cái này thì 1 giờ nữa là chết')}
+      <h4 style="margin:12px 0 6px">Các bước đã thử</h4>
+      <div style="font-family:monospace;font-size:11px;line-height:1.8;background:#f8fafc;padding:10px;border-radius:8px">
+        ${(d.buoc||[]).map(x=>esc(x)).join('<br>')}
+      </div>
+    </div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button>
+      ${good?`<button class="btn bg-g" onclick="closeOv();zaloScanFollowers(true)">🔗 Quét người quan tâm ngay</button>`:''}</div>`);
   await ensureZalo_(true);
 }
 
