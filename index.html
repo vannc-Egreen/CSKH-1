@@ -8173,6 +8173,7 @@ function viewZalo(){
     </div>
     <div style="padding:0 16px 14px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn bg-b sm" onclick="zaloOpenCfg()">⚙️ Cấu hình Zalo OA</button>
+      <button class="btn bg-a sm" onclick="zaloScanFollowers(true)" title="Đọc danh sách người đang quan tâm OA và khớp với Sheet 26 theo tên — không cần webhook">🔗 Quét người quan tâm OA</button>
       <button class="btn bg-gr sm" onclick="zaloSetupSheet()">Tạo/nâng cấp sheet 26 &amp; 27</button>
     </div>
   </div>
@@ -8385,6 +8386,39 @@ async function zaloSendNow(){
     </div>
     <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`);
   await ensureZalo_(true);
+}
+
+/* GHÉP NỐI KHÔNG CẦN WEBHOOK.
+ * Webhook của Zalo đòi URL nằm trên domain đã xác thực quyền sở hữu; Web App của Apps
+ * Script chạy trên script.google.com nên không xác thực được. Đường vòng: KTV bấm
+ * "Quan tâm" OA, rồi Admin quét danh sách người quan tâm và khớp theo tên.
+ * Luôn XEM TRƯỚC rồi mới ghi — điền nhầm UID nghĩa là cảnh báo của trại này chạy sang
+ * điện thoại người khác, và không có gì báo cho ai biết. */
+async function zaloScanFollowers(chiXem){
+  const d = await apiPost({ action:'zaloScanFollowers', payload:{ chiXem: !!chiXem } });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không quét được','err'); return; }
+  const tbl = (arr, cols) => `<div class="tw"><table class="t"><thead><tr>${cols.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead>
+    <tbody>${arr.map(x=>`<tr>${cols.map(c=>`<td>${esc(String(x[c[1]]==null?'':x[c[1]]))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  openOv(`
+    <div class="mh"><div><h2>🔗 Người đang quan tâm OA</h2>
+      <p>${d.chiXem?'Bản xem trước — chưa ghi gì vào Sheet 26':'Đã ghi UID vào Sheet 26'}</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb" style="font-size:11px">
+      <div style="padding:10px 12px;background:#f8fafc;border-radius:8px;margin-bottom:12px;line-height:1.7">
+        ${d.tongNguoiQuanTam} người đang quan tâm OA ·
+        <b style="color:var(--g)">${d.daGhep.length} khớp tên duy nhất</b>${d.moGho.length?` · <b style="color:var(--amb)">${d.moGho.length} trùng tên</b>`:''}${d.chuaKhop.length?` · ${d.chuaKhop.length} chưa khớp`:''}
+      </div>
+      ${d.daGhep.length?`<h4 style="margin:0 0 6px">Khớp được</h4>${tbl(d.daGhep,[['Tên Zalo','ten'],['Dòng KTV','ktv'],['SĐT','sdt'],['UID','uid']])}`:''}
+      ${d.moGho.length?`<h4 style="margin:12px 0 6px">Trùng tên — KHÔNG tự ghép, phải dán UID bằng tay</h4>${tbl(d.moGho,[['Tên Zalo','ten'],['UID','uid'],['Số dòng trùng','soDongTrung']])}`:''}
+      ${d.chuaKhop.length?`<h4 style="margin:12px 0 6px">Chưa khớp dòng nào</h4>
+        <div style="color:var(--mu);margin-bottom:6px;line-height:1.6">${esc(d.huongDan)}</div>${tbl(d.chuaKhop,[['Tên Zalo','ten'],['UID','uid']])}`:''}
+      ${!d.tongNguoiQuanTam?'<div class="empty">Chưa có ai quan tâm OA. Nhờ KTV mở Zalo, tìm OA của công ty và bấm Quan tâm trước.</div>':''}
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
+      ${d.chiXem && d.daGhep.length?`<button class="btn bg-g" onclick="closeOv();zaloScanFollowers(false)">💾 Ghi ${d.daGhep.length} UID vào Sheet 26</button>`:''}
+    </div>`);
+  if (!chiXem) await ensureZalo_(true);
 }
 
 async function zaloSetupSheet(){
