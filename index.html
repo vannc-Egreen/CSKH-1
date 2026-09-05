@@ -8174,6 +8174,7 @@ function viewZalo(){
     <div style="padding:0 16px 14px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn bg-b sm" onclick="zaloOpenCfg()">⚙️ Cấu hình Zalo OA</button>
       <button class="btn bg-b sm" onclick="zaloDiagToken()" title="Thử kết nối và nói ra token hỏng vì lý do gì">🩺 Kiểm tra kết nối</button>
+      <button class="btn bg-g sm" onclick="zaloOpenAuth()">🔑 Lấy token từ OA</button>
       <button class="btn bg-a sm" onclick="zaloScanFollowers(true)" title="Đọc danh sách người đang quan tâm OA và khớp với Sheet 26 theo tên — không cần webhook">🔗 Quét người quan tâm OA</button>
       <button class="btn bg-gr sm" onclick="zaloSetupSheet()">Tạo/nâng cấp sheet 26 &amp; 27</button>
     </div>
@@ -8397,6 +8398,68 @@ async function zaloSendNow(){
       </tbody></table></div>
     </div>
     <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`);
+  await ensureZalo_(true);
+}
+
+/* LẤY TOKEN NGAY TRÊN WEB — hai bước, không phải mở Apps Script editor.
+ * Nút "Chạy" của editor không truyền được tham số, nên chạy zaloTaoLinkUyQuyen() từ đó
+ * luôn báo thiếu redirectUri. Bắt người dùng sửa tham số trong file nguồn mỗi lần lấy
+ * token là một cái bẫy chứ không phải một quy trình. */
+function zaloOpenAuth(){
+  const mac = location.origin + location.pathname;
+  openOv(`
+    <div class="mh"><div><h2>🔑 Lấy token từ OA</h2><p>Hai bước · làm một lần · hệ thống tự làm mới về sau</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb" style="font-size:11px;line-height:1.75">
+      <div style="padding:10px 12px;background:#fffbeb;border-radius:8px;margin-bottom:12px">
+        <b>Trước khi bắt đầu:</b> vào <b>developers.zalo.me → app → Cài đặt</b>, ô <b>Miền ứng dụng</b>
+        phải chứa địa chỉ dưới đây. Sai một ký tự là Zalo từ chối mà không nói vì sao.
+      </div>
+      <div class="iw" style="margin-bottom:12px"><div class="il">Địa chỉ nhận code (redirect URI)</div>
+        <input class="fi" id="zaRedir" value="${esc(mac)}"></div>
+
+      <b>Bước 1</b> — bấm nút dưới để tạo link, rồi mở link đó bằng tài khoản Zalo
+      <b>đang là quản trị viên của OA</b> và bấm Đồng ý.
+      <div style="margin:8px 0"><button class="btn bg-g sm" onclick="zaloAuthLink()">Tạo link ủy quyền</button></div>
+      <div id="zaLinkBox"></div>
+
+      <div style="margin-top:14px"><b>Bước 2</b> — sau khi bấm Đồng ý, trình duyệt quay về trang này và
+      trên thanh địa chỉ có <code>?code=…</code>. Copy đúng phần sau <code>code=</code> rồi dán vào đây.
+      <b style="color:var(--red)">Làm ngay</b> — code chỉ sống vài chục giây.</div>
+      <div class="iw" style="margin-top:8px"><div class="il">Code</div>
+        <input class="fi" id="zaCode" placeholder="dán code vào đây"></div>
+      <div id="zaResult" style="margin-top:10px"></div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
+      <button class="btn bg-g" onclick="zaloAuthCode()">✓ Đổi code lấy token</button>
+    </div>`);
+}
+
+async function zaloAuthLink(){
+  const uri = String(($('zaRedir')||{}).value||'').trim();
+  const d = await apiPost({ action:'zaloAuthLink', payload:{ redirectUri: uri } });
+  const box = $('zaLinkBox'); if (!box) return;
+  if (!d || !d.ok){ box.innerHTML = `<div style="color:var(--red)">${esc((d&&d.error)||'Không tạo được link')}</div>`; return; }
+  box.innerHTML = `<a href="${esc(d.url)}" target="_blank" rel="noopener"
+      style="display:inline-block;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;color:var(--bl);font-weight:700;word-break:break-all">
+      ↗ Mở link ủy quyền OA</a>
+    <div style="margin-top:6px;color:var(--mu);word-break:break-all;font-size:10px">${esc(d.url)}</div>`;
+}
+
+async function zaloAuthCode(){
+  const code = String(($('zaCode')||{}).value||'').trim();
+  if (!code){ toast('Chưa dán code','err'); return; }
+  const d = await apiPost({ action:'zaloAuthCode', payload:{ code } });
+  const box = $('zaResult');
+  if (!d || !d.ok){
+    if (box) box.innerHTML = `<div style="padding:10px;background:#fef2f2;border-radius:8px;color:#7f1d1d;line-height:1.7">${esc((d&&d.error)||'Đổi code thất bại')}</div>`;
+    return;
+  }
+  const cd = d.chanDoan || {};
+  if (box) box.innerHTML = `<div style="padding:10px;background:#f0fdf4;border-radius:8px;color:#14532d;line-height:1.7">
+    <b>${esc(cd.ketLuan || d.msg)}</b></div>`;
+  toast('✓ Đã lấy được token','ok');
   await ensureZalo_(true);
 }
 
