@@ -185,6 +185,24 @@ td{padding:9px 12px;vertical-align:middle}
 .mm{font-family:var(--mono);font-size:10px;background:#f5f3ff;color:#5b21b6;padding:2px 7px;border-radius:5px;white-space:nowrap}
 
 .btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:7px;border:none;cursor:pointer;font-size:11px;font-weight:700;font-family:var(--font);white-space:nowrap}
+/* CHỨC DANH "MÀN HIỂN THỊ" — CHỈ XEM.
+ * Ẩn theo MÀU chứ không theo từng nút: bg-g (xanh = lưu/ghi), bg-r (đỏ = xoá),
+ * bg-a (vàng = thao tác cần cân nhắc). Giữ bg-gr (xám: CSV, đóng) và bg-b (xanh dương:
+ * xem chi tiết) vì đó là các nút chỉ đọc. Quy ước màu này đã có sẵn trong toàn bộ giao
+ * diện, nên bám vào nó thì nút mới viết sau này cũng tự động được xử lý đúng — không
+ * phải nhớ thêm class riêng mỗi lần thêm nút.
+ * ĐÂY CHỈ LÀ PHÉP LỊCH SỰ: chốt thật nằm ở authGuard_/egGuard_ trên server. */
+body.ro .content .btn.bg-g,
+body.ro .content .btn.bg-r,
+body.ro .content .btn.bg-a,
+body.ro #mdl .btn.bg-g,
+body.ro #mdl .btn.bg-r,
+body.ro #mdl .btn.bg-a{display:none !important}
+body.ro .content input:not([type=search]):not(.q),
+body.ro .content textarea,
+body.ro #mdl input, body.ro #mdl textarea, body.ro #mdl select{pointer-events:none;background:#f8fafc;color:var(--mu)}
+body.ro .rochip{display:inline-flex}
+.rochip{display:none;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;background:#eff6ff;color:var(--bl);border:1px solid #bfdbfe;font-size:10px;font-weight:800}
 .bg-g{background:var(--g);color:#fff}.bg-g:hover{background:var(--gd)}
 .bg-b{background:#eff6ff;color:var(--bl);border:1px solid #bfdbfe}
 .bg-r{background:#fef2f2;color:var(--red);border:1px solid #fecaca}
@@ -352,6 +370,7 @@ td{padding:9px 12px;vertical-align:middle}
             <option value="CSKH">CSKH</option>
             <option value="HCNS">HCNS</option>
             <option value="Admin">Admin</option>
+            <option value="Màn hiển thị">Màn hiển thị (chỉ xem)</option>
           </select></div>
         <div><div class="fl">Điện thoại</div><input class="fi" id="rp2" placeholder="Số liên hệ (không bắt buộc)"></div>
         <div><div class="fl">Mật khẩu</div><input class="fi" type="password" id="rp" placeholder="Tối thiểu 6 ký tự"></div>
@@ -381,6 +400,7 @@ td{padding:9px 12px;vertical-align:middle}
         <div class="uav" id="tAv">A</div>
         <div class="uname" id="tName">Admin</div>
         <div class="rolechip" id="tRole" style="display:none"></div>
+        <span class="rochip" id="tRO" title="Chức danh chỉ được xem — mọi nút ghi đã bị ẩn và server cũng từ chối lệnh ghi">👁 CHỈ XEM</span>
       </div>
       <span id="smartgenMenu"></span>
       <button class="tbtn" onclick="reloadAll({fresh:true, withQlvt:true}).then(()=>renderCurrent())" title="Đồng bộ 2 chiều thủ công với Google Sheet — bỏ qua cache, lấy đúng bản mới nhất">↻ Đồng bộ</button>
@@ -438,6 +458,9 @@ td{padding:9px 12px;vertical-align:middle}
       </div>
 
       <div class="nsec" id="nsec-sys" style="display:none">Hệ thống</div>
+      <div class="nitem" data-page="zalo" id="nav-zalo" style="display:none" onclick="nav('zalo')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>Zalo &amp; KTV phụ trách<span class="nbadge am" id="nb-zalo" style="display:none">0</span>
+      </div>
       <div class="nitem" data-page="users" id="nav-users" style="display:none" onclick="nav('users')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Người dùng &amp; Phân quyền<span class="nbadge rd" id="nb-users" style="display:none">0</span>
       </div>
@@ -462,6 +485,7 @@ td{padding:9px 12px;vertical-align:middle}
       <div id="pg-matcost" class="page"></div>
       <div id="pg-sim" class="page"></div>
       <div id="pg-vtcat" class="page"></div>
+      <div id="pg-zalo" class="page"></div>
       <div id="pg-users" class="page"></div>
     </div>
   </div>
@@ -926,7 +950,11 @@ function navEfficiencyToCode(code){
  */
 /* Action đi qua POST nhưng KHÔNG đổi dữ liệu → không hiện lớp chặn, không báo "đã ghi". */
 const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','bdTransfers','materialCost','smartgenStatus',
-                       'authMe','authList','authLogin','authRegister'];
+                       'authMe','authList','authLogin','authRegister',
+                       /* Chẩn đoán số liệu tháng + danh sách/xem trước Zalo: đọc và tính, không ghi.
+                        * Phải khớp EG_READONLY_ACTIONS bên Code.gs, nếu không chức danh chỉ xem
+                        * sẽ bị chặn ở một bên và đi lọt ở bên kia. */
+                       'diagMonthly','zaloList','zaloPreview','zaloStatus'];
 /* Action chạy nền, có thanh trạng thái riêng → cũng không hiện lớp chặn. */
 const POST_BACKGROUND = ['smartgenRun','smartgenAutoSync'];
 
@@ -966,6 +994,15 @@ async function apiPost(body){
 
   const quiet = POST_READONLY.indexOf(action) >= 0 || POST_BACKGROUND.indexOf(action) >= 0;
   const writes = POST_READONLY.indexOf(action) < 0;
+
+  /* CHỨC DANH CHỈ XEM: dừng ngay tại đây, không gửi request đi.
+   * Ẩn nút vẫn có thể sót (nút mới, nút trong modal, người gõ thẳng vào console). Chặn ở
+   * đây thì dù đường nào tới cũng nhận đúng một câu giải thích, thay vì im lặng không
+   * phản ứng rồi người dùng tưởng web treo. Server vẫn chặn lần nữa — đây không phải chốt. */
+  if (writes && S.perm && (S.perm.readOnly || (S.perm.authed && !S.perm.editData))){
+    toast('Chức danh "' + (S.perm.role||'hiện tại') + '" chỉ được xem, không sửa được dữ liệu.', 'err');
+    return { ok:false, error:'Chức danh chỉ xem' };
+  }
   const sig = JSON.stringify(b);
 
   if (writes && _postFlight.has(sig)){
@@ -1226,12 +1263,24 @@ function applyPerm_(perm, pending){
   const rc = $('tRole');
   if (rc){ rc.textContent = S.perm.role || ''; rc.style.display = S.perm.role ? '' : 'none'; }
 
+  /* CHẾ ĐỘ CHỈ XEM.
+   * readOnly do server tính (luôn = !editData) — web KHÔNG tự suy ra từ tên chức danh.
+   * Hai nơi cùng quyết định một câu hỏi là cách chắc chắn nhất để có ngày web mở nút
+   * cho một chức danh mà server đang chặn: người dùng bấm, nhận lỗi, không hiểu vì sao. */
+  const ro = !!(S.perm.readOnly || (S.perm.authed && !S.perm.editData));
+  document.body.classList.toggle('ro', ro);
+
   /* Mục "Người dùng & Phân quyền": chỉ chức danh có quyền DUYỆT TÀI KHOẢN mới thấy.
    * Theo yêu cầu vận hành, đó đúng một chức danh — Admin. */
   const show = !!S.perm.manageUser;
   const nu = $('nav-users'), ns = $('nsec-sys');
   if (nu) nu.style.display = show ? '' : 'none';
-  if (ns) ns.style.display = show ? '' : 'none';
+  /* Trang Zalo mở cho cả HCNS (perm.admin), không chỉ Admin: gửi cảnh báo cho KTV là
+   * việc điều hành hằng ngày, không phải việc quản trị tài khoản. */
+  const showZalo = !!S.perm.admin;
+  const nz = $('nav-zalo');
+  if (nz) nz.style.display = showZalo ? '' : 'none';
+  if (ns) ns.style.display = (show || showZalo) ? '' : 'none';
   const nb = $('nb-users');
   if (nb){ nb.textContent = S.pendingUsers; nb.style.display = (show && S.pendingUsers>0) ? '' : 'none'; }
 
@@ -1710,6 +1759,10 @@ function nav(page){
     toast('Chỉ Admin mới vào được mục Người dùng & Phân quyền','err');
     page = 'dash';
   }
+  if (page === 'zalo' && !S.perm.admin){
+    toast('Chỉ Admin / HCNS mới vào được mục Zalo & KTV phụ trách','err');
+    page = 'dash';
+  }
   /* "Bộ đếm bảo dưỡng" đã gộp vào "Theo dõi bảo dưỡng" thành tab thứ 2. Giữ lối vào cũ để
    * mọi nút/link đang trỏ tới 'bdcounter' ở nơi khác trong app vẫn chạy, không phải sửa lan. */
   if (page === 'bdcounter'){ S.filters.trackingTab = 'counter'; page = 'tracking'; }
@@ -1876,6 +1929,7 @@ function _renderPageInner_(p, el){
     case 'sim':      el.innerHTML = viewSim(); break;
     case 'vtcat':    el.innerHTML = viewVtCat(); break;
     case 'users':    el.innerHTML = viewUsers(); break;
+    case 'zalo':     el.innerHTML = viewZalo(); ensureZalo_(); break;
   }
 }
 
@@ -5578,18 +5632,62 @@ function legendHoverIsolate_(){
  * Nếu tổng số cột lẻ, chia đôi tự động. Dùng chung cho computeInefficient,
  * computeDataAnomalies và openEfficiencyEdit — tránh lặp logic tách cột 3 nơi.
  */
+/* TIÊU ĐỀ NÀY CÓ PHẢI MỘT NGÀY KHÔNG?
+ * Chấp nhận: số 1..31 · "5/9", "05/09/2026" · "Ngày 7" · chuỗi ngày do Apps Script
+ * chuyển từ ô Date sang (readSheet làm String(h) nên ô ngày thật ra web thành
+ * "Mon Sep 01 2026…" hoặc "2026-09-01T…"). PHẢI khớp _isDayHeader_() bên Code.gs —
+ * hai bên chia cột khác nhau thì web và Zalo nói hai chuyện về cùng một cái máy. */
+function isDayHeader_(h){
+  const s = String(h==null?'':h).trim();
+  if (!s) return false;
+  if (/^\d{1,2}$/.test(s)){ const n = Number(s); return n>=1 && n<=31; }
+  if (/^\d{1,2}\s*[\/\-.]\s*\d{1,2}(\s*[\/\-.]\s*\d{2,4})?$/.test(s)) return true;
+  if (/^ngày\s*\d{1,2}$/i.test(s)) return true;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return true;                                  // ISO
+  if (/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}/.test(s)) return true; // Date.toString()
+  return false;
+}
+
+/**
+ * CHIA KHỐI CỘT NGÀY — DÒ THEO TIÊU ĐỀ, KHÔNG THEO VỊ TRÍ CỨNG.
+ *
+ * VÌ SAO ĐỔI (sự cố 09/2026): bản cũ đóng đinh "khối ngày = cột I..BR" (index 8..69).
+ * Đó là giả định về VỊ TRÍ TUYỆT ĐỐI trong một bảng mà chính mình vẫn đang chèn thêm
+ * cột (đợt thêm cột "Tên trại" sau mỗi cột mã máy là ví dụ gần nhất). Chèn 1 cột ở đầu
+ * bảng là toàn bộ khối ngày trượt sang phải 1 ô: web đọc lệch một ngày, ô đầu của khối
+ * "giờ" rơi trúng một cột định mức, và bên server thì rơi trúng ô Giờ bắt đầu (kiểu
+ * Date) — nguồn của con số 1.774.249.200.971,82 h ở Sheet 9.
+ *
+ * CÁCH MỚI: nhận diện cột ngày bằng chính tiêu đề của nó, gom các cột liền nhau thành
+ * "dải". Hai dải = hai khối (công suất trước, giờ chạy sau). Nếu cả 62 cột dính thành
+ * một dải (tiêu đề hai khối giống hệt nhau) thì cắt đôi — nhưng cắt từ ĐIỂM BẮT ĐẦU
+ * THẬT của khối ngày, không phải từ cột I giả định. Không dò được gì mới lùi về cách cũ.
+ */
 function getDailyColSplit_(headers){
-  const START_IDX = 8;   // cột I
-  const END_IDX   = 69;  // cột BR
-  const dailyCols = [];
-  for (let i = START_IDX; i <= Math.min(END_IDX, headers.length - 1); i++){
-    dailyCols.push({ header: headers[i], idx: i });
+  const dayIdx = [];
+  for (let i = 0; i < headers.length; i++) if (isDayHeader_(headers[i])) dayIdx.push(i);
+
+  const runs = [];
+  dayIdx.forEach(i => {
+    const last = runs[runs.length-1];
+    if (last && i === last[last.length-1] + 1) last.push(i); else runs.push([i]);
+  });
+  const big = runs.filter(r => r.length >= 20);
+
+  let power = null, hours = null, mode = 'legacy';
+  if (big.length >= 2){ power = big[0]; hours = big[1]; mode = 'header-2runs'; }
+  else if (big.length === 1 && big[0].length >= 40){
+    const r = big[0], half = Math.ceil(r.length/2);
+    power = r.slice(0, half); hours = r.slice(half); mode = 'header-1run';
+  } else {
+    const d = [];
+    for (let i = 8; i <= Math.min(69, headers.length - 1); i++) d.push(i);
+    const half = Math.ceil(d.length/2);
+    power = d.slice(0, half); hours = d.slice(half); mode = 'legacy';
   }
-  const half = Math.ceil(dailyCols.length / 2);
-  return {
-    powerCols: dailyCols.slice(0, half),   // Khối 1: công suất/ngày
-    hoursCols: dailyCols.slice(half),      // Khối 2: giờ chạy/ngày
-  };
+
+  const wrap = idx => idx.map(i => ({ header: headers[i], idx: i }));
+  return { powerCols: wrap(power), hoursCols: wrap(hours), splitMode: mode };
 }
 function numOrNull_(v){
   if (v === null || v === undefined) return null;
@@ -5979,12 +6077,20 @@ function buildMonthlyModel_(){
     months.forEach(mo => {
       const power = mo.power ? num2_(row[mo.power]) : null;
       const meter = mo.meter ? num2_(row[mo.meter]) : null;
-      const hours = mo.hours ? num2_(row[mo.hours]) : null;
+      const hoursRaw = mo.hours ? num2_(row[mo.hours]) : null;
+      /* CHẶN NGAY TẠI NGUỒN, KHÔNG CHẶN Ở CHỖ HIỂN THỊ.
+       * Một máy không thể chạy quá 24 h/ngày. Số vượt trần bị đổi thành null NGAY Ở ĐÂY,
+       * nên mọi thứ phía sau — tổng tháng, công suất phát TB, giờ/máy/ngày, biểu đồ, CSV —
+       * đều tự động sạch mà không phải nhớ chặn ở từng chỗ. Giữ lại số gốc ở hoursRaw để
+       * thẻ cảnh báo còn nói được "máy nào, đang ghi bao nhiêu".
+       * (Sự cố 09/2026: một ô Date bị cộng như số → 1.774.249.200.971,82 h.) */
+      const hoursBad = hoursRaw != null && hoursRaw > MONTHLY_MAX_H_PER_DAY * monthDaysElapsed_(mo.label);
+      const hours = hoursBad ? null : hoursRaw;
       const avgKw = (power!=null && hours!=null && hours>0) ? Math.round(power/hours*100)/100 : null;
       // Độ lệch lấy Chỉ số công tơ làm mốc so sánh (đây là số đo thực tế tại hiện trường)
       const devPct = (power!=null && meter!=null && meter>0)
         ? Math.round((power-meter)/meter*10000)/100 : null;
-      byMonth[mo.label] = { power, meter, hours, avgKw, devPct,
+      byMonth[mo.label] = { power, meter, hours, hoursRaw, hoursBad, avgKw, devPct,
         mismatch: devPct!=null && Math.abs(devPct) > METER_TOLERANCE_PCT };
     });
     return {
@@ -6097,6 +6203,111 @@ function computeMonthlyTrend_(months, machines, totals){
   return { mean: Math.round(mean*100)/100, flagged };
 }
 
+/* ============================================================
+ *  CHỐT TỈNH TÁO CHO SỐ GIỜ  (thêm 09/2026)
+ * ------------------------------------------------------------
+ *  Tháng 09/2026 ô "Tổng số giờ" hiện 1.774.249.200.971,82 h. Nguyên nhân đã sửa
+ *  ở Code.gs (một ô kiểu Date lọt vào dải cột đang cộng — Number(Date) trả epoch-ms).
+ *  Nhưng sửa nguồn thôi thì chưa đủ: nếu một hôm nào đó lại có số rác, màn hình
+ *  vẫn sẽ bình thản in nó ra giữa bảng KPI như một sự thật.
+ *
+ *  Nên: MỌI số giờ đọc từ Sheet 9 đều bị đối chiếu với trần vật lý 24 h/máy/ngày.
+ *  Vượt trần → KHÔNG hiển thị con số đó nữa, thay bằng cảnh báo kèm nút chẩn đoán.
+ *  Nguyên tắc: thà không có số còn hơn có một con số sai mà mọi người tin.
+ * ============================================================ */
+const MONTHLY_MAX_H_PER_DAY = 24;
+
+/** Số ngày ĐÃ TRÔI QUA của tháng `label` — tháng quá khứ thì lấy trọn tháng. */
+function monthDaysElapsed_(label){
+  const m = String(label||'').match(/^(\d{1,2})\/(\d{4})$/);
+  const dim = daysInMonthLabel_(label);
+  if (!m) return dim;
+  const now = new Date();
+  return (Number(m[2]) === now.getFullYear() && Number(m[1]) === now.getMonth()+1)
+    ? Math.min(now.getDate(), dim) : dim;
+}
+
+/** Máy nào đang mang số giờ bất khả thi trong tháng đang xem. */
+function monthlyHoursSanity_(label, machines){
+  const cap = MONTHLY_MAX_H_PER_DAY * monthDaysElapsed_(label);
+  const bad = machines.filter(m => (m.byMonth[label] || {}).hoursBad)
+                      .map(m => ({ code: m.code, hours: (m.byMonth[label]||{}).hoursRaw }));
+  bad.sort((a,b) => b.hours - a.hours);
+  return { cap, bad };
+}
+
+function monthlyBadHoursCardHtml_(label, sanity){
+  if (!sanity.bad.length) return '';
+  const list = sanity.bad.slice(0,8).map(b => `<b>${esc(b.code)}</b> (${nfd_(b.hours)} h)`).join(' · ');
+  const canFix = !!(S.perm && S.perm.admin);
+  return `
+    <div class="card" style="background:#fef2f2;border-left:4px solid var(--red)">
+      <div style="padding:14px 16px;font-size:11px;color:#7f1d1d;line-height:1.75">
+        <b>SỐ GIỜ BẤT KHẢ THI — ${sanity.bad.length} máy.</b>
+        Một máy không thể chạy quá ${MONTHLY_MAX_H_PER_DAY} h/ngày, tức tối đa
+        <b>${nfd_(sanity.cap,0)} h</b> tính đến hôm nay. Các con số dưới đây đã bị loại khỏi
+        mọi phép tính trên trang này (tổng giờ, công suất phát TB, giờ chạy TB/máy/ngày):<br>
+        ${list}${sanity.bad.length>8?' … ':''}<br><br>
+        Nguyên nhân đã biết: một ô kiểu <b>ngày/giờ</b> lọt vào dải cột ngày của Sheet 5 và bị
+        cộng như số. Bấm <b>Chẩn đoán</b> để biết đúng ô nào, máy nào, cột nào.
+      </div>
+      <div style="padding:0 16px 14px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn bg-b sm" onclick="diagMonthly('${esc(label)}')">🔍 Chẩn đoán nguồn số liệu</button>
+        ${canFix?`<button class="btn bg-r sm" onclick="fixMonthly('${esc(label)}')">🧹 Dọn ô hỏng &amp; tính lại</button>`:''}
+      </div>
+    </div>`;
+}
+
+/** Chẩn đoán — chỉ đọc, không sửa gì. Kết quả bày ra modal cho dễ đọc và chụp màn hình. */
+async function diagMonthly(label){
+  const d = await apiPost({ action:'diagMonthly', monthLabel: label || null });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không chẩn đoán được','err'); return; }
+  const row = (k,v) => `<tr><td style="padding:4px 8px;color:var(--mu);white-space:nowrap">${esc(k)}</td><td style="padding:4px 8px"><b>${v}</b></td></tr>`;
+  const cells = (d.oBiLoai||[]).slice(0,25).map(o =>
+    `<tr><td style="padding:3px 8px">${esc(o.maCode)}</td><td style="padding:3px 8px">${esc(o.block)}</td>
+         <td style="padding:3px 8px">ngày ${o.ngay} · cột ${esc(o.cot)}</td>
+         <td style="padding:3px 8px;color:var(--red)">${esc(o.lyDo)}</td>
+         <td style="padding:3px 8px;font-family:monospace;font-size:10px">${esc(String(o.giaTriGoc).slice(0,40))}</td></tr>`).join('');
+  const lech = (d.mayLech||[]).slice(0,15).map(x =>
+    `<tr><td style="padding:3px 8px">${esc(x.maCode)}</td><td style="padding:3px 8px;text-align:right">${nfd_(x.dangGhi)}</td>
+         <td style="padding:3px 8px;text-align:right">${x.tinhLaiDung==null?'—':nfd_(x.tinhLaiDung)}</td>
+         <td style="padding:3px 8px">${x.batKhaThi?'<span class="b br">bất khả thi</span>':''}</td></tr>`).join('');
+  openOv(`
+    <div class="mh"><div><h2>🔍 Chẩn đoán số liệu tháng ${esc(d.thang)}</h2>
+      <p>Con số trên màn hình lấy từ cột nào của Sheet 5</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb" style="font-size:11px">
+      <div style="padding:10px 12px;border-radius:8px;background:${d.sheet9SoMayBatKhaThi?'#fef2f2':'#f0fdf4'};margin-bottom:10px;line-height:1.7">
+        ${esc(d.ketLuan)}
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+        ${row('Cộng các ngày', esc(d.ngayCong))}
+        ${row('Trần giờ hợp lệ', nfd_(d.tranGioHopLe,0) + ' h')}
+        ${row('Cách chia khối cột ngày', esc(d.cachChiaKhoi) + (d.cachChiaKhoi==='legacy'?' <span class="b br">giả định vị trí</span>':' <span class="b bg">dò theo tiêu đề</span>'))}
+        ${row('Khối công suất', esc(d.khoiCongSuat))}
+        ${row('Khối giờ chạy', esc(d.khoiGioChay))}
+        ${row('Ô bị loại khi cộng', d.soOBiLoai)}
+        ${row('Tổng giờ Sheet 9 đang ghi', nfd_(d.sheet9TongGioDangGhi))}
+        ${row('Máy có số bất khả thi', d.sheet9SoMayBatKhaThi)}
+      </table>
+      ${d.canhBaoChiaKhoi?`<div style="padding:8px 12px;background:#fffbeb;border-left:3px solid var(--amb);margin-bottom:12px;line-height:1.6">${esc(d.canhBaoChiaKhoi)}</div>`:''}
+      ${cells?`<h4 style="margin:0 0 6px">Ô không phải số giờ hợp lệ</h4>
+        <div class="tw"><table class="t"><thead><tr><th>Mã máy</th><th>Khối</th><th>Vị trí</th><th>Lý do</th><th>Giá trị gốc</th></tr></thead><tbody>${cells}</tbody></table></div>`:''}
+      ${lech?`<h4 style="margin:12px 0 6px">Sheet 9 lệch so với tính lại từ Sheet 5</h4>
+        <div class="tw"><table class="t"><thead><tr><th>Mã máy</th><th style="text-align:right">Đang ghi</th><th style="text-align:right">Tính lại đúng</th><th></th></tr></thead><tbody>${lech}</tbody></table></div>`:''}
+    </div>`);
+}
+
+/** Dọn ô bất khả thi rồi tính lại. Chỉ Admin/HCNS — server chặn lần nữa bằng EG_ADMIN_ACTIONS. */
+async function fixMonthly(label){
+  if (!confirm(`Xoá các ô "Tổng số giờ" BẤT KHẢ THI của tháng ${label} rồi tính lại từ Sheet 5?\n\nCác ô có số hợp lệ KHÔNG bị đụng tới.`)) return;
+  const d = await apiPost({ action:'fixMonthly', monthLabel: label });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không sửa được','err'); return; }
+  toast(`Đã dọn ${d.daXoa} ô hỏng và tính lại tháng ${d.thang}`, 'ok');
+  await reloadAll({ fresh:true });
+  renderCurrent();
+}
+
 /* ---------- RENDER ---------- */
 /* Khối "Tổng kết hiệu quả tháng" — nay là 1 SECTION nằm trong trang Phân tích
  * (trước là trang riêng ở sidebar). Dùng chung bộ lọc của trang Phân tích,
@@ -6128,8 +6339,10 @@ function monthlySectionHtml_(){
   const defaultMonth = (totals.filter(t=>t.hasData).slice(-1)[0] || totals[totals.length-1]).label;
   const sel = months.some(m=>m.label===S.filters.monthly.month) ? S.filters.monthly.month : defaultMonth;
   const selTotal = totals.find(t=>t.label===sel) || {};
+  const sanity = monthlyHoursSanity_(sel, machines);
 
   return `
+    ${monthlyBadHoursCardHtml_(sel, sanity)}
     <div class="msf" style="gap:8px;flex-wrap:wrap;font-size:11px;color:var(--mu)">
       <span class="b bmu">${months.length} tháng đã ghi nhận</span>
       <span class="b br">${mismatch.length} dòng lệch công tơ &gt;${METER_TOLERANCE_PCT}%</span>
@@ -6145,12 +6358,15 @@ function monthlySectionHtml_(){
             ${months.map(m=>`<option value="${esc(m.label)}" ${m.label===sel?'selected':''}>${esc(m.label)}</option>`).join('')}
           </select>
           <button class="btn bg-g sm" onclick="rebuildMonthly()">↻ Tính lại từ Sheet 5</button>
+          <button class="btn bg-b sm" onclick="diagMonthly('${esc(sel)}')" title="Số này lấy từ đâu: cột nào của Sheet 5, ô nào bị loại, máy nào lệch">🔍 Chẩn đoán</button>
           <button class="btn bg-gr sm" onclick="exportMonthlyCsv()">⤓ CSV</button>
         </div>
       </div>
       <div class="cb"><div class="effstats">
         <div class="es"><div class="esl">Tổng công suất</div><div class="esv">${fmt2_(selTotal.power)} <span style="font-size:9px;color:var(--mu);font-weight:500">kWh</span></div></div>
-        <div class="es"><div class="esl">Tổng số giờ</div><div class="esv">${fmt2_(selTotal.hours)} <span style="font-size:9px;color:var(--mu);font-weight:500">h</span></div></div>
+        <div class="es"><div class="esl">Tổng số giờ</div><div class="esv${sanity.bad.length?' bad':''}">${sanity.bad.length
+            ? `<span style="color:var(--red)">Số liệu hỏng</span> <span style="font-size:9px;color:var(--mu);font-weight:500">${sanity.bad.length} máy vượt trần ${nfd_(sanity.cap,0)} h</span>`
+            : `${fmt2_(selTotal.hours)} <span style="font-size:9px;color:var(--mu);font-weight:500">h</span>`}</div></div>
         <div class="es"><div class="esl">Công suất phát TB</div><div class="esv ok">${selTotal.avgKw!=null?fmt2_(selTotal.avgKw):'—'} <span style="font-size:9px;color:var(--mu);font-weight:500">kW = tổng CS ÷ tổng giờ</span></div></div>
         <div class="es"><div class="esl">Giờ chạy TB 1 máy/ngày</div><div class="esv">${monthlyHrPerMachineDay_(selTotal, machines.length, sel, new Set(machines.map(x=>x.code)))}</div></div>
         <div class="es"><div class="esl">Tổng chỉ số công tơ</div><div class="esv">${fmt2_(selTotal.meter)} <span style="font-size:9px;color:var(--mu);font-weight:500">${selTotal.nMeter||0} máy đã nhập</span></div></div>
@@ -7857,8 +8073,383 @@ async function submitChangePw(){
   toast('✓ Đã đổi mật khẩu','ok');
 }
 
+/* ============================================================================
+ *  TRANG · ZALO & KTV PHỤ TRÁCH   (Admin / HCNS)
+ * ----------------------------------------------------------------------------
+ *  Trang này trả lời đúng MỘT câu hỏi:
+ *      "Cảnh báo của máy ở khu vực nào sẽ đi tới điện thoại của ai?"
+ *
+ *  BA ĐIỀU CẦN BIẾT TRƯỚC KHI DÙNG — đã ghi thẳng lên giao diện, không giấu trong tài liệu:
+ *
+ *  1 · SĐT là thứ Admin điền, UID là thứ hệ thống tự lấy.
+ *      Zalo KHÔNG cho gửi tin văn bản tự do theo số điện thoại. Muốn gửi miễn phí thì
+ *      KTV phải quan tâm OA và nhắn MÃ GHÉP NỐI 6 ký tự — hệ thống nhận webhook rồi tự
+ *      điền UID vào đúng dòng. Chưa ghép nối thì chỉ gửi được qua mẫu ZBS (tính phí).
+ *
+ *  2 · Phạm vi phụ trách để TRỐNG = không nhận gì cả.
+ *      Cố ý im lặng thay vì gửi tất cả: một dòng điền dở mà mặc định "toàn quốc" thì
+ *      người đó nhận vài trăm cảnh báo lúc 7h sáng rồi tắt thông báo — và từ đó cảnh báo
+ *      thật cũng không tới ai. Muốn nhận toàn bộ thì gõ đúng chữ "Tất cả".
+ *
+ *  3 · Xem trước là mặc định, Gửi là hành động có chủ ý.
+ *      Nút "Xem trước" dựng đúng từng chữ sẽ gửi cho từng người mà không gọi API Zalo.
+ *      Tin đã bay ra thì không thu hồi được, và mỗi tin ZBS là tiền thật.
+ * ========================================================================== */
+const Z = { list:null, cfg:null, preview:null, loading:false, err:'' };
+
+async function ensureZalo_(force){
+  if (!S.perm.admin) return;
+  if (Z.list && !force) return;
+  if (Z.loading) return;
+  Z.loading = true; Z.err = '';
+  try {
+    const [d, c] = await Promise.all([
+      apiPost({ action:'zaloList' }),
+      apiPost({ action:'zaloStatus' }),
+    ]);
+    if (d && d.ok) Z.list = d; else Z.err = (d && d.error) || 'Không đọc được danh sách KTV';
+    if (c && c.ok) Z.cfg = c;
+  } catch(e){ Z.err = e.message; }
+  finally {
+    Z.loading = false;
+    const cur = document.querySelector('.page.on');
+    if (cur && cur.id === 'pg-zalo') renderPage('zalo');
+  }
+}
+
+/* Gợi ý khu vực / đơn vị / trại lấy THẲNG từ Sheet 1 — không gõ tay, không lệch chính tả.
+ * Sai một dấu là dòng KTV đó im lặng vĩnh viễn mà không có gì báo. */
+function zOptions_(){
+  const rows = (S.master && S.master.rows) || [];
+  const khu = new Set(), dv = new Set(), trai = new Set();
+  rows.forEach(r => {
+    const k = String(r._byLetter[COL.KHU]||'').trim(); if (k) khu.add(k);
+    const d = String(r._byLetter[COL.DONVI]||'').trim(); if (d) dv.add(d);
+    const t = String(r._byLetter[COL.TRAI]||'').trim(); if (t) trai.add(t);
+  });
+  const sort = set => [...set].sort((a,b)=>a.localeCompare(b,'vi'));
+  return { khu: sort(khu), donVi: sort(dv), trai: sort(trai) };
+}
+
+function zCount_(k){
+  const A = (Q.alerts && Q.alerts.maintenance) || [];
+  if (k === 'overdue' || k === 'due-soon') return A.filter(a => a.type === k).length;
+  const ineff = computeInefficient(S.master.rows || []);
+  return k === 'ineffective' ? ineff.filter(x=>x.isIneffective).length : ineff.filter(x=>x.isBad).length;
+}
+
+function viewZalo(){
+  if (!S.perm.admin) return '<div class="empty">Không đủ quyền.</div>';
+  if (Z.loading && !Z.list) return skeletonPage_('Zalo & KTV phụ trách','rows');
+  if (Z.err && !Z.list) return `<div class="card"><div class="cb"><div class="empty"><div class="ei">⚠️</div>${esc(Z.err)}<br><br>
+      <button class="btn bg-g sm" onclick="zaloSetupSheet()">Tạo sheet "26. KTV phụ trách"</button></div></div></div>`;
+
+  const rows = (Z.list && Z.list.rows) || [];
+  const cfg = Z.cfg || {};
+  const paired = rows.filter(r=>r._paired).length;
+  const active = rows.filter(r=>/^true$/i.test(String(r['Đang dùng']))).length;
+
+  const n = { overdue:zCount_('overdue'), dueSoon:zCount_('due-soon'),
+              ineffective:zCount_('ineffective'), bad:zCount_('bad') };
+
+  return `
+  <div class="ph"><h1>Zalo &amp; KTV phụ trách</h1>
+    <p>Cảnh báo của máy ở khu vực nào sẽ đi tới điện thoại của ai · ${rows.length} người trong danh sách ·
+       ${active} đang bật · ${paired} đã ghép nối Zalo</p></div>
+
+  <div class="card" style="background:${cfg.coToken?'#f0fdf4':'#fffbeb'};border-left:4px solid ${cfg.coToken?'var(--g)':'var(--amb)'}">
+    <div style="padding:14px 16px;font-size:11px;line-height:1.8;color:${cfg.coToken?'#14532d':'#78350f'}">
+      <b>Trạng thái kết nối Zalo OA:</b>
+      ${cfg.coToken ? 'đã có access token' : 'CHƯA CÓ TOKEN — chưa gửi được tin nào'} ·
+      mẫu ZBS (gửi theo SĐT, tính phí): ${cfg.templateId ? ('đã cấu hình #'+esc(cfg.templateId)) : 'chưa cấu hình'} ·
+      gửi tự động: ${cfg.batGui===false?'ĐANG TẮT':'bật'} · khung giờ ${esc(cfg.khungGio||'7h–19h')} ·
+      cách quãng tối thiểu ${esc(cfg.cachQuang||'360 phút')}
+      <br><br>
+      <b>Vì sao cần "ghép nối":</b> Zalo chỉ cho gửi tin văn bản tự do (miễn phí) tới người
+      <b>đã quan tâm OA</b>, định danh bằng UID chứ không bằng số điện thoại. Nên mỗi KTV có một
+      <b>mã ghép nối 6 ký tự</b>: mở Zalo → tìm OA eGreen → Quan tâm → nhắn đúng mã đó. Hệ thống
+      nhận webhook và tự điền UID. Chưa ghép nối thì chỉ gửi được qua mẫu ZBS đã được Zalo duyệt
+      (mỗi tin tính phí).
+    </div>
+    <div style="padding:0 16px 14px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn bg-b sm" onclick="zaloOpenCfg()">⚙️ Cấu hình Zalo OA</button>
+      <button class="btn bg-gr sm" onclick="zaloSetupSheet()">Tạo/nâng cấp sheet 26 &amp; 27</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><h3>Việc đang chờ nhắc</h3>
+      <span class="b bmu">Đúng bốn nhóm sẽ được gửi đi — cùng nguồn với trang Cảnh báo và Hiệu quả vận hành</span></div>
+    <div class="cb"><div class="effstats">
+      <div class="es"><div class="esl">⛔ Quá hạn bảo dưỡng</div><div class="esv ${n.overdue?'bad':''}">${nfd_(n.overdue,0)}</div></div>
+      <div class="es"><div class="esl">⚠️ Sắp đến hạn</div><div class="esv">${nfd_(n.dueSoon,0)}</div></div>
+      <div class="es"><div class="esl">📉 Không hiệu quả</div><div class="esv ${n.ineffective?'bad':''}">${nfd_(n.ineffective,0)}</div></div>
+      <div class="es"><div class="esl">📉 Kém hiệu quả</div><div class="esv">${nfd_(n.bad,0)}</div></div>
+    </div></div>
+    <div style="padding:0 16px 14px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn bg-b sm" onclick="zaloPreview()">👁 Xem trước tin sẽ gửi</button>
+      <button class="btn bg-a sm" onclick="zaloSendNow()">📨 Gửi ngay cho KTV</button>
+      <button class="btn bg-gr sm" onclick="ensureZalo_(true)">↻ Làm mới</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><h3>Danh sách KTV phụ trách</h3>
+      <button class="btn bg-g sm" onclick="zaloOpenKtv()">+ Thêm KTV</button></div>
+    <div class="tw"><table class="t"><thead><tr>
+      <th>Họ tên</th><th>Số điện thoại</th><th>Chức vụ</th><th>Ghép nối Zalo</th>
+      <th>Phạm vi phụ trách</th><th>Nhận nhóm</th><th>Đang dùng</th><th>Lần gửi gần nhất</th><th></th>
+    </tr></thead><tbody>
+      ${rows.length ? rows.map(r => {
+        const scope = [
+          r['Khu vực phụ trách'] ? 'KV: '+esc(r['Khu vực phụ trách']) : '',
+          r['Đơn vị phụ trách'] ? 'ĐV: '+esc(r['Đơn vị phụ trách']) : '',
+          r['Trại phụ trách'] ? 'Trại: '+esc(r['Trại phụ trách']) : '',
+          r['Mã máy phụ trách'] ? 'Máy: '+esc(r['Mã máy phụ trách']) : '',
+        ].filter(Boolean).join('<br>');
+        const on = k => /^true$/i.test(String(r[k]||''));
+        const groups = [ on('Nhận quá hạn')?'<span class="b br">quá hạn</span>':'',
+                         on('Nhận sắp đến hạn')?'<span class="b ba">sắp hạn</span>':'',
+                         on('Nhận không hiệu quả')?'<span class="b br">không HQ</span>':'',
+                         on('Nhận kém hiệu quả')?'<span class="b ba">kém HQ</span>':'' ].filter(Boolean).join(' ');
+        const dung = /^true$/i.test(String(r['Đang dùng']||''));
+        return `<tr>
+          <td><b>${esc(r['Họ tên'])}</b></td>
+          <td>${esc(r['Số điện thoại'])}</td>
+          <td>${esc(r['Chức vụ'])}</td>
+          <td>${r._paired
+            ? '<span class="b bg">đã ghép nối</span>'
+            : `<span class="b bmu">chưa ghép</span><br><code style="font-size:11px;letter-spacing:1px">${esc(r['Mã ghép nối'])}</code>`}</td>
+          <td style="font-size:11px;color:var(--mu);line-height:1.6">${scope || '<span class="b br">TRỐNG — không nhận gì</span>'}</td>
+          <td>${groups || '<span class="b bmu">—</span>'}</td>
+          <td>${dung ? '<span class="b bg">bật</span>' : '<span class="b bmu">tắt</span>'}</td>
+          <td style="font-size:11px;color:var(--mu)">${esc(r['Lần gửi gần nhất']||'—')}<br>${esc(String(r['Kết quả gần nhất']||'').slice(0,60))}</td>
+          <td style="display:flex;gap:5px;flex-wrap:wrap">
+            <button class="btn bg-b sm" onclick="zaloOpenKtv('${esc(r['Số điện thoại'])}')">Sửa</button>
+            <button class="btn bg-a sm" onclick="zaloNewCode('${esc(r['Số điện thoại'])}')" title="Cấp mã mới và gỡ ghép nối cũ">Mã mới</button>
+            <button class="btn bg-r sm" onclick="zaloDelKtv('${esc(r['Số điện thoại'])}','${esc(r['Họ tên'])}')">Xoá</button>
+          </td></tr>`;
+      }).join('') : '<tr><td colspan="9" class="empty">Chưa có KTV nào. Bấm "Tạo/nâng cấp sheet 26 &amp; 27" để hệ thống gợi ý sẵn từ Sheet 1.</td></tr>'}
+    </tbody></table></div>
+  </div>`;
+}
+
+/* ---------- Thêm / sửa 1 KTV ---------- */
+function zaloOpenKtv(phone){
+  const rows = (Z.list && Z.list.rows) || [];
+  const r = phone ? rows.find(x => String(x['Số điện thoại']) === String(phone)) : null;
+  const o = zOptions_();
+  const dl = (id, arr) => `<datalist id="${id}">${arr.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>`;
+  const on = k => r && /^true$/i.test(String(r[k]||''));
+  const v = k => r ? esc(String(r[k]||'')) : '';
+
+  openOv(`
+    <div class="mh"><div><h2>${r?'✎ Sửa KTV phụ trách':'➕ Thêm KTV phụ trách'}</h2>
+      <p>Phạm vi phụ trách quyết định máy nào thuộc về người này</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div class="fgrid fg3">
+        <div class="iw"><div class="il">Họ tên</div><input class="fi" id="zkName" value="${v('Họ tên')}" placeholder="VD: Nguyễn Văn A"></div>
+        <div class="iw"><div class="il">Số điện thoại ${r?'<span style="color:var(--mu)">(khoá nhận diện — đổi số = tạo dòng mới)</span>':''}</div>
+          <input class="fi" id="zkPhone" value="${v('Số điện thoại')}" placeholder="0912 345 678"></div>
+        <div class="iw"><div class="il">Chức vụ</div>
+          <select class="fi" id="zkRole">
+            <option value="Kỹ thuật" ${r&&/kỹ thuật/i.test(String(r['Chức vụ']))?'selected':''}>Kỹ thuật</option>
+            <option value="Vận hành" ${r&&/vận hành/i.test(String(r['Chức vụ']))?'selected':''}>Vận hành</option>
+          </select></div>
+      </div>
+
+      <div style="margin:12px 0 6px;font-size:11px;color:var(--mu);line-height:1.7">
+        <b>PHẠM VI PHỤ TRÁCH</b> — quyết định máy nào của người này. Nhiều giá trị thì ngăn bằng dấu phẩy.
+        Gõ đúng chữ <code>Tất cả</code> để nhận toàn bộ.
+        <b style="color:var(--red)">Để trống hết bốn ô = người này không nhận cảnh báo nào.</b>
+        Đây là chủ ý: thà im lặng còn hơn gửi nhầm vài trăm tin rồi bị tắt thông báo.
+      </div>
+      <div class="fgrid fg3">
+        <div class="iw"><div class="il">Khu vực</div><input class="fi" id="zkKhu" list="zdlKhu" value="${v('Khu vực phụ trách')}" placeholder="VD: Miền Bắc">${dl('zdlKhu', o.khu)}</div>
+        <div class="iw"><div class="il">Đơn vị</div><input class="fi" id="zkDv" list="zdlDv" value="${v('Đơn vị phụ trách')}">${dl('zdlDv', o.donVi)}</div>
+        <div class="iw"><div class="il">Trại</div><input class="fi" id="zkTrai" list="zdlTrai" value="${v('Trại phụ trách')}">${dl('zdlTrai', o.trai)}</div>
+        <div class="iw"><div class="il">Mã máy cụ thể</div><input class="fi" id="zkMay" value="${v('Mã máy phụ trách')}" placeholder="VD: NS250KVA19, NS100KVA07"></div>
+      </div>
+
+      <div style="margin:12px 0 6px;font-size:11px;color:var(--mu)"><b>NHẬN NHÓM CẢNH BÁO NÀO</b></div>
+      <div class="fgrid fg3">
+        <label class="iw" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="zkOverdue" ${!r||on('Nhận quá hạn')?'checked':''}> ⛔ Quá hạn bảo dưỡng</label>
+        <label class="iw" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="zkDueSoon" ${!r||on('Nhận sắp đến hạn')?'checked':''}> ⚠️ Sắp đến hạn</label>
+        <label class="iw" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="zkIneff" ${!r||on('Nhận không hiệu quả')?'checked':''}> 📉 Máy không hiệu quả</label>
+        <label class="iw" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="zkBad" ${on('Nhận kém hiệu quả')?'checked':''}> 📉 Máy kém hiệu quả</label>
+        <label class="iw" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="zkActive" ${on('Đang dùng')?'checked':''}> ✅ <b>Đang dùng</b> (bật thì mới thật sự gửi)</label>
+        <div class="iw"><div class="il">Ghi chú</div><input class="fi" id="zkNote" value="${v('Ghi chú')}"></div>
+      </div>
+
+      ${r && !r._paired ? `<div style="margin-top:12px;padding:10px 12px;background:#eff6ff;border-radius:8px;font-size:11px;line-height:1.7">
+        <b>Chưa ghép nối Zalo.</b> Nhờ ${esc(r['Họ tên'])} mở Zalo → tìm OA eGreen → <b>Quan tâm</b> →
+        nhắn đúng mã <code style="font-size:13px;letter-spacing:2px">${esc(r['Mã ghép nối'])}</code>.
+        Ghép xong hệ thống tự đổi mã mới, nên ảnh chụp màn hình cũ không dùng lại được.</div>` : ''}
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
+      <button class="btn bg-g" onclick="zaloSaveKtv()">💾 Lưu</button>
+    </div>`);
+}
+
+async function zaloSaveKtv(){
+  const val = id => String(($(id)||{}).value || '').trim();
+  const chk = id => !!(($(id)||{}).checked);
+  const d = await apiPost({ action:'zaloSaveKtv', payload:{
+    name: val('zkName'), phone: val('zkPhone'), role: val('zkRole'),
+    khu: val('zkKhu'), donVi: val('zkDv'), trai: val('zkTrai'), may: val('zkMay'),
+    overdue: chk('zkOverdue'), dueSoon: chk('zkDueSoon'),
+    ineffective: chk('zkIneff'), bad: chk('zkBad'),
+    active: chk('zkActive'), note: val('zkNote'),
+  }});
+  if (!d || !d.ok){ toast((d&&d.error)||'Không lưu được','err'); return; }
+  closeOv();
+  toast(d.moi ? '✓ Đã thêm KTV' : '✓ Đã cập nhật KTV','ok');
+  await ensureZalo_(true);
+}
+
+async function zaloDelKtv(phone, name){
+  if (!confirm(`Xoá ${name} (${phone}) khỏi danh sách nhận cảnh báo Zalo?`)) return;
+  const d = await apiPost({ action:'zaloDeleteKtv', phone });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không xoá được','err'); return; }
+  toast('✓ Đã xoá','ok');
+  await ensureZalo_(true);
+}
+
+async function zaloNewCode(phone){
+  if (!confirm('Cấp mã ghép nối mới?\n\nGhép nối Zalo hiện tại của người này sẽ bị gỡ — họ phải nhắn mã mới cho OA thì mới nhận tin lại được.')) return;
+  const d = await apiPost({ action:'zaloNewCode', phone });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không cấp được mã','err'); return; }
+  alert('Mã ghép nối mới: ' + d.code + '\n\n' + d.huongDan);
+  await ensureZalo_(true);
+}
+
+/* ---------- Xem trước & gửi ---------- */
+async function zaloPreview(){
+  const d = await apiPost({ action:'zaloPreview' });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không dựng được bản xem trước','err'); return; }
+  const list = d.nguoiNhan || [];
+  openOv(`
+    <div class="mh"><div><h2>👁 Xem trước — ${list.length} người sẽ nhận tin</h2>
+      <p>Bản dựng thử · chưa gọi API Zalo · chưa tốn tiền</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb" style="font-size:11px">
+      <div style="padding:10px 12px;background:#f8fafc;border-radius:8px;margin-bottom:12px;line-height:1.7">
+        Tổng việc đang chờ: ⛔ ${d.tong.overdue} quá hạn · ⚠️ ${d.tong.dueSoon} sắp hạn ·
+        📉 ${d.tong.ineffective} không hiệu quả · 📉 ${d.tong.bad} kém hiệu quả.<br>
+        <b>Chưa gửi gì cả</b> — đây chỉ là bản dựng thử, không gọi API Zalo, không tốn tiền.
+        ${d.zbsSanSang ? '' : '<br><span style="color:var(--amb)"><b>Chưa cấu hình mẫu ZBS</b> — người chưa ghép nối Zalo sẽ KHÔNG nhận được tin.</span>'}
+      </div>
+      ${list.length ? list.map(m => `
+        <div style="border:1px solid var(--bd);border-radius:8px;margin-bottom:10px;overflow:hidden">
+          <div style="padding:8px 12px;background:#f8fafc;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <b>${esc(m.name)}</b> <span style="color:var(--mu)">${esc(m.phone)}</span>
+            <span class="b ${m.channel==='uid'?'bg':(m.channel==='phone-zbs'?'ba':'br')}">${
+              m.channel==='uid' ? 'UID · miễn phí'
+              : (m.channel==='phone-zbs' ? 'SĐT · ZBS (tính phí)'
+              : 'chưa ghép nối · KHÔNG GỬI ĐƯỢC'+(m.pairCode?' · mã '+esc(m.pairCode):''))}</span>
+            <span class="b bmu">${m.count} việc</span>
+          </div>
+          <pre style="margin:0;padding:10px 12px;white-space:pre-wrap;font-family:var(--font);font-size:11px;line-height:1.6">${esc(m.text)}</pre>
+        </div>`).join('')
+        : '<div class="empty">Không có ai nhận tin: hoặc không còn việc nào cần nhắc, hoặc chưa ai được bật "Đang dùng" kèm phạm vi phụ trách.</div>'}
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
+      ${list.length?`<button class="btn bg-a" onclick="closeOv();zaloSendNow()">📨 Gửi thật ${list.length} tin</button>`:''}
+    </div>`);
+}
+
+async function zaloSendNow(){
+  if (!confirm('GỬI THẬT tin nhắn Zalo cho KTV ngay bây giờ?\n\n'
+    + 'Tin đã gửi không thu hồi được. Tin gửi theo số điện thoại (mẫu ZBS) sẽ tính phí.\n'
+    + 'Nên bấm "Xem trước" trước khi gửi.')) return;
+  const d = await apiPost({ action:'zaloSend', payload:{} });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không gửi được','err'); return; }
+  const fail = (d.results||[]).filter(r=>r.ok===false);
+  openOv(`
+    <div class="mh"><div><h2>📨 Kết quả gửi</h2><p>Chi tiết đã ghi vào sheet 27</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb" style="font-size:11px">
+      <div style="padding:10px 12px;border-radius:8px;background:${fail.length?'#fffbeb':'#f0fdf4'};margin-bottom:10px;line-height:1.7">
+        Đã gửi <b>${d.sent}</b>/${d.recipients} người${d.skipped?` · bỏ qua ${d.skipped} người (vừa gửi cách đây chưa lâu)`:''}${fail.length?` · <b style="color:var(--red)">lỗi ${fail.length}</b>`:''}.
+        Toàn bộ đã ghi vào sheet <b>"27. Nhật ký gửi Zalo"</b>.
+      </div>
+      <div class="tw"><table class="t"><thead><tr><th>Người nhận</th><th>Kênh</th><th>Số việc</th><th>Kết quả</th></tr></thead><tbody>
+        ${(d.results||[]).map(r=>`<tr><td>${esc(r.name||'')}<br><span style="color:var(--mu)">${esc(r.phone||'')}</span></td>
+          <td>${esc(r.channel||'—')}</td><td>${r.count||'—'}</td>
+          <td>${r.skipped ? '<span class="b bmu">'+esc(r.skipped)+'</span>'
+                : (r.ok ? '<span class="b bg">đã gửi</span>' : '<span class="b br">'+esc(r.error||'lỗi')+'</span>')}</td></tr>`).join('')}
+      </tbody></table></div>
+    </div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`);
+  await ensureZalo_(true);
+}
+
+async function zaloSetupSheet(){
+  const d = await apiPost({ action:'zaloSetup' });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không tạo được sheet','err'); return; }
+  toast(d.msg || 'Đã tạo sheet','ok');
+  await ensureZalo_(true);
+}
+
+/* ---------- Cấu hình Zalo OA ----------
+ * Chỉ GỬI LÊN, không bao giờ tải xuống: server trả về bản che (4 ký tự đầu/cuối).
+ * Token OA mà hiện nguyên văn trên một trang web đang mở giữa văn phòng thì coi như
+ * không còn là bí mật nữa. */
+function zaloOpenCfg(){
+  const c = Z.cfg || {};
+  openOv(`
+    <div class="mh"><div><h2>⚙️ Cấu hình Zalo OA</h2><p>Ô để trống = giữ nguyên giá trị cũ</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb" style="font-size:11px">
+      <div style="padding:10px 12px;background:#f8fafc;border-radius:8px;margin-bottom:12px;line-height:1.7">
+        Lấy các thông tin này ở <b>developers.zalo.me</b> (ứng dụng đã gắn với OA của công ty).
+        Ô nào để trống thì <b>giữ nguyên giá trị cũ</b> — không bị xoá.<br>
+        Access token của Zalo OA hết hạn sau ~1 giờ; hệ thống tự làm mới bằng refresh token,
+        nên phải điền cả hai thì mới chạy được lâu dài.<br>
+        Hiện tại: App ID ${esc(c.appId||'chưa có')} · access token ${c.coToken?'đã có':'CHƯA CÓ'}.
+      </div>
+      <div class="fgrid fg3">
+        <div class="iw"><div class="il">App ID</div><input class="fi" id="zcApp" placeholder="để trống = giữ nguyên"></div>
+        <div class="iw"><div class="il">App Secret</div><input class="fi" type="password" id="zcSecret" placeholder="để trống = giữ nguyên"></div>
+        <div class="iw"><div class="il">Access token</div><input class="fi" type="password" id="zcAccess" placeholder="để trống = giữ nguyên"></div>
+        <div class="iw"><div class="il">Refresh token</div><input class="fi" type="password" id="zcRefresh" placeholder="để trống = giữ nguyên"></div>
+        <div class="iw"><div class="il">ID mẫu ZBS (gửi theo SĐT · tính phí)</div>
+          <input class="fi" id="zcTpl" value="${esc(c.templateId||'')}" placeholder="Bỏ trống nếu chỉ gửi cho người đã ghép nối"></div>
+        <label class="iw" style="flex-direction:row;align-items:center;gap:8px">
+          <input type="checkbox" id="zcEnabled" ${c.batGui!==false?'checked':''}> Cho phép gửi tin (tắt = khoá toàn bộ, kể cả trigger)</label>
+      </div>
+      <div style="margin-top:12px;padding:10px 12px;background:#fffbeb;border-radius:8px;line-height:1.7">
+        <b>Webhook để ghép nối tự động:</b> vào Zalo Developers → OA của công ty → Webhook,
+        điền đúng URL Web App của hệ thống này và bật hai sự kiện
+        <code>user_send_text</code> và <code>follow</code>. Không bật webhook thì vẫn dùng được,
+        chỉ là phải dán UID vào Sheet 26 bằng tay.
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
+      <button class="btn bg-g" onclick="zaloSaveCfg()">💾 Lưu cấu hình</button>
+    </div>`);
+}
+
+async function zaloSaveCfg(){
+  const val = id => String(($(id)||{}).value || '').trim();
+  const payload = { enabled: !!(($('zcEnabled')||{}).checked), templateId: val('zcTpl') };
+  if (val('zcApp')) payload.appId = val('zcApp');
+  if (val('zcSecret')) payload.appSecret = val('zcSecret');
+  if (val('zcAccess')) payload.accessToken = val('zcAccess');
+  if (val('zcRefresh')) payload.refreshToken = val('zcRefresh');
+  const d = await apiPost({ action:'zaloConfig', payload });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không lưu được cấu hình','err'); return; }
+  closeOv();
+  toast(d.msg||'Đã lưu cấu hình Zalo','ok');
+  await ensureZalo_(true);
+}
+
 function roleBadge_(role){
-  const cls = { 'Admin':'admin', 'HCNS':'hcns', 'CSKH':'cskh', 'Kĩ thuật':'kt' }[role] || 'kt';
+  const cls = { 'Admin':'admin', 'HCNS':'hcns', 'CSKH':'cskh', 'Kĩ thuật':'kt', 'Màn hiển thị':'kt' }[role] || 'kt';
   return `<span class="rb ${cls}">${esc(role||'—')}</span>`;
 }
 
@@ -7869,12 +8460,16 @@ function roleBadge_(role){
  *  và ai đang chờ duyệt?" Vì vậy hàng chờ duyệt nằm TRÊN CÙNG, tách hẳn khỏi
  *  danh sách chính — việc cần làm không được lẫn vào việc đã xong.
  * ========================================================================== */
-const ROLE_LIST = ['Admin','HCNS','CSKH','Kĩ thuật'];
+/* PHẢI khớp AUTH_ROLE_LIST / AUTH_ROLES bên AUTH.gs. Server mới là nơi quyết định
+ * quyền thật; danh sách này chỉ để bày ra ô chọn và câu mô tả cho người duyệt. */
+const ROLE_LIST = ['Admin','HCNS','CSKH','Kĩ thuật','Màn hiển thị'];
 const ROLE_DESC = {
-  'Admin':    'Toàn quyền, KỂ CẢ duyệt tài khoản đăng nhập.',
-  'HCNS':     'Mọi chức năng, trừ duyệt tài khoản đăng nhập.',
-  'CSKH':     'Mọi chức năng, trừ duyệt tài khoản và mọi thứ liên quan tới giá tiền.',
-  'Kĩ thuật': 'Quyền y hệt CSKH.',
+  'Admin':        'Toàn quyền, KỂ CẢ duyệt tài khoản đăng nhập.',
+  'HCNS':         'Mọi chức năng, trừ duyệt tài khoản đăng nhập.',
+  'CSKH':         'Mọi chức năng, trừ duyệt tài khoản và mọi thứ liên quan tới giá tiền.',
+  'Kĩ thuật':     'Quyền y hệt CSKH.',
+  'Màn hiển thị': 'CHỈ XEM. Thấy đúng những gì CSKH thấy (không thấy giá tiền), '
+                + 'nhưng không sửa/thêm/xoá được bất cứ thứ gì. Dùng cho màn hình treo tường.',
 };
 
 async function ensureUsers_(force){
@@ -7970,19 +8565,24 @@ function viewUsers(){
     <div class="tw"><table class="permgrid"><thead><tr>
       <th>Chức năng</th>${ROLE_LIST.map(r=>`<th>${r}</th>`).join('')}
     </tr></thead><tbody>
-      ${[['Xem &amp; sửa giá tiền', [1,1,0,0]],
-         ['Sửa định mức, danh mục vật tư', [1,1,1,1]],
-         ['Nhập &amp; sửa dữ liệu vận hành', [1,1,1,1]],
-         ['Đồng bộ Smartgen, ghi phiếu, báo bảo dưỡng', [1,1,1,1]],
-         ['Thao tác hệ thống (khởi tạo sheet)', [1,1,0,0]],
-         ['Duyệt tài khoản đăng nhập', [1,0,0,0]]]
+      ${/* Thứ tự cột PHẢI đúng theo ROLE_LIST: Admin · HCNS · CSKH · Kĩ thuật · Màn hiển thị.
+          * Cột cuối toàn số 0 — đó chính là điểm của chức danh này: nhìn được mọi thứ
+          * không dính tiền, làm được đúng con số không việc. */
+        [['Xem &amp; sửa giá tiền', [1,1,0,0,0]],
+         ['Xem số liệu vận hành, cảnh báo, báo cáo', [1,1,1,1,1]],
+         ['Sửa định mức, danh mục vật tư', [1,1,1,1,0]],
+         ['Nhập &amp; sửa dữ liệu vận hành', [1,1,1,1,0]],
+         ['Đồng bộ Smartgen, ghi phiếu, báo bảo dưỡng', [1,1,1,1,0]],
+         ['Gửi cảnh báo Zalo cho KTV', [1,1,0,0,0]],
+         ['Thao tác hệ thống (khởi tạo sheet)', [1,1,0,0,0]],
+         ['Duyệt tài khoản đăng nhập', [1,0,0,0,0]]]
         .map(([k,v]) => `<tr><td>${k}</td>${v.map(x=>`<td>${x?'<span class="b bg">✓</span>':'<span class="b bmu">—</span>'}</td>`).join('')}</tr>`).join('')}
     </tbody></table></div>
     <div class="cb" style="font-size:11px;color:var(--mu);line-height:1.8">
       ${ROLE_LIST.map(r=>`${roleBadge_(r)} ${ROLE_DESC[r]}`).join('<br>')}
       <br><br>Ẩn nút trên web chỉ là phép lịch sự. Chốt chặn thật nằm ở Apps Script:
       mọi lệnh ghi đều kiểm tra chức danh, và các trường tiền bị <b>cắt bỏ khỏi gói dữ liệu
-      trước khi rời máy chủ</b> — tài khoản CSKH / Kĩ thuật mở DevTools cũng không thấy con số nào.
+      trước khi rời máy chủ</b> — tài khoản CSKH / Kĩ thuật / Màn hiển thị mở DevTools cũng không thấy con số nào.
     </div>
   </div>`;
 }
@@ -8053,7 +8653,8 @@ function pageTitle_(p){
     monthly:'Tổng kết hiệu quả tháng', tracking:'Theo dõi bảo dưỡng', filter:'Data thay lọc',
     efficiency:'Hiệu quả vận hành', master:'Danh sách &amp; Định mức máy', spec:'Hạng mục bảo dưỡng',
     stock:'Kho vật tư tại trại', matcost:'Chi phí vật tư', sim:'SIM &amp; Cảnh báo máy',
-    vtcat:'Danh mục vật tư', users:'Người dùng &amp; Phân quyền' })[p] || 'Đang tải';
+    vtcat:'Danh mục vật tư', users:'Người dùng &amp; Phân quyền',
+    zalo:'Zalo &amp; KTV phụ trách' })[p] || 'Đang tải';
 }
 
 /* ============================================================
