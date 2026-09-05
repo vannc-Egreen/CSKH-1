@@ -8467,6 +8467,13 @@ async function zaloAuthCode(){
  * và không nói là nguyên nhân nào. Hàm này bắt server thử lần lượt từng khả năng rồi
  * nói ra cái nào đúng — thay vì để người dùng ngồi đoán giữa "dán sai token", "token hết
  * hạn", "token của app cũ" và "chưa được duyệt quyền". */
+async function zaloClearToken(){
+  if (!confirm('Xoá access token và refresh token đang lưu?\n\nApp ID và App Secret giữ nguyên. Sau đó phải lấy token mới.')) return;
+  const d = await apiPost({ action:'zaloClearToken' });
+  if (!d || !d.ok){ toast((d&&d.error)||'Không xoá được','err'); return; }
+  closeOv(); toast(d.msg,'ok'); await ensureZalo_(true);
+}
+
 async function zaloDiagToken(){
   const d = await apiPost({ action:'zaloDiagToken' });
   if (!d || !d.ok){ toast((d&&d.error)||'Không chẩn đoán được','err'); return; }
@@ -8491,7 +8498,8 @@ async function zaloDiagToken(){
       </div>
     </div>
     <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button>
-      ${good?`<button class="btn bg-g" onclick="closeOv();zaloScanFollowers(true)">🔗 Quét người quan tâm ngay</button>`:''}</div>`);
+      ${good?`<button class="btn bg-g" onclick="closeOv();zaloScanFollowers(true)">🔗 Quét người quan tâm ngay</button>`
+            :`<button class="btn bg-r" onclick="zaloClearToken()">🧹 Xoá token đang lưu, làm lại từ đầu</button>`}</div>`);
   await ensureZalo_(true);
 }
 
@@ -8555,8 +8563,10 @@ function zaloOpenCfg(){
       <div class="fgrid fg3">
         <div class="iw"><div class="il">App ID</div><input class="fi" id="zcApp" placeholder="để trống = giữ nguyên"></div>
         <div class="iw"><div class="il">App Secret</div><input class="fi" type="password" id="zcSecret" placeholder="để trống = giữ nguyên"></div>
-        <div class="iw"><div class="il">Access token</div><input class="fi" type="password" id="zcAccess" placeholder="để trống = giữ nguyên"></div>
-        <div class="iw"><div class="il">Refresh token</div><input class="fi" type="password" id="zcRefresh" placeholder="để trống = giữ nguyên"></div>
+        <div class="iw full"><div class="il">⚡ Dán nguyên kết quả từ API Explorer (nhanh nhất)</div>
+          <textarea class="fi" id="zcPaste" rows="3" placeholder='Dán cả cục JSON: {"access_token":"...","refresh_token":"...","expires_in":"..."} — hệ thống tự bóc ra'></textarea></div>
+        <div class="iw"><div class="il">Access token (nếu dán tay)</div><input class="fi" type="password" id="zcAccess" placeholder="để trống = giữ nguyên"></div>
+        <div class="iw"><div class="il">Refresh token (nếu dán tay)</div><input class="fi" type="password" id="zcRefresh" placeholder="để trống = giữ nguyên"></div>
         <div class="iw"><div class="il">ID mẫu ZBS (gửi theo SĐT · tính phí)</div>
           <input class="fi" id="zcTpl" value="${esc(c.templateId||'')}" placeholder="Bỏ trống nếu chỉ gửi cho người đã ghép nối"></div>
         <label class="iw" style="flex-direction:row;align-items:center;gap:8px">
@@ -8580,6 +8590,7 @@ async function zaloSaveCfg(){
   const payload = { enabled: !!(($('zcEnabled')||{}).checked), templateId: val('zcTpl') };
   if (val('zcApp')) payload.appId = val('zcApp');
   if (val('zcSecret')) payload.appSecret = val('zcSecret');
+  if (val('zcPaste')) payload.paste = val('zcPaste');
   if (val('zcAccess')) payload.accessToken = val('zcAccess');
   if (val('zcRefresh')) payload.refreshToken = val('zcRefresh');
   const d = await apiPost({ action:'zaloConfig', payload });
@@ -8587,6 +8598,9 @@ async function zaloSaveCfg(){
   closeOv();
   toast(d.msg||'Đã lưu cấu hình Zalo','ok');
   await ensureZalo_(true);
+  /* Lưu xong kiểm tra luôn: token sai thì phải biết NGAY lúc còn nhớ mình vừa dán gì,
+   * chứ không phải sáng mai khi tin không gửi được. */
+  await zaloDiagToken();
 }
 
 function roleBadge_(role){
