@@ -1335,8 +1335,10 @@ function setStatus(loading, msg, err){
  *      payload gửi lên Apps Script.
  * ============================================================ */
 const SMARTGEN_TASKS = [
-  { id: 'syncSmartGenDaily', label: 'Đồng bộ Smartgen', icon: '⚡',
-    hint: 'Quét cả tháng: điền vào MỌI ô ngày còn trống ở Sheet 5, giữ nguyên ô đã có số. Tự chạy 1 lần/ngày khi mở web.' },
+  { id: 'syncAllDaily', label: 'Đồng bộ tất cả (Smartgen + LIXiSE)', icon: '⚡',
+    hint: 'Lấy dữ liệu cả 2 hệ thống giám sát, quét cả tháng: điền vào MỌI ô ngày còn trống ở Sheet 5, giữ nguyên ô đã có số. Tự chạy 1 lần/ngày khi mở web.' },
+  { id: 'syncLixiDaily', label: 'Chỉ đồng bộ LIXiSE', icon: '🔌',
+    hint: 'Chỉ các máy có điền "Unit ID lixi" ở Sheet 2. Dùng khi cần kiểm tra riêng nhóm máy LIXiSE, không đụng Smartgen.' },
   { id: 'cleanupSheet5', label: 'Dọn ô ngày chưa tới', icon: '🧹',
     hint: 'Xoá số còn sót của tháng trước ở các cột ngày chưa tới, và đếm lại ô còn trống. Không gọi Smartgen nên chạy vài giây.' },
   // Thêm task mới ở đây khi phát triển tiếp, ví dụ:
@@ -2916,7 +2918,7 @@ function dataGapPanelHtml(filteredM){
         <h3>⚠ Ô còn trống trong Sheet 5 · tính tới ngày ${g.nDays}</h3>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <span class="b ba">${g.totalCells} ô · ${g.rows.length} máy${g.fullyMissing?` · ${g.fullyMissing} máy trống cả tháng`:''}</span>
-          <button class="btn bg-gr sm" onclick="runSmartGenTask('syncSmartGenDaily')">⚡ Đồng bộ điền bù ngay</button>
+          <button class="btn bg-gr sm" onclick="runSmartGenTask('syncAllDaily')">⚡ Đồng bộ điền bù ngay</button>
         </div>
       </div>
       <div class="cb">
