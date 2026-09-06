@@ -8076,533 +8076,605 @@ async function submitChangePw(){
 }
 
 /* ============================================================================
- *  TRANG · ZALO & KTV PHỤ TRÁCH   (Admin / HCNS)
+ *  TRANG · ZALO — DANH BẠ, CẢNH BÁO, PHẢN HỒI   (Admin / HCNS / CSKH)
  * ----------------------------------------------------------------------------
- *  Trang này trả lời đúng MỘT câu hỏi:
- *      "Cảnh báo của máy ở khu vực nào sẽ đi tới điện thoại của ai?"
+ *  Trang này trả lời ba câu hỏi, xếp đúng thứ tự người dùng cần:
+ *      1. Việc nào đang CHỜ MÌNH?          → hàng chờ kiểm chứng + hàng chờ ghép
+ *      2. Cảnh báo đi tới ai?              → danh bạ + phạm vi phụ trách
+ *      3. Gửi rồi thì ai đã trả lời gì?    → bảng phiếu
  *
- *  BA ĐIỀU CẦN BIẾT TRƯỚC KHI DÙNG — đã ghi thẳng lên giao diện, không giấu trong tài liệu:
+ *  BỐN ĐIỀU ĐÃ GHI THẲNG LÊN GIAO DIỆN, KHÔNG GIẤU TRONG TÀI LIỆU:
  *
- *  1 · SĐT là thứ Admin điền, UID là thứ hệ thống tự lấy.
- *      Zalo KHÔNG cho gửi tin văn bản tự do theo số điện thoại. Muốn gửi miễn phí thì
- *      KTV phải quan tâm OA và nhắn MÃ GHÉP NỐI 6 ký tự — hệ thống nhận webhook rồi tự
- *      điền UID vào đúng dòng. Chưa ghép nối thì chỉ gửi được qua mẫu ZBS (tính phí).
+ *  1 · Ghép nối do NGƯỜI VẬN HÀNH tự làm, không phải admin điền.
+ *      Họ bấm Quan tâm OA rồi nhắn số điện thoại — hệ thống tự khớp với danh bạ.
+ *      Admin chỉ can thiệp khi hệ thống không nhận ra (hàng chờ ghép).
  *
- *  2 · Phạm vi phụ trách để TRỐNG = không nhận gì cả.
- *      Cố ý im lặng thay vì gửi tất cả: một dòng điền dở mà mặc định "toàn quốc" thì
- *      người đó nhận vài trăm cảnh báo lúc 7h sáng rồi tắt thông báo — và từ đó cảnh báo
- *      thật cũng không tới ai. Muốn nhận toàn bộ thì gõ đúng chữ "Tất cả".
+ *  2 · Cửa sổ gửi tin là thứ quyết định gửi được hay không, và web phải nói ra.
+ *      Zalo chỉ cho gửi tin tư vấn trong 7 ngày kể từ tương tác cuối, miễn phí
+ *      trong 48 giờ đầu. Người im lặng lâu thì KHÔNG PHẢI lỗi hệ thống — cột
+ *      "Cửa sổ" hiện rõ ai sắp mất liên lạc để còn gọi điện trước khi quá muộn.
  *
- *  3 · Xem trước là mặc định, Gửi là hành động có chủ ý.
- *      Nút "Xem trước" dựng đúng từng chữ sẽ gửi cho từng người mà không gọi API Zalo.
- *      Tin đã bay ra thì không thu hồi được, và mỗi tin ZBS là tiền thật.
+ *  3 · Phản hồi của vận hành là LỜI KHAI, phải qua CSKH mới lên web.
+ *      Vì vậy hàng chờ kiểm chứng nằm TRÊN CÙNG, tách hẳn khỏi bảng phiếu chung —
+ *      việc cần làm không được lẫn vào việc đã xong.
+ *
+ *  4 · Xem trước là mặc định, Gửi là hành động có chủ ý.
+ *      Nút "Xem trước" dựng đúng từng chữ sẽ gửi mà không gọi API Zalo.
  * ========================================================================== */
-const Z = { list:null, cfg:null, preview:null, loading:false, err:'' };
+const Z = { list:null, cfg:null, groups:null, phieu:null, cho:null, cuaSo:null, hieuQua:null, loading:false, err:'' };
 
 async function ensureZalo_(force){
-  if (!S.perm.admin) return;
+  if (!S.perm.admin && !S.perm.editData) return;
   if (Z.list && !force) return;
   if (Z.loading) return;
   Z.loading = true; Z.err = '';
   try {
-    const [d, c] = await Promise.all([
+    /* Gọi song song: 5 lượt tuần tự làm trang trắng mất vài giây, mà chúng độc lập
+     * nhau hoàn toàn. Lượt nào hỏng thì chỉ khối đó trống, phần còn lại vẫn dùng được. */
+    const [d, c, g, p, q, w, hq] = await Promise.all([
       apiPost({ action:'zaloList' }),
       apiPost({ action:'zaloStatus' }),
+      apiPost({ action:'zaloGroupList' }),
+      apiPost({ action:'zaloPhieu', payload:{ soNgay:7 } }),
+      apiPost({ action:'zaloChoGhep' }),
+      apiPost({ action:'zaloCuaSo' }),
+      apiPost({ action:'zaloHieuQua', payload:{ soNgay:30 } }),
     ]);
-    if (d && d.ok) Z.list = d; else Z.err = (d && d.error) || 'Không đọc được danh sách KTV';
-    if (c && c.ok) Z.cfg = c;
-  } catch(e){ Z.err = e.message; }
-  finally {
-    Z.loading = false;
-    const cur = document.querySelector('.page.on');
-    if (cur && cur.id === 'pg-zalo') renderPage('zalo');
-  }
-}
-
-/* Gợi ý khu vực / đơn vị / trại lấy THẲNG từ Sheet 1 — không gõ tay, không lệch chính tả.
- * Sai một dấu là dòng KTV đó im lặng vĩnh viễn mà không có gì báo. */
-function zOptions_(){
-  const rows = (S.master && S.master.rows) || [];
-  const khu = new Set(), dv = new Set(), trai = new Set();
-  rows.forEach(r => {
-    const k = String(r._byLetter[COL.KHU]||'').trim(); if (k) khu.add(k);
-    const d = String(r._byLetter[COL.DONVI]||'').trim(); if (d) dv.add(d);
-    const t = String(r._byLetter[COL.TRAI]||'').trim(); if (t) trai.add(t);
-  });
-  const sort = set => [...set].sort((a,b)=>a.localeCompare(b,'vi'));
-  return { khu: sort(khu), donVi: sort(dv), trai: sort(trai) };
-}
-
-function zCount_(k){
-  const A = (Q.alerts && Q.alerts.maintenance) || [];
-  if (k === 'overdue' || k === 'due-soon') return A.filter(a => a.type === k).length;
-  const ineff = computeInefficient(S.master.rows || []);
-  return k === 'ineffective' ? ineff.filter(x=>x.isIneffective).length : ineff.filter(x=>x.isBad).length;
+    Z.list   = (d && d.ok) ? d : { ok:false, rows:[] };
+    Z.cfg    = (c && c.ok) ? c : null;
+    Z.groups = (g && g.ok) ? g : { rows:[] };
+    Z.phieu  = (p && p.ok) ? p : { rows:[], choKiemChung:0 };
+    Z.cho    = (q && q.ok) ? q : { rows:[] };
+    Z.cuaSo  = (w && w.ok) ? w : { rows:[] };
+    Z.hieuQua = (hq && hq.ok) ? hq : { rows:[] };
+    if (d && !d.ok) Z.err = d.error || '';
+  } catch (e){ Z.err = e.message; }
+  Z.loading = false;
+  const cur = document.querySelector('.page.on');
+  if (cur && cur.id === 'pg-zalo') renderPage('zalo');
 }
 
 function viewZalo(){
-  if (!S.perm.admin) return '<div class="empty">Không đủ quyền.</div>';
-  if (Z.loading && !Z.list) return skeletonPage_('Zalo & KTV phụ trách','rows');
-  if (Z.err && !Z.list) return `<div class="card"><div class="cb"><div class="empty"><div class="ei">⚠️</div>${esc(Z.err)}<br><br>
-      <button class="btn bg-g sm" onclick="zaloSetupSheet()">Tạo sheet "26. KTV phụ trách"</button></div></div></div>`;
+  if (!S.perm.admin && !S.perm.editData)
+    return `<div class="card"><div class="cb">Chức danh hiện tại không xem được trang này.</div></div>`;
+  if (Z.loading || !Z.list) return `<div class="card"><div class="cb">Đang tải dữ liệu Zalo…</div></div>`;
+  if (Z.err && !Z.list.rows.length)
+    return `<div class="card"><div class="cb"><b>Lỗi:</b> ${esc(Z.err)}
+      <div style="margin-top:8px"><button class="btn bg-g sm" onclick="zaloSetupSheet()">Tạo/nâng cấp sheet 26–29</button></div></div></div>`;
 
-  const rows = (Z.list && Z.list.rows) || [];
-  const cfg = Z.cfg || {};
-  const paired = rows.filter(r=>r._paired).length;
-  const active = rows.filter(r=>/^true$/i.test(String(r['Đang dùng']))).length;
-
-  const n = { overdue:zCount_('overdue'), dueSoon:zCount_('due-soon'),
-              ineffective:zCount_('ineffective'), bad:zCount_('bad') };
-
-  return `
-  <div class="ph"><h1>Zalo &amp; KTV phụ trách</h1>
-    <p>Cảnh báo của máy ở khu vực nào sẽ đi tới điện thoại của ai · ${rows.length} người trong danh sách ·
-       ${active} đang bật · ${paired} đã ghép nối Zalo</p></div>
-
-  <div class="card" style="background:${cfg.coToken?'#f0fdf4':'#fffbeb'};border-left:4px solid ${cfg.coToken?'var(--g)':'var(--amb)'}">
-    <div style="padding:14px 16px;font-size:11px;line-height:1.8;color:${cfg.coToken?'#14532d':'#78350f'}">
-      <b>Trạng thái kết nối Zalo OA:</b>
-      ${cfg.coToken ? 'đã có access token' : 'CHƯA CÓ TOKEN — chưa gửi được tin nào'} ·
-      mẫu ZBS (gửi theo SĐT, tính phí): ${cfg.templateId ? ('đã cấu hình #'+esc(cfg.templateId)) : 'chưa cấu hình'} ·
-      gửi tự động: ${cfg.batGui===false?'ĐANG TẮT':'bật'} · khung giờ ${esc(cfg.khungGio||'7h–19h')} ·
-      cách quãng tối thiểu ${esc(cfg.cachQuang||'360 phút')}
-      <br><br>
-      <b>Vì sao cần "ghép nối":</b> Zalo chỉ cho gửi tin văn bản tự do (miễn phí) tới người
-      <b>đã quan tâm OA</b>, định danh bằng UID chứ không bằng số điện thoại. Nên mỗi KTV có một
-      <b>mã ghép nối 6 ký tự</b>: mở Zalo → tìm OA eGreen → Quan tâm → nhắn đúng mã đó. Hệ thống
-      nhận webhook và tự điền UID. Chưa ghép nối thì chỉ gửi được qua mẫu ZBS đã được Zalo duyệt
-      (mỗi tin tính phí).
-    </div>
-    <div style="padding:0 16px 14px;display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn bg-b sm" onclick="zaloOpenCfg()">⚙️ Cấu hình Zalo OA</button>
-      <button class="btn bg-b sm" onclick="zaloDiagToken()" title="Thử kết nối và nói ra token hỏng vì lý do gì">🩺 Kiểm tra kết nối</button>
-      <button class="btn bg-g sm" onclick="zaloOpenAuth()">🔑 Lấy token từ OA</button>
-      <button class="btn bg-a sm" onclick="zaloScanFollowers(true)" title="Đọc danh sách người đang quan tâm OA và khớp với Sheet 26 theo tên — không cần webhook">🔗 Quét người quan tâm OA</button>
-      <button class="btn bg-gr sm" onclick="zaloSetupSheet()">Tạo/nâng cấp sheet 26 &amp; 27</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><h3>Việc đang chờ nhắc</h3>
-      <span class="b bmu">Đúng bốn nhóm sẽ được gửi đi — cùng nguồn với trang Cảnh báo và Hiệu quả vận hành</span></div>
-    <div class="cb"><div class="effstats">
-      <div class="es"><div class="esl">⛔ Quá hạn bảo dưỡng</div><div class="esv ${n.overdue?'bad':''}">${nfd_(n.overdue,0)}</div></div>
-      <div class="es"><div class="esl">⚠️ Sắp đến hạn</div><div class="esv">${nfd_(n.dueSoon,0)}</div></div>
-      <div class="es"><div class="esl">📉 Không hiệu quả</div><div class="esv ${n.ineffective?'bad':''}">${nfd_(n.ineffective,0)}</div></div>
-      <div class="es"><div class="esl">📉 Kém hiệu quả</div><div class="esv">${nfd_(n.bad,0)}</div></div>
-    </div></div>
-    <div style="padding:0 16px 14px;display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn bg-b sm" onclick="zaloPreview()">👁 Xem trước tin sẽ gửi</button>
-      <button class="btn bg-a sm" onclick="zaloSendNow()">📨 Gửi ngay cho KTV</button>
-      <button class="btn bg-gr sm" onclick="ensureZalo_(true)">↻ Làm mới</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="ch"><h3>Danh sách KTV phụ trách</h3>
-      <button class="btn bg-g sm" onclick="zaloOpenKtv()">+ Thêm KTV</button></div>
-    <div class="tw"><table class="t"><thead><tr>
-      <th>Họ tên</th><th>Số điện thoại</th><th>Chức vụ</th><th>Ghép nối Zalo</th>
-      <th>Phạm vi phụ trách</th><th>Nhận nhóm</th><th>Đang dùng</th><th>Lần gửi gần nhất</th><th></th>
-    </tr></thead><tbody>
-      ${rows.length ? rows.map(r => {
-        const scope = [
-          r['Khu vực phụ trách'] ? 'KV: '+esc(r['Khu vực phụ trách']) : '',
-          r['Đơn vị phụ trách'] ? 'ĐV: '+esc(r['Đơn vị phụ trách']) : '',
-          r['Trại phụ trách'] ? 'Trại: '+esc(r['Trại phụ trách']) : '',
-          r['Mã máy phụ trách'] ? 'Máy: '+esc(r['Mã máy phụ trách']) : '',
-        ].filter(Boolean).join('<br>');
-        const on = k => /^true$/i.test(String(r[k]||''));
-        const groups = [ on('Nhận quá hạn')?'<span class="b br">quá hạn</span>':'',
-                         on('Nhận sắp đến hạn')?'<span class="b ba">sắp hạn</span>':'',
-                         on('Nhận không hiệu quả')?'<span class="b br">không HQ</span>':'',
-                         on('Nhận kém hiệu quả')?'<span class="b ba">kém HQ</span>':'' ].filter(Boolean).join(' ');
-        const dung = /^true$/i.test(String(r['Đang dùng']||''));
-        return `<tr>
-          <td><b>${esc(r['Họ tên'])}</b></td>
-          <td>${esc(r['Số điện thoại'])}</td>
-          <td>${esc(r['Chức vụ'])}</td>
-          <td>${r._paired
-            ? '<span class="b bg">đã ghép nối</span>'
-            : `<span class="b bmu">chưa ghép</span><br><code style="font-size:11px;letter-spacing:1px">${esc(r['Mã ghép nối'])}</code>`}</td>
-          <td style="font-size:11px;color:var(--mu);line-height:1.6">${scope || '<span class="b br">TRỐNG — không nhận gì</span>'}</td>
-          <td>${groups || '<span class="b bmu">—</span>'}</td>
-          <td>${dung ? '<span class="b bg">bật</span>' : '<span class="b bmu">tắt</span>'}</td>
-          <td style="font-size:11px;color:var(--mu)">${esc(r['Lần gửi gần nhất']||'—')}<br>${esc(String(r['Kết quả gần nhất']||'').slice(0,60))}</td>
-          <td style="display:flex;gap:5px;flex-wrap:wrap">
-            <button class="btn bg-b sm" onclick="zaloOpenKtv('${esc(r['Số điện thoại'])}')">Sửa</button>
-            <button class="btn bg-a sm" onclick="zaloNewCode('${esc(r['Số điện thoại'])}')" title="Cấp mã mới và gỡ ghép nối cũ">Mã mới</button>
-            <button class="btn bg-r sm" onclick="zaloDelKtv('${esc(r['Số điện thoại'])}','${esc(r['Họ tên'])}')">Xoá</button>
-          </td></tr>`;
-      }).join('') : '<tr><td colspan="9" class="empty">Chưa có KTV nào. Bấm "Tạo/nâng cấp sheet 26 &amp; 27" để hệ thống gợi ý sẵn từ Sheet 1.</td></tr>'}
-    </tbody></table></div>
-  </div>`;
+  return zaloViewTrangThai_() + zaloViewChoViec_() + zaloViewHieuQua_()
+       + zaloViewDanhBa_() + zaloViewNhom_() + zaloViewPhieu_();
 }
 
-/* ---------- Thêm / sửa 1 KTV ---------- */
-function zaloOpenKtv(phone){
-  const rows = (Z.list && Z.list.rows) || [];
-  const r = phone ? rows.find(x => String(x['Số điện thoại']) === String(phone)) : null;
-  const o = zOptions_();
-  const dl = (id, arr) => `<datalist id="${id}">${arr.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>`;
-  const on = k => r && /^true$/i.test(String(r[k]||''));
-  const v = k => r ? esc(String(r[k]||'')) : '';
+/* ---------------------------------------------------------------------------
+ *  KHỐI 1 — TRẠNG THÁI KẾT NỐI
+ *  Nói thẳng ba con số mà mọi câu hỏi "sao không gửi được" đều quy về: token có
+ *  chưa, bao nhiêu người đã ghép, bao nhiêu người đã ngoài cửa sổ.
+ * ------------------------------------------------------------------------- */
+function zaloViewTrangThai_(){
+  const c = Z.cfg || {};
+  const db = c.danhBa || {};
+  const tok = c.token || {};
+  const vaiTro = c.vaiTroApp || 'SHARED_APP';
+  const canhBaoVaiTro = vaiTro === 'SHARED_APP'
+    ? `<div class="b ba" title="Dùng chung App với Zalo chấm công nên hệ thống KHÔNG tự làm mới token, tránh giết phiên của bên đó">
+         ⚠ Dùng chung App — token phải dán tay</div>`
+    : `<div class="b bg">App riêng — tự làm mới token</div>`;
 
-  openOv(`
-    <div class="mh"><div><h2>${r?'✎ Sửa KTV phụ trách':'➕ Thêm KTV phụ trách'}</h2>
-      <p>Phạm vi phụ trách quyết định máy nào thuộc về người này</p></div>
-      <button class="mcl" onclick="closeOv()">✕</button></div>
-    <div class="mb">
-      <div class="fgrid fg3">
-        <div class="iw"><div class="il">Họ tên</div><input class="fi" id="zkName" value="${v('Họ tên')}" placeholder="VD: Nguyễn Văn A"></div>
-        <div class="iw"><div class="il">Số điện thoại ${r?'<span style="color:var(--mu)">(khoá nhận diện — đổi số = tạo dòng mới)</span>':''}</div>
-          <input class="fi" id="zkPhone" value="${v('Số điện thoại')}" placeholder="0912 345 678"></div>
-        <div class="iw"><div class="il">Chức vụ</div>
-          <select class="fi" id="zkRole">
-            ${['Kỹ thuật','Vận hành','CSKH'].map(x =>
-              `<option value="${x}" ${r && String(r['Chức vụ']).trim()===x ? 'selected':''}>${x}</option>`).join('')}
-          </select></div>
+  return `<div class="card">
+    <div class="ch"><h3>🔌 Kết nối Zalo OA</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${canhBaoVaiTro}
+        <div class="b ${tok.ok?'bg':'br'}">${tok.ok?'Có token':'Chưa có token'}</div>
+        <div class="b ${c.batGui?'bg':'bmu'}">${c.batGui?'Đang bật gửi':'Đang TẮT gửi'}</div>
       </div>
-
-      <div style="margin:12px 0 6px;font-size:11px;color:var(--mu);line-height:1.75">
-        <b>PHẠM VI PHỤ TRÁCH</b> — quyết định máy nào là của người này. Bốn ô KHÔNG bình đẳng:
-        <br>· <b>Khu vực</b> chọn vùng. Để <b>Đơn vị</b> và <b>Trại</b> trống nghĩa là
-          <b>toàn bộ máy thuộc khu vực đó</b>.
-        <br>· Điền <b>Đơn vị</b> hoặc <b>Trại</b> là để <b>thu hẹp</b> lại trong khu vực đã chọn,
-          không phải để cộng thêm.
-        <br>· <b>Mã máy cụ thể</b> thì ngược lại — <b>cộng thêm</b> vào phạm vi, kể cả máy ngoài khu vực.
-          Nhiều mã thì ngăn bằng dấu phẩy.
-        <br>· Chỉ phụ trách đúng vài máy lẻ? Để <b>Khu vực</b> trống và chỉ điền mã máy.
-        <br><b style="color:var(--red)">Để trống hết bốn ô = người này không nhận cảnh báo nào.</b>
-          Đây là chủ ý: thà im lặng còn hơn gửi nhầm vài trăm tin rồi bị tắt thông báo vĩnh viễn.
-      </div>
-      <div class="fgrid fg3">
-        <div class="iw"><div class="il">Khu vực <span style="color:var(--red)">*</span></div>
-          <select class="fi" id="zkKhu">
-            <option value="">— chưa chọn (chỉ nhận đúng mã máy liệt kê bên dưới) —</option>
-            ${['Tất cả'].concat(o.khu).map(x =>
-              `<option value="${esc(x)}" ${r && String(r['Khu vực phụ trách']).trim()===x ? 'selected':''}>${esc(x)}</option>`).join('')}
-          </select></div>
-        <div class="iw"><div class="il">Đơn vị</div><input class="fi" id="zkDv" list="zdlDv" value="${v('Đơn vị phụ trách')}">${dl('zdlDv', o.donVi)}</div>
-        <div class="iw"><div class="il">Trại</div><input class="fi" id="zkTrai" list="zdlTrai" value="${v('Trại phụ trách')}">${dl('zdlTrai', o.trai)}</div>
-        <div class="iw"><div class="il">Mã máy cụ thể</div><input class="fi" id="zkMay" value="${v('Mã máy phụ trách')}" placeholder="VD: NS250KVA19, NS100KVA07"></div>
-      </div>
-
-      <div style="margin:12px 0 6px;font-size:11px;color:var(--mu)"><b>NHẬN NHÓM CẢNH BÁO NÀO</b></div>
-      <div class="fgrid fg3">
-        <label class="iw" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="zkOverdue" ${!r||on('Nhận quá hạn')?'checked':''}> ⛔ Quá hạn bảo dưỡng</label>
-        <label class="iw" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="zkDueSoon" ${!r||on('Nhận sắp đến hạn')?'checked':''}> ⚠️ Sắp đến hạn</label>
-        <label class="iw" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="zkIneff" ${!r||on('Nhận không hiệu quả')?'checked':''}> 📉 Máy không hiệu quả</label>
-        <label class="iw" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="zkBad" ${on('Nhận kém hiệu quả')?'checked':''}> 📉 Máy kém hiệu quả</label>
-        <label class="iw" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="zkActive" ${on('Đang dùng')?'checked':''}> ✅ <b>Đang dùng</b> (bật thì mới thật sự gửi)</label>
-        <div class="iw"><div class="il">Ghi chú</div><input class="fi" id="zkNote" value="${v('Ghi chú')}"></div>
-      </div>
-
-      ${r && !r._paired ? `<div style="margin-top:12px;padding:10px 12px;background:#eff6ff;border-radius:8px;font-size:11px;line-height:1.7">
-        <b>Chưa ghép nối Zalo.</b> Nhờ ${esc(r['Họ tên'])} mở Zalo → tìm OA eGreen → <b>Quan tâm</b> →
-        nhắn đúng mã <code style="font-size:13px;letter-spacing:2px">${esc(r['Mã ghép nối'])}</code>.
-        Ghép xong hệ thống tự đổi mã mới, nên ảnh chụp màn hình cũ không dùng lại được.</div>` : ''}
     </div>
-    <div class="mf">
-      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
-      <button class="btn bg-g" onclick="zaloSaveKtv()">💾 Lưu</button>
-    </div>`);
+    <div class="cb">
+      ${tok.ok?'':`<div class="note err" style="margin-bottom:8px">${esc(tok.error||'Chưa lấy được token.')}</div>`}
+      <div class="grid4">
+        ${statBox_('Người trong danh bạ', db.tong||0)}
+        ${statBox_('Đã ghép Zalo', db.daGhep||0)}
+        ${statBox_('Đang bật nhận tin', db.dangBat||0)}
+        ${statBox_('Ngoài cửa sổ 7 ngày', db.ngoaiCuaSo||0, (db.ngoaiCuaSo?'am':''))}
+      </div>
+      <p class="muted" style="font-size:11px;margin:8px 0 0">
+        Zalo chỉ cho gửi tin tư vấn trong <b>7 ngày</b> kể từ tương tác cuối của người nhận,
+        <b>miễn phí trong 48 giờ đầu</b>. Người im lặng lâu hơn phải tự tương tác lại —
+        không ai làm hộ được, kể cả nâng gói OA. Kênh <b>nhóm Zalo</b> thì miễn phí và không có cửa sổ này.
+      </p>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+        <button class="btn bg-b sm" onclick="zaloOpenCfg()">⚙️ Cấu hình</button>
+        <button class="btn bg-b sm" onclick="zaloKiemTra()">🩺 Kiểm tra kết nối</button>
+        <button class="btn bg-gr sm" onclick="zaloSetupSheet()">Tạo/nâng cấp sheet 26–29</button>
+        <button class="btn bg-b sm" onclick="zaloPreview()">👁 Xem trước tin sẽ gửi</button>
+        <button class="btn bg-a sm" onclick="zaloSendNow()">📨 Gửi ngay</button>
+        <button class="btn bg-a sm" onclick="zaloLeoThang()" title="Quét phiếu quá 24h chưa phản hồi, nhắc lại và báo người phụ trách">⏰ Chạy leo thang</button>
+      </div>
+    </div></div>`;
+}
+function statBox_(label, val, cls){
+  return `<div class="sbox"><div class="sv ${cls||''}">${val}</div><div class="sl">${esc(label)}</div></div>`;
+}
+
+/* ---------------------------------------------------------------------------
+ *  KHỐI 2 — VIỆC ĐANG CHỜ NGƯỜI XỬ LÝ
+ *  Hai hàng chờ, đặt trên cùng và chỉ hiện khi CÓ việc. Hiện một khối rỗng mỗi
+ *  ngày là cách nhanh nhất khiến người ta ngừng nhìn vào chỗ đó.
+ * ------------------------------------------------------------------------- */
+function zaloViewChoViec_(){
+  const kc = (Z.phieu.rows||[]).filter(r => r['Kiểm chứng'] === 'Chờ CSKH kiểm chứng');
+  const gh = Z.cho.rows || [];
+  if (!kc.length && !gh.length) return '';
+
+  let h = '';
+  if (kc.length){
+    h += `<div class="card" style="border-left:3px solid var(--am)">
+      <div class="ch"><h3>📥 Phản hồi chờ CSKH kiểm chứng</h3>
+        <span class="b ba">${kc.length} phiếu</span></div>
+      <div class="cb">
+        <p class="muted" style="font-size:11px;margin:0 0 8px">
+          Đây là lời người vận hành báo lại, <b>chưa được xác minh</b>. Xác nhận rồi mới cập nhật mốc bảo dưỡng trên web.
+          Từ chối thì phiếu quay lại hàng chờ và hệ thống tự nhắn lại cho họ kèm lý do.</p>
+        <div class="tw"><table><thead><tr>
+          <th>Phiếu</th><th>Người báo</th><th>Máy</th><th>Họ báo gì</th><th>Lúc</th><th></th>
+        </tr></thead><tbody>
+        ${kc.map(r => `<tr>
+          <td><code>${esc(r['Mã phiếu'])}</code></td>
+          <td>${esc(r['Tên đích'])}</td>
+          <td>${esc(r['Mã máy']||'—')}</td>
+          <td style="max-width:340px">${esc(r['Nội dung phản hồi']||'')}</td>
+          <td class="muted" style="font-size:11px">${esc(r['Thời gian phản hồi']||'')}</td>
+          <td style="white-space:nowrap">
+            <button class="btn bg-g sm" onclick="zaloKiemChung('${esc(r['Mã phiếu'])}',true)">✓ Xác nhận</button>
+            <button class="btn bg-r sm" onclick="zaloKiemChung('${esc(r['Mã phiếu'])}',false)">✕ Từ chối</button>
+          </td></tr>`).join('')}
+        </tbody></table></div>
+      </div></div>`;
+  }
+
+  if (gh.length){
+    h += `<div class="card" style="border-left:3px solid var(--bl)">
+      <div class="ch"><h3>🔗 Người đã nhắn OA nhưng chưa nhận ra là ai</h3>
+        <span class="b bb">${gh.length} người</span></div>
+      <div class="cb">
+        <p class="muted" style="font-size:11px;margin:0 0 8px">
+          Hệ thống tự ghép được khi họ nhắn <b>số điện thoại</b> hoặc <b>mã mời</b>. Những người dưới đây
+          nhắn nội dung khác, hoặc số của họ chưa có trong danh bạ — chọn đúng người rồi bấm Ghép.</p>
+        <div class="tw"><table><thead><tr>
+          <th>Tên Zalo</th><th>Họ nhắn gì</th><th>Lúc</th><th>Ghép vào</th>
+        </tr></thead><tbody>
+        ${gh.map(r => `<tr>
+          <td>${esc(r.ten||'(không có tên)')}<div class="muted" style="font-size:10px">${esc(r.uidRutGon)}</div></td>
+          <td style="max-width:280px">${esc(r.tin||'')}</td>
+          <td class="muted" style="font-size:11px">${esc(r.luc||'')}</td>
+          <td><select id="gh-${esc(r.uid)}" class="inp sm" style="min-width:180px">
+                <option value="">— chọn người —</option>
+                ${(Z.list.rows||[]).filter(x=>!x['Zalo UID']).map(x =>
+                  `<option value="${esc(x['Số điện thoại'])}">${esc(x['Họ tên'])} · ${esc(x['Số điện thoại'])}</option>`).join('')}
+              </select>
+              <button class="btn bg-g sm" onclick="zaloGhepTay('${esc(r.uid)}')">Ghép</button></td>
+        </tr>`).join('')}
+        </tbody></table></div>
+      </div></div>`;
+  }
+  return h;
+}
+
+/* ---------------------------------------------------------------------------
+ *  KHỐI 2b — HIỆU QUẢ XỬ LÝ 30 NGÀY
+ *  Bốn cột vì mỗi cột hỏng một kiểu khác nhau. Người trả lời nhanh mà bị CSKH từ
+ *  chối nhiều thì cột đầu đẹp, cột cuối mới lộ ra vấn đề thật — nhìn một chỉ số
+ *  duy nhất luôn khuyến khích lách đúng chỉ số đó.
+ * ------------------------------------------------------------------------- */
+function zaloViewHieuQua_(){
+  const rows = (Z.hieuQua && Z.hieuQua.rows) || [];
+  if (!rows.length) return '';
+  const mauTiLe = t => t >= 80 ? 'bg' : (t >= 50 ? 'ba' : 'br');
+  return `<div class="card">
+    <div class="ch"><h3>📊 Hiệu quả xử lý · ${Z.hieuQua.soNgay||30} ngày</h3>
+      <span class="b bmu">${rows.length} người</span></div>
+    <div class="cb">
+      <p class="muted" style="font-size:11px;margin:0 0 8px">
+        Dựng tự động từ phiếu, không nhập tay. <b>Bị từ chối</b> là số lần báo xong nhưng CSKH kiểm chứng thấy chưa xong.</p>
+      <div class="tw"><table><thead><tr>
+        <th>Người</th><th>Phiếu nhận</th><th>Tỉ lệ phản hồi</th>
+        <th>Phản hồi sau (giờ)</th><th>Xong &amp; đã xác nhận</th><th>Quá hạn</th><th>Bị từ chối</th>
+      </tr></thead><tbody>
+      ${rows.map(r => `<tr>
+        <td>${esc(r.ten)}</td>
+        <td>${r.tong}</td>
+        <td><span class="b ${mauTiLe(r.tiLe)}">${r.tiLe}%</span> <span class="muted" style="font-size:10px">${r.traLoi}/${r.tong}</span></td>
+        <td>${r.gioTB===null?'<span class="muted">—</span>':r.gioTB}</td>
+        <td>${r.xong}</td>
+        <td>${r.quaHan?`<span class="b br">${r.quaHan}</span>`:'0'}</td>
+        <td>${r.tuChoi?`<span class="b ba">${r.tuChoi}</span>`:'0'}</td>
+      </tr>`).join('')}
+      </tbody></table></div>
+    </div></div>`;
+}
+
+/* ---------------------------------------------------------------------------
+ *  KHỐI 3 — DANH BẠ
+ *  Cột "Cửa sổ" là cột quan trọng nhất và cũng là cột người mới nhìn không hiểu,
+ *  nên mỗi ô đều có tooltip nói đúng nguyên nhân thay vì một chữ trạng thái cụt.
+ * ------------------------------------------------------------------------- */
+function zaloViewDanhBa_(){
+  const rows = Z.list.rows || [];
+  const cs = {}; (Z.cuaSo.rows||[]).forEach(x => { if (x.phone) cs[x.phone] = x; });
+  const nv = rows.filter(r => (r['Loại']||'') !== 'Vận hành');
+  const vh = rows.filter(r => (r['Loại']||'') === 'Vận hành');
+
+  const dong = r => {
+    const w = cs[r['Số điện thoại']] || null;
+    const badgeGhep = r['Zalo UID']
+      ? `<span class="b bg" title="${esc(r['Trạng thái ghép']||'')}">✓ đã ghép</span>`
+      : `<span class="b bmu" title="Mời họ quan tâm OA rồi nhắn SĐT, hoặc gửi mã mời ${esc(r['Mã mời']||'')}">chưa ghép</span>`;
+    let badgeCS = '<span class="b bmu">—</span>';
+    if (w) badgeCS = w.ma === 'MIEN_PHI' ? `<span class="b bg">miễn phí</span>`
+      : w.ma === 'CO_PHI'   ? `<span class="b ba" title="${esc(w.note)}">ngoài 48h</span>`
+      : w.ma === 'NGOAI_CUASO' ? `<span class="b br" title="${esc(w.note)}">ngoài 7 ngày</span>`
+      : `<span class="b bmu" title="${esc(w.note)}">chưa tương tác</span>`;
+    return `<tr>
+      <td>${esc(r['Họ tên'])}<div class="muted" style="font-size:10px">${esc(r['Số điện thoại'])}</div></td>
+      <td>${esc(r['Chức vụ']||'')}</td>
+      <td>${badgeGhep}</td>
+      <td>${badgeCS}<div class="muted" style="font-size:10px">${esc(r['Tương tác cuối']||'')}</div></td>
+      <td style="max-width:200px;font-size:11px">${esc([r['Khu vực phụ trách'],r['Đơn vị phụ trách'],r['Trại phụ trách'],r['Mã máy phụ trách']].filter(Boolean).join(' · ')||'— chưa khai, sẽ KHÔNG nhận gì —')}</td>
+      <td>${(r._duocNhan||[]).length?`<span class="b bb" title="Theo chức danh ${esc(r._role||'')}">${(r._duocNhan||[]).length} loại</span>`:'<span class="b bmu">—</span>'}</td>
+      <td><span class="b ${r['Đang dùng']==='TRUE'?'bg':'bmu'}">${r['Đang dùng']==='TRUE'?'bật':'tắt'}</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn bg-b sm" onclick="zaloOpenKtv('${esc(r['Số điện thoại'])}')">Sửa</button>
+        <button class="btn bg-a sm" onclick="zaloMaMoi('${esc(r['Số điện thoại'])}')" title="Cấp mã mời mới và gỡ ghép nối cũ">Mã mời</button>
+        <button class="btn bg-r sm" onclick="zaloDelKtv('${esc(r['Số điện thoại'])}','${esc(r['Họ tên'])}')">Xoá</button>
+      </td></tr>`;
+  };
+
+  const bang = (ds, tieuDe) => !ds.length ? '' : `
+    <h4 style="margin:12px 0 6px;font-size:12px">${tieuDe} <span class="muted">(${ds.length})</span></h4>
+    <div class="tw"><table><thead><tr>
+      <th>Người</th><th>Chức vụ</th><th>Ghép Zalo</th><th>Cửa sổ gửi</th>
+      <th>Phạm vi phụ trách</th><th>Được nhận</th><th>Nhận tin</th><th></th>
+    </tr></thead><tbody>${ds.map(dong).join('')}</tbody></table></div>`;
+
+  return `<div class="card">
+    <div class="ch"><h3>👥 Danh bạ Zalo</h3>
+      <button class="btn bg-g sm" onclick="zaloOpenKtv()">+ Thêm người</button></div>
+    <div class="cb">
+      <p class="muted" style="font-size:11px;margin:0">
+        Cách mời người mới: gửi link OA và nhắn họ <b>“Bấm Quan tâm rồi nhắn số điện thoại của mình vào đây”</b>.
+        Hệ thống tự ghép. Phạm vi phụ trách để trống thì người đó <b>không nhận gì cả</b> — cố ý như vậy.</p>
+      <div class="note" style="font-size:11px;margin:8px 0">
+        <b>Giai đoạn hiện tại: tin 1-1 chỉ gửi cho nhân sự công ty.</b>
+        Vận hành trại vẫn nhận cảnh báo — qua <b>nhóm Zalo của trại</b>, có tag đích danh người phụ trách khu vực.
+        Lý do: người chưa từng tương tác thì Zalo không cho gửi tin 1-1, người đã ghép mà im lặng quá 48 giờ thì mỗi tin là tiền.
+        Bật lại cho vận hành khi họ đã ghép nối đủ và quen trả lời.</div>
+      ${bang(nv, 'Nhân viên công ty')}
+      ${bang(vh, 'Vận hành trại')}
+    </div></div>`;
+}
+
+/* ---------------------------------------------------------------------------
+ *  KHỐI 4 — NHÓM ZALO
+ *  Đặt ngang hàng danh bạ vì đây mới là kênh chính khi có hàng trăm vận hành.
+ * ------------------------------------------------------------------------- */
+function zaloViewNhom_(){
+  const rows = Z.groups.rows || [];
+  return `<div class="card">
+    <div class="ch"><h3>💬 Nhóm Zalo nhận cảnh báo</h3>
+      <button class="btn bg-g sm" onclick="zaloOpenNhom()">+ Thêm nhóm</button></div>
+    <div class="cb">
+      <p class="muted" style="font-size:11px;margin:0 0 8px">
+        Tin gửi vào nhóm <b>miễn phí, 24/24, không bị cửa sổ 7 ngày</b> như tin 1-1 — nên với hàng trăm vận hành,
+        nhóm theo trại/khu vực là kênh chính. Điều kiện: OA đã được quản trị nhóm <b>thêm vào nhóm</b> và
+        <b>cho phép gửi tin</b>. Lấy <b>Group ID</b> từ payload webhook khi có người nhắn trong nhóm.</p>
+      ${!rows.length ? '<div class="muted">Chưa có nhóm nào.</div>' : `
+      <div class="tw"><table><thead><tr>
+        <th>Nhóm</th><th>Khoá</th><th>Group ID</th><th>Phạm vi</th><th>Trạng thái</th><th></th>
+      </tr></thead><tbody>
+      ${rows.map(r => `<tr>
+        <td>${esc(r['Tên nhóm'])}</td>
+        <td><code>${esc(r['Khoá nhóm'])}</code></td>
+        <td>${r['Group ID'] ? `<span class="b bg">✓ có</span>` : `<span class="b br" title="Chưa có Group ID thì nhóm này không gửi được">thiếu</span>`}</td>
+        <td style="font-size:11px">${esc([r['Khu vực phụ trách'],r['Trại phụ trách'],r['Mã máy phụ trách']].filter(Boolean).join(' · ')||'—')}</td>
+        <td><span class="b ${r['Đang dùng']==='TRUE'?'bg':'bmu'}">${r['Đang dùng']==='TRUE'?'bật':'tắt'}</span></td>
+        <td style="white-space:nowrap">
+          <button class="btn bg-b sm" onclick="zaloOpenNhom('${esc(r['Khoá nhóm'])}')">Sửa</button>
+          <button class="btn bg-r sm" onclick="zaloDelNhom('${esc(r['Khoá nhóm'])}','${esc(r['Tên nhóm'])}')">Xoá</button>
+        </td></tr>`).join('')}
+      </tbody></table></div>`}
+    </div></div>`;
+}
+
+/* ---------------------------------------------------------------------------
+ *  KHỐI 5 — PHIẾU 7 NGÀY GẦN NHẤT
+ * ------------------------------------------------------------------------- */
+function zaloViewPhieu_(){
+  const rows = (Z.phieu.rows || []).slice().reverse();
+  if (!rows.length) return '';
+  const mau = st => st === 'Xong' ? 'bg'
+    : st === 'Quá hạn — đã báo phụ trách' ? 'br'
+    : st === 'Đã gửi' ? 'bmu' : 'ba';
+  return `<div class="card">
+    <div class="ch"><h3>📋 Phiếu nhắc việc · 7 ngày gần nhất</h3>
+      <span class="b bmu">${rows.length} phiếu</span></div>
+    <div class="cb"><div class="tw"><table><thead><tr>
+      <th>Phiếu</th><th>Gửi lúc</th><th>Đích</th><th>Việc</th><th>Trạng thái</th>
+      <th>Phản hồi</th><th>Kiểm chứng</th><th>Nhắc</th>
+    </tr></thead><tbody>
+    ${rows.map(r => `<tr>
+      <td><code style="font-size:10px">${esc(r['Mã phiếu'])}</code></td>
+      <td class="muted" style="font-size:11px">${esc(r['Thời gian gửi'])}</td>
+      <td>${esc(r['Tên đích'])}<div class="muted" style="font-size:10px">${esc(r['Loại đích'])}</div></td>
+      <td style="font-size:11px">${esc(r['Nhóm việc']||'')}<div class="muted">${esc(r['Mã máy']||'')}</div></td>
+      <td><span class="b ${mau(r['Trạng thái'])}">${esc(r['Trạng thái'])}</span></td>
+      <td style="max-width:240px;font-size:11px">${esc(r['Nội dung phản hồi']||'—')}</td>
+      <td>${r['Kiểm chứng'] ? `<span class="b ${r['Kiểm chứng']==='CSKH đã xác nhận'?'bg':(r['Kiểm chứng']==='CSKH từ chối'?'br':'ba')}">${esc(r['Kiểm chứng'])}</span>` : '<span class="b bmu">—</span>'}
+          ${r['Người kiểm chứng']?`<div class="muted" style="font-size:10px">${esc(r['Người kiểm chứng'])}</div>`:''}</td>
+      <td>${esc(String(r['Số lần nhắc']||0))}${r['Đã báo phụ trách']==='TRUE'?' <span class="b ba" title="Đã báo người phụ trách">📣</span>':''}</td>
+    </tr>`).join('')}
+    </tbody></table></div></div></div>`;
+}
+
+/* ============================================================================
+ *  HÀNH ĐỘNG
+ * ==========================================================================*/
+async function zaloKiemChung(maPhieu, duyet){
+  let lyDo = '';
+  if (!duyet){
+    lyDo = prompt('Lý do từ chối (người vận hành sẽ nhận được nội dung này):', '');
+    if (lyDo === null) return;
+  } else if (!confirm('Xác nhận phản hồi của phiếu ' + maPhieu + ' là đúng?\n\nSau khi xác nhận, thông tin được phép cập nhật lên web.')) return;
+  const d = await apiPost({ action:'zaloKiemChung', payload:{ maPhieu, duyet, lyDo } });
+  if (!d || !d.ok){ toast((d && d.error) || 'Không kiểm chứng được','err'); return; }
+  toast(duyet ? '✓ Đã xác nhận' : '↩️ Đã từ chối và báo lại vận hành', 'ok');
+  ensureZalo_(true);
+}
+
+async function zaloGhepTay(uid){
+  const sel = document.getElementById('gh-' + uid);
+  const phone = sel && sel.value;
+  if (!phone){ toast('Chọn người cần ghép trước','err'); return; }
+  const d = await apiPost({ action:'zaloGhepTay', payload:{ uid, phone } });
+  if (!d || !d.ok){ toast((d && d.error) || 'Không ghép được','err'); return; }
+  toast('✓ Đã ghép cho ' + d.name, 'ok');
+  ensureZalo_(true);
+}
+
+async function zaloMaMoi(phone){
+  const d = await apiPost({ action:'zaloMaMoi', phone });
+  if (!d || !d.ok){ toast((d && d.error) || 'Không cấp được mã','err'); return; }
+  overlay(`<div class="ovc" style="max-width:420px"><div class="ovh"><h3>Mã mời mới</h3>
+    <button class="x" onclick="closeOv()">✕</button></div>
+    <div class="ovb"><div style="font-size:28px;font-weight:700;letter-spacing:4px;text-align:center;padding:12px 0">${esc(d.ma)}</div>
+    <p class="muted" style="font-size:12px">${esc(d.huongDan)}</p>
+    <p class="muted" style="font-size:11px">Ghép nối cũ đã được gỡ. Mã dùng một lần, ghép xong hệ thống tự đổi mã khác.</p>
+    </div></div>`);
+  ensureZalo_(true);
+}
+
+async function zaloLeoThang(){
+  if (!confirm('Quét các phiếu quá 24 giờ chưa phản hồi?\n\nHệ thống sẽ nhắc lại người vận hành (chỉ khi còn trong khung miễn phí) và báo người phụ trách.')) return;
+  const d = await apiPost({ action:'zaloLeoThangNgay' });
+  if (!d || !d.ok){ toast((d && d.error) || 'Không chạy được','err'); return; }
+  const k = d.ketQua || {};
+  toast(`Nhắc lại ${k.nhac||0} · báo phụ trách ${k.baoPhuTrach||0} · quá hạn ${k.quaHan||0}`, 'ok');
+  ensureZalo_(true);
+}
+
+async function zaloKiemTra(){
+  const d = await apiPost({ action:'zaloKiemTra' });
+  if (!d || !d.ok){ toast((d && d.error) || 'Không kiểm tra được','err'); return; }
+  overlay(`<div class="ovc" style="max-width:620px"><div class="ovh"><h3>🩺 Kiểm tra kết nối Zalo</h3>
+    <button class="x" onclick="closeOv()">✕</button></div>
+    <div class="ovb"><pre style="white-space:pre-wrap;font-size:12px;line-height:1.7">${esc((d.dong||[]).join('\n'))}</pre></div></div>`);
+}
+
+/* ---- Danh bạ ---- */
+function zaloOpenKtv(phone){
+  const r = phone ? (Z.list.rows||[]).find(x => x['Số điện thoại'] === phone) : null;
+  const v = k => r ? esc(r[k]||'') : '';
+  const ck = k => (r && r[k] === 'TRUE') ? 'checked' : (r ? '' : 'checked');
+  overlay(`<div class="ovc" style="max-width:640px"><div class="ovh">
+      <h3>${r?'Sửa':'Thêm'} người nhận cảnh báo</h3><button class="x" onclick="closeOv()">✕</button></div>
+    <div class="ovb">
+      <div class="grid2">
+        <label>Họ tên<input id="k-name" class="inp" value="${v('Họ tên')}"></label>
+        <label>Số điện thoại<input id="k-phone" class="inp" value="${v('Số điện thoại')}" ${r?'readonly':''}></label>
+        <label>Loại<select id="k-loai" class="inp">
+          <option value="Vận hành" ${r&&r['Loại']==='Vận hành'?'selected':''}>Vận hành trại</option>
+          <option value="Nhân viên" ${r&&r['Loại']==='Nhân viên'?'selected':''}>Nhân viên công ty</option>
+        </select></label>
+        <label>Chức vụ<input id="k-role" class="inp" value="${v('Chức vụ')}" placeholder="Vận hành / Kĩ thuật / CSKH"></label>
+        <label>Người phụ trách<input id="k-pt" class="inp" value="${v('Người phụ trách')}"
+          placeholder="SĐT hoặc họ tên KTV/CSKH"></label>
+        <label>Khu vực phụ trách<input id="k-khu" class="inp" value="${v('Khu vực phụ trách')}"></label>
+        <label>Đơn vị phụ trách<input id="k-dv" class="inp" value="${v('Đơn vị phụ trách')}"></label>
+        <label>Trại phụ trách<input id="k-trai" class="inp" value="${v('Trại phụ trách')}"></label>
+        <label>Mã máy phụ trách<input id="k-may" class="inp" value="${v('Mã máy phụ trách')}"></label>
+      </div>
+      <p class="muted" style="font-size:11px;margin:8px 0">
+        Để trống hết phạm vi = <b>không nhận gì cả</b>. Muốn nhận toàn bộ thì gõ đúng chữ <b>Tất cả</b> vào ô Khu vực.
+        Ô <b>Người phụ trách</b> là người sẽ được báo khi người này im lặng quá 24 giờ.</p>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin:6px 0">
+        <label><input type="checkbox" id="k-ov" ${ck('Nhận quá hạn')}> Quá hạn bảo dưỡng</label>
+        <label><input type="checkbox" id="k-ds" ${ck('Nhận sắp đến hạn')}> Sắp đến hạn</label>
+        <label><input type="checkbox" id="k-bad" ${ck('Nhận kém hiệu quả')}> Kém hiệu quả</label>
+        <label><input type="checkbox" id="k-inef" ${ck('Nhận không hiệu quả')}> Không hiệu quả</label>
+        <label><input type="checkbox" id="k-act" ${r&&r['Đang dùng']==='TRUE'?'checked':''}> <b>Đang dùng</b></label>
+      </div>
+      <label>Ghi chú<input id="k-note" class="inp" value="${v('Ghi chú')}"></label>
+      <div style="margin-top:12px"><button class="btn bg-g" onclick="zaloSaveKtv()">💾 Lưu</button></div>
+    </div></div>`);
 }
 
 async function zaloSaveKtv(){
-  const val = id => String(($(id)||{}).value || '').trim();
-  const chk = id => !!(($(id)||{}).checked);
+  const g = id => document.getElementById(id);
   const d = await apiPost({ action:'zaloSaveKtv', payload:{
-    name: val('zkName'), phone: val('zkPhone'), role: val('zkRole'),
-    khu: val('zkKhu'), donVi: val('zkDv'), trai: val('zkTrai'), may: val('zkMay'),
-    overdue: chk('zkOverdue'), dueSoon: chk('zkDueSoon'),
-    ineffective: chk('zkIneff'), bad: chk('zkBad'),
-    active: chk('zkActive'), note: val('zkNote'),
+    name:g('k-name').value, phone:g('k-phone').value, loai:g('k-loai').value,
+    role:g('k-role').value, phuTrach:g('k-pt').value,
+    khu:g('k-khu').value, donVi:g('k-dv').value, trai:g('k-trai').value, may:g('k-may').value,
+    overdue:g('k-ov').checked, dueSoon:g('k-ds').checked,
+    bad:g('k-bad').checked, ineffective:g('k-inef').checked,
+    active:g('k-act').checked, note:g('k-note').value,
   }});
-  if (!d || !d.ok){ toast((d&&d.error)||'Không lưu được','err'); return; }
-  closeOv();
-  toast(d.moi ? '✓ Đã thêm KTV' : '✓ Đã cập nhật KTV','ok');
-  await ensureZalo_(true);
+  if (!d || !d.ok){ toast((d && d.error) || 'Không lưu được','err'); return; }
+  closeOv(); toast('✓ Đã lưu','ok'); ensureZalo_(true);
 }
 
 async function zaloDelKtv(phone, name){
-  if (!confirm(`Xoá ${name} (${phone}) khỏi danh sách nhận cảnh báo Zalo?`)) return;
+  if (!confirm('Xoá ' + name + ' khỏi danh bạ Zalo?')) return;
   const d = await apiPost({ action:'zaloDeleteKtv', phone });
-  if (!d || !d.ok){ toast((d&&d.error)||'Không xoá được','err'); return; }
-  toast('✓ Đã xoá','ok');
-  await ensureZalo_(true);
+  if (!d || !d.ok){ toast((d && d.error) || 'Không xoá được','err'); return; }
+  toast('✓ Đã xoá','ok'); ensureZalo_(true);
 }
 
-async function zaloNewCode(phone){
-  if (!confirm('Cấp mã ghép nối mới?\n\nGhép nối Zalo hiện tại của người này sẽ bị gỡ — họ phải nhắn mã mới cho OA thì mới nhận tin lại được.')) return;
-  const d = await apiPost({ action:'zaloNewCode', phone });
-  if (!d || !d.ok){ toast((d&&d.error)||'Không cấp được mã','err'); return; }
-  alert('Mã ghép nối mới: ' + d.code + '\n\n' + d.huongDan);
-  await ensureZalo_(true);
+/* ---- Nhóm ---- */
+function zaloOpenNhom(key){
+  const r = key ? (Z.groups.rows||[]).find(x => x['Khoá nhóm'] === key) : null;
+  const v = k => r ? esc(r[k]||'') : '';
+  const ck = k => (r && r[k] === 'TRUE') ? 'checked' : (r ? '' : 'checked');
+  overlay(`<div class="ovc" style="max-width:640px"><div class="ovh">
+      <h3>${r?'Sửa':'Thêm'} nhóm Zalo</h3><button class="x" onclick="closeOv()">✕</button></div>
+    <div class="ovb">
+      <div class="grid2">
+        <label>Tên nhóm<input id="g-name" class="inp" value="${v('Tên nhóm')}"></label>
+        <label>Khoá nhóm<input id="g-key" class="inp" value="${v('Khoá nhóm')}" ${r?'readonly':''}
+          placeholder="BAODUONG_MIENBAC"></label>
+        <label>Group ID<input id="g-gid" class="inp" value="${v('Group ID')}"
+          placeholder="lấy từ webhook khi có người nhắn trong nhóm"></label>
+        <label>Khu vực<input id="g-khu" class="inp" value="${v('Khu vực phụ trách')}"></label>
+        <label>Đơn vị<input id="g-dv" class="inp" value="${v('Đơn vị phụ trách')}"></label>
+        <label>Trại<input id="g-trai" class="inp" value="${v('Trại phụ trách')}"></label>
+        <label>Mã máy<input id="g-may" class="inp" value="${v('Mã máy phụ trách')}"></label>
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin:8px 0">
+        <label><input type="checkbox" id="g-ov" ${ck('Nhận quá hạn')}> Quá hạn</label>
+        <label><input type="checkbox" id="g-ds" ${ck('Nhận sắp đến hạn')}> Sắp đến hạn</label>
+        <label><input type="checkbox" id="g-bad" ${ck('Nhận kém hiệu quả')}> Kém hiệu quả</label>
+        <label><input type="checkbox" id="g-inef" ${ck('Nhận không hiệu quả')}> Không hiệu quả</label>
+        <label><input type="checkbox" id="g-act" ${r&&r['Đang dùng']==='TRUE'?'checked':''}> <b>Đang dùng</b></label>
+      </div>
+      <label>Ghi chú<input id="g-note" class="inp" value="${v('Ghi chú')}"></label>
+      <div style="margin-top:12px"><button class="btn bg-g" onclick="zaloSaveNhom()">💾 Lưu</button></div>
+    </div></div>`);
 }
 
-/* ---------- Xem trước & gửi ---------- */
+async function zaloSaveNhom(){
+  const g = id => document.getElementById(id);
+  const d = await apiPost({ action:'zaloSaveGroup', payload:{
+    name:g('g-name').value, groupKey:g('g-key').value, groupId:g('g-gid').value,
+    khu:g('g-khu').value, donVi:g('g-dv').value, trai:g('g-trai').value, may:g('g-may').value,
+    overdue:g('g-ov').checked, dueSoon:g('g-ds').checked,
+    bad:g('g-bad').checked, ineffective:g('g-inef').checked,
+    active:g('g-act').checked, note:g('g-note').value,
+  }});
+  if (!d || !d.ok){ toast((d && d.error) || 'Không lưu được','err'); return; }
+  closeOv();
+  toast(d.luuY ? d.luuY : '✓ Đã lưu nhóm', d.luuY ? 'err' : 'ok');
+  ensureZalo_(true);
+}
+
+async function zaloDelNhom(key, name){
+  if (!confirm('Xoá nhóm ' + name + '?')) return;
+  const d = await apiPost({ action:'zaloDeleteGroup', groupKey:key });
+  if (!d || !d.ok){ toast((d && d.error) || 'Không xoá được','err'); return; }
+  toast('✓ Đã xoá','ok'); ensureZalo_(true);
+}
+
+/* ---- Xem trước & gửi ---- */
 async function zaloPreview(){
   const d = await apiPost({ action:'zaloPreview' });
-  if (!d || !d.ok){ toast((d&&d.error)||'Không dựng được bản xem trước','err'); return; }
+  if (!d || !d.ok){ toast((d && d.error) || 'Không xem trước được','err'); return; }
   const list = d.nguoiNhan || [];
-  openOv(`
-    <div class="mh"><div><h2>👁 Xem trước — ${list.length} người sẽ nhận tin</h2>
-      <p>Bản dựng thử · chưa gọi API Zalo · chưa tốn tiền</p></div>
-      <button class="mcl" onclick="closeOv()">✕</button></div>
-    <div class="mb" style="font-size:11px">
-      <div style="padding:10px 12px;background:#f8fafc;border-radius:8px;margin-bottom:12px;line-height:1.7">
-        Tổng việc đang chờ: ⛔ ${d.tong.overdue} quá hạn · ⚠️ ${d.tong.dueSoon} sắp hạn ·
-        📉 ${d.tong.ineffective} không hiệu quả · 📉 ${d.tong.bad} kém hiệu quả.<br>
-        <b>Chưa gửi gì cả</b> — đây chỉ là bản dựng thử, không gọi API Zalo, không tốn tiền.
-        ${d.zbsSanSang ? '' : '<br><span style="color:var(--amb)"><b>Chưa cấu hình mẫu ZBS</b> — người chưa ghép nối Zalo sẽ KHÔNG nhận được tin.</span>'}
+  const t = d.tong || {};
+  const guiDuoc = list.filter(x => x.sanSang);
+  overlay(`<div class="ovc" style="max-width:860px"><div class="ovh">
+      <h3>👁 Xem trước — ${list.length} đích, gửi được ${guiDuoc.length}</h3>
+      <button class="x" onclick="closeOv()">✕</button></div>
+    <div class="ovb">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+        <span class="b br">Quá hạn ${t.overdue||0}</span>
+        <span class="b ba">Sắp đến hạn ${t.dueSoon||0}</span>
+        <span class="b ba">Không hiệu quả ${t.ineffective||0}</span>
+        <span class="b bmu">Kém hiệu quả ${t.bad||0}</span>
       </div>
-      ${list.length ? list.map(m => `
-        <div style="border:1px solid var(--bd);border-radius:8px;margin-bottom:10px;overflow:hidden">
-          <div style="padding:8px 12px;background:#f8fafc;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <b>${esc(m.name)}</b> <span style="color:var(--mu)">${esc(m.phone)}</span>
-            <span class="b ${m.channel==='uid'?'bg':(m.channel==='phone-zbs'?'ba':'br')}">${
-              m.channel==='uid' ? 'UID · miễn phí'
-              : (m.channel==='phone-zbs' ? 'SĐT · ZBS (tính phí)'
-              : 'chưa ghép nối · KHÔNG GỬI ĐƯỢC'+(m.pairCode?' · mã '+esc(m.pairCode):''))}</span>
-            <span class="b bmu">${m.count} việc</span>
-          </div>
-          <pre style="margin:0;padding:10px 12px;white-space:pre-wrap;font-family:var(--font);font-size:11px;line-height:1.6">${esc(m.text)}</pre>
-        </div>`).join('')
-        : '<div class="empty">Không có ai nhận tin: hoặc không còn việc nào cần nhắc, hoặc chưa ai được bật "Đang dùng" kèm phạm vi phụ trách.</div>'}
-    </div>
-    <div class="mf">
-      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
-      ${list.length?`<button class="btn bg-a" onclick="closeOv();zaloSendNow()">📨 Gửi thật ${list.length} tin</button>`:''}
-    </div>`);
+      ${!list.length ? '<div class="muted">Không có việc nào cần nhắc.</div>' : list.map(x => `
+        <div class="card" style="margin-bottom:8px">
+          <div class="ch"><h4 style="font-size:12px;margin:0">
+              ${x.kind==='group'?'💬':'👤'} ${esc(x.name)} · ${x.count} việc</h4>
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              ${x.loai?`<span class="b bmu">${esc(x.loai)}</span>`:''}
+              ${x.tinhPhi?'<span class="b ba" title="Ngoài khung 48 giờ">tính phí</span>':''}
+              <span class="b ${x.sanSang?'bg':'br'}">${x.sanSang?'gửi được':'không gửi'}</span>
+            </div></div>
+          <div class="cb">
+            ${x.canhBao?`<div class="note err" style="font-size:11px;margin-bottom:6px">${esc(x.canhBao)}</div>`:''}
+            ${(x.tags&&x.tags.length)?`<div class="muted" style="font-size:11px;margin-bottom:6px">Sẽ tag: ${x.tags.map(t=>'@'+esc(t)).join(', ')}</div>`:''}
+            <pre style="white-space:pre-wrap;font-size:11px;line-height:1.55;margin:0">${esc(x.text)}</pre>
+          </div></div>`).join('')}
+      ${guiDuoc.length?`<button class="btn bg-a" onclick="closeOv();zaloSendNow()">📨 Gửi thật ${guiDuoc.length} tin</button>`:''}
+    </div></div>`);
 }
 
 async function zaloSendNow(){
-  if (!confirm('GỬI THẬT tin nhắn Zalo cho KTV ngay bây giờ?\n\n'
-    + 'Tin đã gửi không thu hồi được. Tin gửi theo số điện thoại (mẫu ZBS) sẽ tính phí.\n'
-    + 'Nên bấm "Xem trước" trước khi gửi.')) return;
+  if (!confirm('Gửi cảnh báo Zalo ngay bây giờ?\n\nTin đã gửi không thu hồi được.')) return;
   const d = await apiPost({ action:'zaloSend', payload:{} });
-  if (!d || !d.ok){ toast((d&&d.error)||'Không gửi được','err'); return; }
-  const fail = (d.results||[]).filter(r=>r.ok===false);
-  openOv(`
-    <div class="mh"><div><h2>📨 Kết quả gửi</h2><p>Chi tiết đã ghi vào sheet 27</p></div>
-      <button class="mcl" onclick="closeOv()">✕</button></div>
-    <div class="mb" style="font-size:11px">
-      <div style="padding:10px 12px;border-radius:8px;background:${fail.length?'#fffbeb':'#f0fdf4'};margin-bottom:10px;line-height:1.7">
-        Đã gửi <b>${d.sent}</b>/${d.recipients} người${d.skipped?` · bỏ qua ${d.skipped} người (vừa gửi cách đây chưa lâu)`:''}${fail.length?` · <b style="color:var(--red)">lỗi ${fail.length}</b>`:''}.
-        Toàn bộ đã ghi vào sheet <b>"27. Nhật ký gửi Zalo"</b>.
+  if (!d || !d.ok){ toast((d && d.error) || 'Không gửi được','err'); return; }
+  toast(`Đã gửi ${d.sent||0}/${d.recipients||0} · lỗi ${d.failed||0} · bỏ qua ${d.skipped||0}`,'ok');
+  ensureZalo_(true);
+}
+
+/* ---- Cấu hình ---- */
+function zaloOpenCfg(){
+  const c = Z.cfg || {};
+  const own = c.vaiTroApp === 'OWN_APP';
+  overlay(`<div class="ovc" style="max-width:640px"><div class="ovh">
+      <h3>⚙️ Cấu hình Zalo OA</h3><button class="x" onclick="closeOv()">✕</button></div>
+    <div class="ovb">
+      <div class="note" style="font-size:11px;margin-bottom:10px">
+        <b>Vai trò App quyết định mọi thứ.</b><br>
+        · <b>App riêng</b>: hệ thống tự làm mới token, webhook trỏ thẳng vào web app này.
+          Zalo chấm công không liên quan gì.<br>
+        · <b>Dùng chung App</b>: hệ thống <b>không</b> tự làm mới token (nếu làm mới sẽ giết phiên
+          của Zalo chấm công — refresh token của Zalo xoay vòng). Phải dán access token thủ công,
+          token sống ~1 giờ. Chỉ hợp để chạy thử.
       </div>
-      <div class="tw"><table class="t"><thead><tr><th>Người nhận</th><th>Kênh</th><th>Số việc</th><th>Kết quả</th></tr></thead><tbody>
-        ${(d.results||[]).map(r=>`<tr><td>${esc(r.name||'')}<br><span style="color:var(--mu)">${esc(r.phone||'')}</span></td>
-          <td>${esc(r.channel||'—')}</td><td>${r.count||'—'}</td>
-          <td>${r.skipped ? '<span class="b bmu">'+esc(r.skipped)+'</span>'
-                : (r.ok ? '<span class="b bg">đã gửi</span>' : '<span class="b br">'+esc(r.error||'lỗi')+'</span>')}</td></tr>`).join('')}
-      </tbody></table></div>
-    </div>
-    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`);
-  await ensureZalo_(true);
-}
-
-/* LẤY TOKEN NGAY TRÊN WEB — hai bước, không phải mở Apps Script editor.
- * Nút "Chạy" của editor không truyền được tham số, nên chạy zaloTaoLinkUyQuyen() từ đó
- * luôn báo thiếu redirectUri. Bắt người dùng sửa tham số trong file nguồn mỗi lần lấy
- * token là một cái bẫy chứ không phải một quy trình. */
-function zaloOpenAuth(){
-  const mac = location.origin + location.pathname;
-  openOv(`
-    <div class="mh"><div><h2>🔑 Lấy token từ OA</h2><p>Hai bước · làm một lần · hệ thống tự làm mới về sau</p></div>
-      <button class="mcl" onclick="closeOv()">✕</button></div>
-    <div class="mb" style="font-size:11px;line-height:1.75">
-      <div style="padding:10px 12px;background:#fffbeb;border-radius:8px;margin-bottom:12px">
-        <b>Trước khi bắt đầu:</b> vào <b>developers.zalo.me → app → Cài đặt</b>, ô <b>Miền ứng dụng</b>
-        phải chứa địa chỉ dưới đây. Sai một ký tự là Zalo từ chối mà không nói vì sao.
+      <label>Vai trò App<select id="c-role" class="inp">
+        <option value="SHARED_APP" ${own?'':'selected'}>Dùng chung App với Zalo chấm công (an toàn, không tự refresh)</option>
+        <option value="OWN_APP" ${own?'selected':''}>App Zalo riêng cho hệ thống này (khuyên dùng)</option>
+      </select></label>
+      <div class="grid2" style="margin-top:8px">
+        <label>App ID<input id="c-appid" class="inp" placeholder="chỉ cần khi dùng App riêng"></label>
+        <label>App Secret<input id="c-secret" class="inp" type="password" placeholder="chỉ cần khi dùng App riêng"></label>
       </div>
-      <div class="iw" style="margin-bottom:12px"><div class="il">Địa chỉ nhận code (redirect URI)</div>
-        <input class="fi" id="zaRedir" value="${esc(mac)}"></div>
-
-      <b>Bước 1</b> — bấm nút dưới để tạo link, rồi mở link đó bằng tài khoản Zalo
-      <b>đang là quản trị viên của OA</b> và bấm Đồng ý.
-      <div style="margin:8px 0"><button class="btn bg-g sm" onclick="zaloAuthLink()">Tạo link ủy quyền</button></div>
-      <div id="zaLinkBox"></div>
-
-      <div style="margin-top:14px"><b>Bước 2</b> — sau khi bấm Đồng ý, trình duyệt quay về trang này và
-      trên thanh địa chỉ có <code>?code=…</code>. Copy đúng phần sau <code>code=</code> rồi dán vào đây.
-      <b style="color:var(--red)">Làm ngay</b> — code chỉ sống vài chục giây.</div>
-      <div class="iw" style="margin-top:8px"><div class="il">Code</div>
-        <input class="fi" id="zaCode" placeholder="dán code vào đây"></div>
-      <div id="zaResult" style="margin-top:10px"></div>
-    </div>
-    <div class="mf">
-      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
-      <button class="btn bg-g" onclick="zaloAuthCode()">✓ Đổi code lấy token</button>
-    </div>`);
+      <label style="display:block;margin-top:8px">Access token
+        <input id="c-at" class="inp" placeholder="dán khi dùng chung App"></label>
+      <label style="display:block;margin-top:8px">Refresh token
+        <input id="c-rt" class="inp" placeholder="chỉ dán khi dùng App riêng"></label>
+      <label style="display:block;margin-top:10px">
+        <input type="checkbox" id="c-en" ${c.batGui?'checked':''}> <b>Bật gửi tin Zalo</b>
+        <span class="muted" style="font-size:11px">— tắt cái này là công tắc tổng, mọi luồng gửi dừng ngay</span></label>
+      <p class="muted" style="font-size:11px;margin-top:10px">
+        Giá trị đã lưu không được hiển thị lại, kể cả dạng che bớt. Bỏ trống ô nào thì giữ nguyên ô đó.</p>
+      <div style="margin-top:12px"><button class="btn bg-g" onclick="zaloSaveCfg()">💾 Lưu</button></div>
+    </div></div>`);
 }
 
-async function zaloAuthLink(){
-  const uri = String(($('zaRedir')||{}).value||'').trim();
-  const d = await apiPost({ action:'zaloAuthLink', payload:{ redirectUri: uri } });
-  const box = $('zaLinkBox'); if (!box) return;
-  if (!d || !d.ok){ box.innerHTML = `<div style="color:var(--red)">${esc((d&&d.error)||'Không tạo được link')}</div>`; return; }
-  box.innerHTML = `<a href="${esc(d.url)}" target="_blank" rel="noopener"
-      style="display:inline-block;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;color:var(--bl);font-weight:700;word-break:break-all">
-      ↗ Mở link ủy quyền OA</a>
-    <div style="margin-top:6px;color:var(--mu);word-break:break-all;font-size:10px">${esc(d.url)}</div>`;
-}
-
-async function zaloAuthCode(){
-  const code = String(($('zaCode')||{}).value||'').trim();
-  if (!code){ toast('Chưa dán code','err'); return; }
-  const d = await apiPost({ action:'zaloAuthCode', payload:{ code } });
-  const box = $('zaResult');
-  if (!d || !d.ok){
-    if (box) box.innerHTML = `<div style="padding:10px;background:#fef2f2;border-radius:8px;color:#7f1d1d;line-height:1.7">${esc((d&&d.error)||'Đổi code thất bại')}</div>`;
-    return;
-  }
-  const cd = d.chanDoan || {};
-  if (box) box.innerHTML = `<div style="padding:10px;background:#f0fdf4;border-radius:8px;color:#14532d;line-height:1.7">
-    <b>${esc(cd.ketLuan || d.msg)}</b></div>`;
-  toast('✓ Đã lấy được token','ok');
-  await ensureZalo_(true);
-}
-
-/* Zalo trả đúng một câu "Access token is invalid" cho ít nhất bốn nguyên nhân khác nhau
- * và không nói là nguyên nhân nào. Hàm này bắt server thử lần lượt từng khả năng rồi
- * nói ra cái nào đúng — thay vì để người dùng ngồi đoán giữa "dán sai token", "token hết
- * hạn", "token của app cũ" và "chưa được duyệt quyền". */
-async function zaloClearToken(){
-  if (!confirm('Xoá access token và refresh token đang lưu?\n\nApp ID và App Secret giữ nguyên. Sau đó phải lấy token mới.')) return;
-  const d = await apiPost({ action:'zaloClearToken' });
-  if (!d || !d.ok){ toast((d&&d.error)||'Không xoá được','err'); return; }
-  closeOv(); toast(d.msg,'ok'); await ensureZalo_(true);
-}
-
-async function zaloDiagToken(){
-  const d = await apiPost({ action:'zaloDiagToken' });
-  if (!d || !d.ok){ toast((d&&d.error)||'Không chẩn đoán được','err'); return; }
-  const good = /BÌNH THƯỜNG|ĐÃ SỬA XONG/.test(d.ketLuan||'');
-  const chk = (b,t) => `<div style="padding:2px 0">${b?'✅':'❌'} ${t}</div>`;
-  openOv(`
-    <div class="mh"><div><h2>🩺 Kiểm tra kết nối Zalo OA</h2><p>Thử từng khả năng để biết hỏng ở đâu</p></div>
-      <button class="mcl" onclick="closeOv()">✕</button></div>
-    <div class="mb" style="font-size:11px">
-      <div style="padding:12px;border-radius:8px;background:${good?'#f0fdf4':'#fef2f2'};margin-bottom:12px;line-height:1.7">
-        <b style="color:${good?'var(--g)':'var(--red)'}">${esc(d.ketLuan||'')}</b>
-        ${d.viecCanLam?`<br><br><b>Việc cần làm:</b> ${esc(d.viecCanLam)}`:''}
-      </div>
-      <h4 style="margin:0 0 6px">Cấu hình đang lưu</h4>
-      ${chk(d.coAppId,'App ID'+(d.appId?' — '+esc(d.appId):''))}
-      ${chk(d.coSecret,'App Secret')}
-      ${chk(d.coAccessToken,'Access token'+(d.accessToken?' — '+esc(d.accessToken):'')+(d.doDaiAccess?` · ${d.doDaiAccess} ký tự`:'')+(d.tuoiTokenPhut!=null?` · lưu cách đây ${d.tuoiTokenPhut} phút`:''))}
-      ${chk(d.coRefreshToken,'Refresh token'+(d.doDaiRefresh?` · ${d.doDaiRefresh} ký tự`:'')+' — thiếu cái này thì 1 giờ nữa là chết')}
-      <h4 style="margin:12px 0 6px">Các bước đã thử</h4>
-      <div style="font-family:monospace;font-size:11px;line-height:1.8;background:#f8fafc;padding:10px;border-radius:8px">
-        ${(d.buoc||[]).map(x=>esc(x)).join('<br>')}
-      </div>
-    </div>
-    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button>
-      ${good?`<button class="btn bg-g" onclick="closeOv();zaloScanFollowers(true)">🔗 Quét người quan tâm ngay</button>`
-            :`<button class="btn bg-r" onclick="zaloClearToken()">🧹 Xoá token đang lưu, làm lại từ đầu</button>`}</div>`);
-  await ensureZalo_(true);
-}
-
-/* GHÉP NỐI KHÔNG CẦN WEBHOOK.
- * Webhook của Zalo đòi URL nằm trên domain đã xác thực quyền sở hữu; Web App của Apps
- * Script chạy trên script.google.com nên không xác thực được. Đường vòng: KTV bấm
- * "Quan tâm" OA, rồi Admin quét danh sách người quan tâm và khớp theo tên.
- * Luôn XEM TRƯỚC rồi mới ghi — điền nhầm UID nghĩa là cảnh báo của trại này chạy sang
- * điện thoại người khác, và không có gì báo cho ai biết. */
-async function zaloScanFollowers(chiXem){
-  const d = await apiPost({ action:'zaloScanFollowers', payload:{ chiXem: !!chiXem } });
-  if (!d || !d.ok){ toast((d&&d.error)||'Không quét được','err'); return; }
-  const tbl = (arr, cols) => `<div class="tw"><table class="t"><thead><tr>${cols.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead>
-    <tbody>${arr.map(x=>`<tr>${cols.map(c=>`<td>${esc(String(x[c[1]]==null?'':x[c[1]]))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
-  openOv(`
-    <div class="mh"><div><h2>🔗 Người đang quan tâm OA</h2>
-      <p>${d.chiXem?'Bản xem trước — chưa ghi gì vào Sheet 26':'Đã ghi UID vào Sheet 26'}</p></div>
-      <button class="mcl" onclick="closeOv()">✕</button></div>
-    <div class="mb" style="font-size:11px">
-      <div style="padding:10px 12px;background:#f8fafc;border-radius:8px;margin-bottom:12px;line-height:1.7">
-        ${d.tongNguoiQuanTam} người đang quan tâm OA ·
-        <b style="color:var(--g)">${d.daGhep.length} khớp tên duy nhất</b>${d.moGho.length?` · <b style="color:var(--amb)">${d.moGho.length} trùng tên</b>`:''}${d.chuaKhop.length?` · ${d.chuaKhop.length} chưa khớp`:''}
-      </div>
-      ${d.daGhep.length?`<h4 style="margin:0 0 6px">Khớp được</h4>${tbl(d.daGhep,[['Tên Zalo','ten'],['Dòng KTV','ktv'],['SĐT','sdt'],['UID','uid']])}`:''}
-      ${d.moGho.length?`<h4 style="margin:12px 0 6px">Trùng tên — KHÔNG tự ghép, phải dán UID bằng tay</h4>${tbl(d.moGho,[['Tên Zalo','ten'],['UID','uid'],['Số dòng trùng','soDongTrung']])}`:''}
-      ${d.chuaKhop.length?`<h4 style="margin:12px 0 6px">Chưa khớp dòng nào</h4>
-        <div style="color:var(--mu);margin-bottom:6px;line-height:1.6">${esc(d.huongDan)}</div>${tbl(d.chuaKhop,[['Tên Zalo','ten'],['UID','uid']])}`:''}
-      ${!d.tongNguoiQuanTam?'<div class="empty">Chưa có ai quan tâm OA. Nhờ KTV mở Zalo, tìm OA của công ty và bấm Quan tâm trước.</div>':''}
-    </div>
-    <div class="mf">
-      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
-      ${d.chiXem && d.daGhep.length?`<button class="btn bg-g" onclick="closeOv();zaloScanFollowers(false)">💾 Ghi ${d.daGhep.length} UID vào Sheet 26</button>`:''}
-    </div>`);
-  if (!chiXem) await ensureZalo_(true);
+async function zaloSaveCfg(){
+  const g = id => document.getElementById(id).value;
+  const d = await apiPost({ action:'zaloConfig', payload:{
+    appRole:g('c-role'), appId:g('c-appid'), appSecret:g('c-secret'),
+    accessToken:g('c-at'), refreshToken:g('c-rt'),
+    enabled:document.getElementById('c-en').checked,
+  }});
+  if (!d || !d.ok){ toast((d && d.error) || 'Không lưu được','err'); return; }
+  closeOv(); toast('✓ ' + (d.msg||'Đã lưu'),'ok'); ensureZalo_(true);
 }
 
 async function zaloSetupSheet(){
   const d = await apiPost({ action:'zaloSetup' });
-  if (!d || !d.ok){ toast((d&&d.error)||'Không tạo được sheet','err'); return; }
-  toast(d.msg || 'Đã tạo sheet','ok');
-  await ensureZalo_(true);
-}
-
-/* ---------- Cấu hình Zalo OA ----------
- * Chỉ GỬI LÊN, không bao giờ tải xuống: server trả về bản che (4 ký tự đầu/cuối).
- * Token OA mà hiện nguyên văn trên một trang web đang mở giữa văn phòng thì coi như
- * không còn là bí mật nữa. */
-function zaloOpenCfg(){
-  const c = Z.cfg || {};
-  openOv(`
-    <div class="mh"><div><h2>⚙️ Cấu hình Zalo OA</h2><p>Ô để trống = giữ nguyên giá trị cũ</p></div>
-      <button class="mcl" onclick="closeOv()">✕</button></div>
-    <div class="mb" style="font-size:11px">
-      <div style="padding:10px 12px;background:#f8fafc;border-radius:8px;margin-bottom:12px;line-height:1.7">
-        Lấy các thông tin này ở <b>developers.zalo.me</b> (ứng dụng đã gắn với OA của công ty).
-        Ô nào để trống thì <b>giữ nguyên giá trị cũ</b> — không bị xoá.<br>
-        Access token của Zalo OA hết hạn sau ~1 giờ; hệ thống tự làm mới bằng refresh token,
-        nên phải điền cả hai thì mới chạy được lâu dài.<br>
-        Hiện tại: App ID ${esc(c.appId||'chưa có')} · access token ${c.coToken?'đã có':'CHƯA CÓ'}.
-      </div>
-      <div class="fgrid fg3">
-        <div class="iw"><div class="il">App ID</div><input class="fi" id="zcApp" placeholder="để trống = giữ nguyên"></div>
-        <div class="iw"><div class="il">App Secret</div><input class="fi" type="password" id="zcSecret" placeholder="để trống = giữ nguyên"></div>
-        <div class="iw full"><div class="il">⚡ Dán nguyên kết quả từ API Explorer (nhanh nhất)</div>
-          <textarea class="fi" id="zcPaste" rows="3" placeholder='Dán cả cục JSON: {"access_token":"...","refresh_token":"...","expires_in":"..."} — hệ thống tự bóc ra'></textarea></div>
-        <div class="iw"><div class="il">Access token (nếu dán tay)</div><input class="fi" type="password" id="zcAccess" placeholder="để trống = giữ nguyên"></div>
-        <div class="iw"><div class="il">Refresh token (nếu dán tay)</div><input class="fi" type="password" id="zcRefresh" placeholder="để trống = giữ nguyên"></div>
-        <div class="iw"><div class="il">ID mẫu ZBS (gửi theo SĐT · tính phí)</div>
-          <input class="fi" id="zcTpl" value="${esc(c.templateId||'')}" placeholder="Bỏ trống nếu chỉ gửi cho người đã ghép nối"></div>
-        <label class="iw" style="flex-direction:row;align-items:center;gap:8px">
-          <input type="checkbox" id="zcEnabled" ${c.batGui!==false?'checked':''}> Cho phép gửi tin (tắt = khoá toàn bộ, kể cả trigger)</label>
-      </div>
-      <div style="margin-top:12px;padding:10px 12px;background:#fffbeb;border-radius:8px;line-height:1.7">
-        <b>Webhook để ghép nối tự động:</b> vào Zalo Developers → OA của công ty → Webhook,
-        điền đúng URL Web App của hệ thống này và bật hai sự kiện
-        <code>user_send_text</code> và <code>follow</code>. Không bật webhook thì vẫn dùng được,
-        chỉ là phải dán UID vào Sheet 26 bằng tay.
-      </div>
-    </div>
-    <div class="mf">
-      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
-      <button class="btn bg-g" onclick="zaloSaveCfg()">💾 Lưu cấu hình</button>
-    </div>`);
-}
-
-async function zaloSaveCfg(){
-  const val = id => String(($(id)||{}).value || '').trim();
-  const payload = { enabled: !!(($('zcEnabled')||{}).checked), templateId: val('zcTpl') };
-  if (val('zcApp')) payload.appId = val('zcApp');
-  if (val('zcSecret')) payload.appSecret = val('zcSecret');
-  if (val('zcPaste')) payload.paste = val('zcPaste');
-  if (val('zcAccess')) payload.accessToken = val('zcAccess');
-  if (val('zcRefresh')) payload.refreshToken = val('zcRefresh');
-  const d = await apiPost({ action:'zaloConfig', payload });
-  if (!d || !d.ok){ toast((d&&d.error)||'Không lưu được cấu hình','err'); return; }
-  closeOv();
-  toast(d.msg||'Đã lưu cấu hình Zalo','ok');
-  await ensureZalo_(true);
-  /* Lưu xong kiểm tra luôn: token sai thì phải biết NGAY lúc còn nhớ mình vừa dán gì,
-   * chứ không phải sáng mai khi tin không gửi được. */
-  await zaloDiagToken();
+  if (!d || !d.ok){ toast((d && d.error) || 'Không tạo được sheet','err'); return; }
+  toast(d.msg || 'Đã tạo sheet','ok'); ensureZalo_(true);
 }
 
 function roleBadge_(role){
