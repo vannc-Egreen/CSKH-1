@@ -6182,6 +6182,57 @@ function fmt2_(v, dash){
  * Dựng mô hình dữ liệu Sheet 9: danh sách tháng (đã sắp xếp theo thời gian) + từng máy.
  * Trả về { months, machines, hasData } — mọi hàm khác trên trang đều dùng lại kết quả này.
  */
+/* ============================================================================
+ *  NGUỒN DỰ PHÒNG CHO KHỐI THÁNG — TÍNH LẠI TỪ SHEET 5 NGAY TRÊN TRÌNH DUYỆT
+ * ----------------------------------------------------------------------------
+ *  VÌ SAO CẦN: trang Tổng kết hiệu quả tháng đọc SỐ ĐÃ CHỐT ở Sheet 9, còn trang
+ *  Phân tích cộng THẲNG từ Sheet 5. Hai đường đi khác nhau nên khi Sheet 9 chứa một
+ *  con số rác, hai trang nói hai chuyện về cùng một dữ liệu — đúng sự cố 09/2026:
+ *  Phân tích 2.005,77 h còn Tổng kết tháng 1.774.249.200.091,89 h.
+ *
+ *  Nay ô nào của Sheet 9 KHÔNG QUA ĐƯỢC kiểm tra hợp lý sẽ được thay bằng tổng tính
+ *  lại từ Sheet 5 — dùng đúng getDailyColSplitForMonth_ mà trang Phân tích đang dùng,
+ *  nên hai trang chắc chắn ra cùng một số. Sheet 9 vẫn giữ nguyên số rác cho tới khi
+ *  Admin bấm "Dọn ô hỏng & tính lại"; web chỉ NGỪNG HIỂN THỊ nó, không tự sửa sheet.
+ *
+ *  CHỈ ÁP DỤNG CHO THÁNG HIỆN TẠI: Sheet 5 luôn bị ghi đè bằng dữ liệu tháng đang
+ *  chạy, nên tháng cũ không còn nguồn nào để dựng lại — có sửa cũng là bịa.
+ * ========================================================================== */
+const MONTHLY_FALLBACK_MAX_H_DAY  = 24;
+const MONTHLY_FALLBACK_MAX_KWH_DAY = 2500;
+function monthlyFallbackFromSheet5_(){
+  const eff = S.efficiency || { headers:[], rows:[] };
+  const H = (eff.headers || []).filter(Boolean);
+  const out = { label: currentMonthLabel_(), byCode: {} };
+  if (!H.length || !eff.rows || !eff.rows.length) return out;
+
+  const hMa = findHeader(H, 'mã.?máy','ma may','^ma$');
+  const { powerCols, hoursCols } = getDailyColSplitForMonth_(H, getDaysInCurrentMonth_());
+  const upTo = maxValidDayOfMonth_();
+
+  const cong = (row, cols, cap) => {
+    let sum = 0;
+    for (let i = 0; i < Math.min(cols.length, upTo); i++){
+      const v = numOrNull_(row[cols[i].header]);
+      /* Cùng ba cửa với _dayVal5_ bên Code.gs: bỏ ô âm và ô vượt trần một ngày.
+       * numOrNull_ đã loại ô trống và ô không phải số. */
+      if (v == null || v < 0 || v > cap) continue;
+      sum += v;
+    }
+    return Math.round(sum * 100) / 100;
+  };
+
+  eff.rows.forEach(row => {
+    const code = String((hMa ? row[hMa] : '') || row._byLetter?.B || '').trim();
+    if (!code) return;
+    out.byCode[code.toUpperCase()] = {
+      power: cong(row, powerCols, MONTHLY_FALLBACK_MAX_KWH_DAY),
+      hours: cong(row, hoursCols, MONTHLY_FALLBACK_MAX_H_DAY),
+    };
+  });
+  return out;
+}
+
 function buildMonthlyModel_(){
   const H = (S.monthly.headers||[]).filter(Boolean);
   if (!H.length) return { months:[], machines:[], hasData:false };
@@ -6201,6 +6252,10 @@ function buildMonthlyModel_(){
   const months = Object.keys(mMap).map(k=>mMap[k]).sort((a,b)=>a.sortKey-b.sortKey);
 
   const masterByCode = new Map(S.master.rows.map(r => [String(r._byLetter.B||'').trim(), r]));
+  /* Tính một lần cho cả bảng, không tính lại trong từng dòng máy: 79 máy × 62 cột
+   * mà lặp trong vòng lặp thì mỗi lần render trang lại quét Sheet 5 gần 5 nghìn ô. */
+  let fb = { label:'', byCode:{} };
+  try { fb = monthlyFallbackFromSheet5_(); } catch(e){ /* thiếu Sheet 5 thì thôi, không chặn trang */ }
 
   const machines = (S.monthly.rows||[]).map(row => {
     const code = String((hMa ? row[hMa] : '') || row._byLetter?.B || '').trim();
@@ -6218,12 +6273,25 @@ function buildMonthlyModel_(){
        * thẻ cảnh báo còn nói được "máy nào, đang ghi bao nhiêu".
        * (Sự cố 09/2026: một ô Date bị cộng như số → 1.774.249.200.971,82 h.) */
       const hoursBad = hoursRaw != null && hoursRaw > MONTHLY_MAX_H_PER_DAY * monthDaysElapsed_(mo.label);
-      const hours = hoursBad ? null : hoursRaw;
-      const avgKw = (power!=null && hours!=null && hours>0) ? Math.round(power/hours*100)/100 : null;
+
+      /* THAY SỐ HỎNG BẰNG SỐ TÍNH LẠI TỪ SHEET 5 (chỉ tháng hiện tại — xem chú thích
+       * ở monthlyFallbackFromSheet5_). Trước đây ô hỏng bị đổi thành null, nên trang
+       * hiện chữ "Số liệu hỏng" trong khi trang Phân tích vẫn có số đúng nằm sẵn đó.
+       * Người dùng nhìn hai màn hình rồi phải tự đoán tin bên nào — nay không phải đoán. */
+      const fbRow = (mo.label === fb.label) ? fb.byCode[String(code).toUpperCase()] : null;
+      const hoursFixed = hoursBad && fbRow && fbRow.hours != null;
+      const hours = hoursFixed ? fbRow.hours : (hoursBad ? null : hoursRaw);
+
+      const powerBad = power != null && power > MONTHLY_MAX_KWH_PER_DAY * monthDaysElapsed_(mo.label);
+      const powerFixed = powerBad && fbRow && fbRow.power != null;
+      const powerUse = powerFixed ? fbRow.power : (powerBad ? null : power);
+
+      const avgKw = (powerUse!=null && hours!=null && hours>0) ? Math.round(powerUse/hours*100)/100 : null;
       // Độ lệch lấy Chỉ số công tơ làm mốc so sánh (đây là số đo thực tế tại hiện trường)
-      const devPct = (power!=null && meter!=null && meter>0)
-        ? Math.round((power-meter)/meter*10000)/100 : null;
-      byMonth[mo.label] = { power, meter, hours, hoursRaw, hoursBad, avgKw, devPct,
+      const devPct = (powerUse!=null && meter!=null && meter>0)
+        ? Math.round((powerUse-meter)/meter*10000)/100 : null;
+      byMonth[mo.label] = { power: powerUse, powerRaw: power, powerBad, powerFixed,
+        meter, hours, hoursRaw, hoursBad, hoursFixed, avgKw, devPct,
         mismatch: devPct!=null && Math.abs(devPct) > METER_TOLERANCE_PCT };
     });
     return {
@@ -6349,6 +6417,10 @@ function computeMonthlyTrend_(months, machines, totals){
  *  Nguyên tắc: thà không có số còn hơn có một con số sai mà mọi người tin.
  * ============================================================ */
 const MONTHLY_MAX_H_PER_DAY = 24;
+/* Trần sản lượng một ngày của MỘT tổ máy. Cùng con số với DAY_MAX_KWH bên Code.gs và
+ * ANOMALY_CFG.MAX_KWH_PER_DAY — ba chỗ phải bằng nhau, nếu không thì cùng một ô sẽ
+ * lúc bị coi là rác lúc được coi là số đo tuỳ trang nào đang mở. */
+const MONTHLY_MAX_KWH_PER_DAY = 2500;
 
 /** Số ngày ĐÃ TRÔI QUA của tháng `label` — tháng quá khứ thì lấy trọn tháng. */
 function monthDaysElapsed_(label){
@@ -6364,22 +6436,33 @@ function monthDaysElapsed_(label){
 function monthlyHoursSanity_(label, machines){
   const cap = MONTHLY_MAX_H_PER_DAY * monthDaysElapsed_(label);
   const bad = machines.filter(m => (m.byMonth[label] || {}).hoursBad)
-                      .map(m => ({ code: m.code, hours: (m.byMonth[label]||{}).hoursRaw }));
+                      .map(m => ({ code: m.code,
+                                   hours: (m.byMonth[label]||{}).hoursRaw,
+                                   fixed: (m.byMonth[label]||{}).hoursFixed ? (m.byMonth[label]||{}).hours : null }));
   bad.sort((a,b) => b.hours - a.hours);
-  return { cap, bad };
+  /* Đã thay được hết bằng số tính lại từ Sheet 5 hay chưa — quyết định giọng của thẻ
+   * cảnh báo: "số đang hiện đã đúng, còn sheet thì chưa" khác hẳn "không có số". */
+  const daThay = bad.filter(b => b.fixed != null).length;
+  return { cap, bad, daThay, conThieu: bad.length - daThay };
 }
 
 function monthlyBadHoursCardHtml_(label, sanity){
   if (!sanity.bad.length) return '';
-  const list = sanity.bad.slice(0,8).map(b => `<b>${esc(b.code)}</b> (${nfd_(b.hours)} h)`).join(' · ');
+  const list = sanity.bad.slice(0,8).map(b => `<b>${esc(b.code)}</b> (Sheet 9 ghi ${nfd_(b.hours)} h`
+      + (b.fixed != null ? ` → đang hiện ${nfd_(b.fixed)} h` : '') + ')').join(' · ');
   const canFix = !!(S.perm && S.perm.admin);
+  const daThay = sanity.daThay || 0;
   return `
     <div class="card" style="background:#fef2f2;border-left:4px solid var(--red)">
       <div style="padding:14px 16px;font-size:11px;color:#7f1d1d;line-height:1.75">
-        <b>SỐ GIỜ BẤT KHẢ THI — ${sanity.bad.length} máy.</b>
+        <b>SỐ GIỜ BẤT KHẢ THI TRONG SHEET 9 — ${sanity.bad.length} máy.</b>
         Một máy không thể chạy quá ${MONTHLY_MAX_H_PER_DAY} h/ngày, tức tối đa
-        <b>${nfd_(sanity.cap,0)} h</b> tính đến hôm nay. Các con số dưới đây đã bị loại khỏi
-        mọi phép tính trên trang này (tổng giờ, công suất phát TB, giờ chạy TB/máy/ngày):<br>
+        <b>${nfd_(sanity.cap,0)} h</b> tính đến hôm nay.<br>
+        ${daThay ? `<b>Con số đang hiện trên trang này đã được tính lại từ Sheet 5</b> cho ${daThay}/${sanity.bad.length} máy —
+          đúng bằng con số trang <b>Phân tích</b> đang dùng, nên hai trang không còn lệch nhau.
+          Nhưng <b>Sheet 9 vẫn đang lưu số hỏng</b>: mọi báo cáo đọc thẳng từ Google Sheet vẫn sai
+          cho tới khi dọn.` : `Các con số này đã bị loại khỏi mọi phép tính trên trang, và Sheet 5 cũng
+          không đủ dữ liệu để tính lại (tháng cũ đã bị ghi đè).`}<br>
         ${list}${sanity.bad.length>8?' … ':''}<br><br>
         Nguyên nhân đã biết: một ô kiểu <b>ngày/giờ</b> lọt vào dải cột ngày của Sheet 5 và bị
         cộng như số. Bấm <b>Chẩn đoán</b> để biết đúng ô nào, máy nào, cột nào.
@@ -6497,9 +6580,10 @@ function monthlySectionHtml_(){
       </div>
       <div class="cb"><div class="effstats">
         <div class="es"><div class="esl">Tổng công suất</div><div class="esv">${fmt2_(selTotal.power)} <span style="font-size:9px;color:var(--mu);font-weight:500">kWh</span></div></div>
-        <div class="es"><div class="esl">Tổng số giờ</div><div class="esv${sanity.bad.length?' bad':''}">${sanity.bad.length
-            ? `<span style="color:var(--red)">Số liệu hỏng</span> <span style="font-size:9px;color:var(--mu);font-weight:500">${sanity.bad.length} máy vượt trần ${nfd_(sanity.cap,0)} h</span>`
-            : `${fmt2_(selTotal.hours)} <span style="font-size:9px;color:var(--mu);font-weight:500">h</span>`}</div></div>
+        <div class="es"><div class="esl">Tổng số giờ</div><div class="esv${(sanity.conThieu||0)?' bad':''}">${
+          (sanity.conThieu||0)
+            ? `<span style="color:var(--red)">Số liệu hỏng</span> <span style="font-size:9px;color:var(--mu);font-weight:500">${sanity.conThieu} máy vượt trần ${nfd_(sanity.cap,0)} h, không tính lại được</span>`
+            : `${fmt2_(selTotal.hours)} <span style="font-size:9px;color:var(--mu);font-weight:500">h${sanity.daThay?` · đã tính lại từ Sheet 5 cho ${sanity.daThay} máy`:''}</span>`}</div></div>
         <div class="es"><div class="esl">Công suất phát TB</div><div class="esv ok">${selTotal.avgKw!=null?fmt2_(selTotal.avgKw):'—'} <span style="font-size:9px;color:var(--mu);font-weight:500">kW = tổng CS ÷ tổng giờ</span></div></div>
         <div class="es"><div class="esl">Giờ chạy TB 1 máy/ngày</div><div class="esv">${monthlyHrPerMachineDay_(selTotal, machines.length, sel, new Set(machines.map(x=>x.code)))}</div></div>
         <div class="es"><div class="esl">Tổng chỉ số công tơ</div><div class="esv">${fmt2_(selTotal.meter)} <span style="font-size:9px;color:var(--mu);font-weight:500">${selTotal.nMeter||0} máy đã nhập</span></div></div>
