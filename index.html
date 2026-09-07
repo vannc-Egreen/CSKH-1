@@ -580,7 +580,7 @@ const S = {
      *   status      : multi-select PHÂN LOẠI hiệu quả — 'ineffective' | 'bad' | 'ok' | 'over'
      *                 Mặc định chỉ hiện 2 nhóm có vấn đề (giữ nguyên hành vi cũ của trang);
      *                 bấm thêm chip để xem máy chạy ổn định / vượt thiết kế. */
-    eff:{ region:new Set(), type:new Set(), status:new Set(['ineffective','bad']) },
+    eff:{ region:new Set(), type:new Set(), status:new Set(['ineffective','bad']), streakOnly:false },
     /* Trang Phân tích — MẶC ĐỊNH lọc sẵn 2 loại hình Thuê + Hợp tác.
      * Đây là tập máy eGreen thực sự chịu trách nhiệm vận hành; máy "Bán" đã bàn giao cho
      * khách nên đưa vào cùng biểu đồ sẽ kéo lệch mọi số trung bình. Người dùng vẫn bỏ hoặc
@@ -853,9 +853,44 @@ function computeClientAlerts(){
 }
 
 /* Gán vào S.alerts — luôn overwrite bằng dữ liệu client tính (bảo dưỡng + bất thường dữ liệu) */
+/* ============================================================================
+ *  MÁY KÉM/KHÔNG HIỆU QUẢ NHIỀU NGÀY LIÊN TIẾP → VIỆC PHẢI ĐI KIỂM TRA
+ * ----------------------------------------------------------------------------
+ *  Một ngày tụt là chuyện của vận hành (nhu cầu huy động, khí yếu, mất tải).
+ *  Từ STREAK_ALERT_DAYS ngày liên tiếp trở lên thì không còn giải thích được bằng
+ *  nhu cầu nữa — đó là việc của kỹ thuật. Nên nó rời trang thống kê, sang nằm chung
+ *  danh sách với quá hạn bảo dưỡng, và chỉ những máy này mới được nhắn Zalo cho KTV.
+ * ========================================================================== */
+function computeEffStreakAlerts_(){
+  let list = [];
+  try { list = computeEfficiencyAll_(S.master.rows); } catch(e){ return []; }
+  return list.filter(x => x.needCheck).map(x => {
+    const r = x.row;
+    const site = `${r._byLetter[COL.DONVI]||''} · ${r._byLetter[COL.TRAI]||''}`.replace(/^\s*·\s*/,'').trim();
+    const nang = x.streakKinds.indexOf('ineffective') >= 0;
+    const chiTiet = x.dayEvals.slice(-x.streak).map(d =>
+        `ngày ${d.day}: CS ${d.pctKw==null?'—':Math.round(d.pctKw)+'%'} · giờ ${d.pctHr==null?'—':Math.round(d.pctHr)+'%'}`
+      ).join(' | ');
+    return {
+      type:'eff-streak', kind:'efficiency', maCode:x.code,
+      region: regionOf(r), site,
+      operator: String(r._byLetter[COL.VH]||'').trim(),
+      phone:    String(r._byLetter[COL.SDT]||'').trim(),
+      field: nang ? 'Không hiệu quả kéo dài' : 'Kém hiệu quả kéo dài',
+      message: `${x.streak} ngày liên tiếp dưới mức (${chiTiet}) — thiết kế ${nfd_(x.designKw)} kWh / ${nfd_(x.designHr)} h mỗi ngày`,
+      severity: nang ? 'high' : 'med',
+      row: x.effRow ? x.effRow._row : null,
+      streak: x.streak,
+      /* remain âm dần theo độ dài chuỗi để mọi chỗ sắp xếp tăng dần theo remain đều
+       * đẩy máy hỏng lâu nhất lên trên — cùng quy ước với cảnh báo quá hạn. */
+      remain: -x.streak
+    };
+  });
+}
+
 function refreshAlerts(){
-  const alerts = computeClientAlerts().concat(computeDataAnomalies());
-  const rank = a => a.type==='overdue'?0:(a.type==='oil-high'?1:(a.type==='data-anomaly'?2:3));
+  const alerts = computeClientAlerts().concat(computeDataAnomalies()).concat(computeEffStreakAlerts_());
+  const rank = a => a.type==='overdue'?0:(a.type==='eff-streak'?1:(a.type==='oil-high'?2:(a.type==='data-anomaly'?3:4)));
   alerts.sort((a,b)=> rank(a)-rank(b) || (a.remain||0)-(b.remain||0));
   S.alerts = {
     alerts,
@@ -2116,7 +2151,7 @@ function afterDash(){
   const prov = cnt(COL.TINH);
   chartBar('chP3', Object.fromEntries(Object.entries(prov).sort((a,b)=>b[1]-a[1]).slice(0,15)));
   const at = S.alerts.alerts.reduce((o,a)=>{
-    const lbl = a.type==='overdue'?'Quá hạn':(a.type==='oil-high'?'Hao nhớt':(a.type==='data-anomaly'?'Dữ liệu bất thường':'Sắp đến hạn'));
+    const lbl = a.type==='overdue'?'Quá hạn':(a.type==='oil-high'?'Hao nhớt':(a.type==='data-anomaly'?'Dữ liệu bất thường':(a.type==='eff-streak'?'Kém hiệu quả kéo dài':'Sắp đến hạn')));
     o[lbl]=(o[lbl]||0)+1;return o;
   },{});
   chartDoughnut('chP4', at);
@@ -2141,6 +2176,7 @@ function alertFieldKey_(a){
   if (a.bdMa) return String(a.bdMa);
   if (a.type === 'oil-high') return '__OIL__';
   if (a.type === 'data-anomaly') return null;
+  if (a.type === 'eff-streak') return null;   // không thuộc hạng mục bảo dưỡng nào
   const f = String(a.field||'');
   if (/hoàn nguyên|hạt lọc/i.test(f)) return '__HATLOC__';
   const hit = BD.items().find(it => it.ten && it.ten.toLowerCase() === f.toLowerCase());
@@ -2198,7 +2234,7 @@ function viewAlerts(){
     `<button class="fchip ${on?'on':''}" ${title?`title="${esc(title)}"`:''}
        ${dim&&!on?'style="opacity:.45"':''} onclick="${onclick}">${esc(label)}${cnt!=null?` (${nint_(cnt)})`:''}</button>`;
 
-  const TYPES = [['overdue','Quá hạn'],['due-soon','Sắp đến hạn'],['oil-high','Hao nhớt'],['data-anomaly','Dữ liệu bất thường']];
+  const TYPES = [['overdue','Quá hạn'],['due-soon','Sắp đến hạn'],['eff-streak','Kém hiệu quả kéo dài'],['oil-high','Hao nhớt'],['data-anomaly','Dữ liệu bất thường']];
   /* Ô đã xác nhận KHÔNG còn được đếm là cảnh báo, nhưng phải vào tra cứu được —
    * nếu chip về 0 mà không nói gì thì người dùng tưởng dữ liệu biến mất. */
   const nOkAll = ((Q.anomalyOk && Q.anomalyOk.keys) || []).length;
@@ -2498,6 +2534,8 @@ function machineAlertCard(group){
   if (kinds.has('tracking')) actions.push(
     `<button class="btn bg-g sm" onclick="openTrackingEdit(${a.row})">✎ Cập nhật số giờ đã làm</button>`);
   if (kinds.has('efficiency')) actions.push(`<button class="btn bg-b sm" onclick="openEfficiencyEditByCode('${esc(a.maCode)}')">✎ Sửa dữ liệu ngày</button>`);
+  if (items.some(i => i.type === 'eff-streak')) actions.push(
+    `<button class="btn bg-gr sm" onclick="navEfficiencyToCode('${esc(a.maCode)}')">📈 Xem chấm điểm từng ngày</button>`);
   return `
     <div class="alist ${hasHigh?'high':''}" style="align-items:stretch">
       <div class="aico">${hasHigh?'⚠️':'⏰'}</div>
@@ -2514,6 +2552,7 @@ function machineAlertCard(group){
             const tag = it.type==='overdue'?'<span class="b br">Quá hạn</span>'
                      : it.type==='oil-high'?'<span class="b bb">Hao nhớt</span>'
                      : it.type==='data-anomaly'?'<span class="b br">Dữ liệu bất thường</span>'
+                     : it.type==='eff-streak'?`<span class="b ${it.severity==='high'?'br':'ba'}">Kém hiệu quả ${it.streak||0} ngày</span>`
                      : '<span class="b ba">Sắp đến hạn</span>';
             return `<div class="amsg" style="line-height:1.5">
               ${tag} <b>${esc(normField(it.field))}</b> — ${esc(it.message)}
@@ -4403,11 +4442,13 @@ function viewTracking(){
       ${t('sheet','📋 Bảng theo dõi · Sheet 2','Bảng ngang mỗi máy 1 dòng, giống hệt Google Sheet')}
       ${t('counter','⏱ Bộ đếm theo giờ','Thẻ từng máy có thanh tiến độ % chu kỳ · cùng số liệu với bảng Sheet 2')}
       ${t('history','📜 Lịch sử bảo dưỡng','Mỗi lần đổi mốc là 1 dòng: ai làm, khi nào, lúc đó máy ở trại nào')}
+      ${t('kpi','🎯 Hiệu quả BDSC','Chấm điểm đội theo dõi vận hành: cảnh báo được đóng bao nhiêu %, và xử lý khi đã quá bao nhiêu % chu kỳ')}
     </div>`;
   /* Bộ đếm nay đọc S.tracking + S.spec (bootstrap chính), không đọc module vật tư
    * nữa — nên tab này không còn hỏng khi QLVT.gs chưa cài / chưa deploy. */
   if (tab === 'counter') return tabs + viewBdCounter();
   if (tab === 'history') return tabs + viewBdHistory();
+  if (tab === 'kpi')     return tabs + viewBdKpi();
   return tabs + viewTrackingSheet();
 }
 
@@ -4993,8 +5034,13 @@ function computeEfficiencyPageList_(filteredMasterRows){
   return filteredMasterRows.map(r => byCode.get(String(r._byLetter.B||'').trim()) || null)
     .filter(Boolean)
     .filter(x => !sSet.size || sSet.has(x.effStatus))
-    // Nặng nhất lên đầu: không hiệu quả → kém hiệu quả → ổn định → vượt thiết kế
-    .sort((a,b) => EFF_STATUS_KEYS.indexOf(a.effStatus) - EFF_STATUS_KEYS.indexOf(b.effStatus)
+    .filter(x => !S.filters.eff.streakOnly || x.needCheck)
+    /* Nặng nhất lên đầu: máy đang trong diện phải kiểm tra (chuỗi ≥ STREAK_ALERT_DAYS
+     * ngày) luôn đứng trước, rồi mới tới phân loại của ngày mới nhất. Chuỗi dài hơn
+     * đứng trước chuỗi ngắn hơn — đó mới là thứ tự đi hiện trường. */
+    .sort((a,b) => (b.needCheck?1:0) - (a.needCheck?1:0)
+                || (b.streak||0) - (a.streak||0)
+                || EFF_STATUS_KEYS.indexOf(a.effStatus) - EFF_STATUS_KEYS.indexOf(b.effStatus)
                 || ((a.pctKw ?? 999) - (b.pctKw ?? 999)));
 }
 
@@ -5020,6 +5066,8 @@ function viewEfficiency(){
   const nBad = countBy('bad');
   const nOk = countBy('ok');
   const nOver = countBy('over');
+  const nStreak = allEval.filter(x => x.needCheck).length;
+  const evalDay = (allEval.find(x => x.evalDay != null) || {}).evalDay;
 
   const allMachineCards = computeEfficiencyPageList_(filtered);
 
@@ -5042,8 +5090,13 @@ function viewEfficiency(){
       <p>${base.length} máy đủ điều kiện · ${filtered.length} máy sau lọc khu vực/loại hình · đang hiện ${allMachineCards.length} thẻ ·
         <span style="color:var(--red);font-weight:700">${nIneffective} không hiệu quả</span> (giờ hoặc CS &lt; ${SEVERE_THRESHOLD_PCT}%, hoặc đủ giờ mà CS &lt; ${BAD_THRESHOLD_PCT}%) ·
         <span style="color:var(--amb);font-weight:700">${nBad} kém hiệu quả</span> (giờ chạy và công suất cùng &lt; ${BAD_THRESHOLD_PCT}%) ·
-        <span style="color:var(--g);font-weight:700">${nOk + nOver} ổn định trở lên</span> ·
-        đánh giá theo TB ${RECENT_DAYS_FOR_EVAL} ngày gần nhất · biểu đồ vẫn hiện đủ cả tháng</p>
+        <span style="color:var(--g);font-weight:700">${nOk + nOver} ổn định trở lên</span>
+        <br><span style="font-size:11px">Chấm điểm <b>theo từng ngày</b>, ngày nào tính ngày đó —
+        kết luận trên thẻ là của <b>ngày ${evalDay != null ? evalDay : '—'}</b> (ngày gần nhất đã chốt số liệu);
+        bảng trong thẻ so ngày với ngày trong ${EVAL_WINDOW_DAYS} ngày gần nhất.
+        Máy giữ nguyên tình trạng kém/không hiệu quả từ <b>${STREAK_ALERT_DAYS} ngày liên tiếp</b> trở lên
+        vào diện <b>phải kiểm tra</b> và được nhắn Zalo cho KTV phụ trách —
+        hiện có <b style="color:var(--red)">${nStreak} máy</b>.</span></p>
     </div>
 
     <div class="msf" style="flex-direction:column;align-items:stretch;gap:10px">
@@ -5053,6 +5106,9 @@ function viewEfficiency(){
         ${sChip('bad', nBad)}
         ${sChip('ok', nOk)}
         ${sChip('over', nOver)}
+        <button class="fchip ${S.filters.eff.streakOnly?'on':''}" style="margin-left:14px"
+          title="Chỉ hiện máy giữ nguyên tình trạng kém/không hiệu quả từ ${STREAK_ALERT_DAYS} ngày liên tiếp trở lên — đây là danh sách đi kiểm tra"
+          onclick="toggleEffStreakOnly()">🔔 Cần kiểm tra (≥${STREAK_ALERT_DAYS} ngày) · ${nStreak}</button>
       </div>
       <div class="msg">
         <span class="mslbl">Khu vực</span>
@@ -5095,12 +5151,20 @@ function toggleEffStatus(key){
   if (set.has(key)) set.delete(key); else set.add(key);
   renderPage('efficiency');
 }
+function toggleEffStreakOnly(){
+  S.filters.eff.streakOnly = !S.filters.eff.streakOnly;
+  /* Bật "cần kiểm tra" thì mở luôn cả 4 phân loại: máy đang trong chuỗi hỏng có thể
+   * vừa có một ngày ngoi lên 'ok', mà đó chính là máy cần nhìn kỹ nhất. */
+  if (S.filters.eff.streakOnly) S.filters.eff.status = new Set(EFF_STATUS_KEYS);
+  renderPage('efficiency');
+}
 function clearEffFilters(){
   S.filters.eff.region.clear();
   S.filters.eff.type.clear();
   // Trả bộ lọc phân loại về mặc định (2 nhóm có vấn đề) chứ không xoá trắng —
   // xoá trắng sẽ đổ ra toàn bộ máy kèm biểu đồ, nặng và không phải ý người dùng khi bấm "Bỏ lọc".
   S.filters.eff.status = new Set(['ineffective','bad']);
+  S.filters.eff.streakOnly = false;
   renderPage('efficiency');
 }
 
@@ -5739,28 +5803,73 @@ function recentWindowAvg_(arr, anchorDay, n){
   if (!days.length) return { avg: null, n: 0 };
   return { avg: days.reduce((a,d)=>a+d.val,0) / days.length, n: days.length };
 }
-const RECENT_DAYS_FOR_EVAL = 3;     // đánh giá hiệu quả chỉ dựa vào N ngày gần nhất, không phải cả tháng
-const BAD_THRESHOLD_PCT    = 80;    // TB N ngày đạt < 80% thiết kế → coi là thấp
-const SEVERE_THRESHOLD_PCT = 50;    // TB N ngày đạt < 50% → "Không hiệu quả" ngay, bất kể chỉ số kia
+/* CỬA SỔ ĐÁNH GIÁ — bản 09/2026 bỏ trung bình 3 ngày, chấm điểm TỪNG NGÀY.
+ *   EVAL_WINDOW_DAYS  : số ngày gần nhất được chấm điểm và bày ra để so ngày với ngày.
+ *   STREAK_ALERT_DAYS : giữ nguyên tình trạng kém/không hiệu quả bao nhiêu ngày LIÊN TIẾP
+ *                       thì thôi là con số thống kê, thành việc phải đi kiểm tra (và mới
+ *                       được phép nhắn Zalo cho KTV). PHẢI khớp Z_STREAK_DAYS bên ZALO.gs.
+ *   RECENT_DAYS_FOR_EVAL : giữ tên cũ cho các chỗ còn tham chiếu, nay chỉ còn là số ngày
+ *                       hiển thị mặc định — KHÔNG còn tham gia vào việc phân loại. */
+const EVAL_WINDOW_DAYS     = 7;
+const STREAK_ALERT_DAYS    = 2;
+const RECENT_DAYS_FOR_EVAL = 3;
+const BAD_THRESHOLD_PCT    = 80;    // ngày đạt < 80% thiết kế → coi là thấp
+const SEVERE_THRESHOLD_PCT = 50;    // ngày đạt < 50% → "Không hiệu quả" ngay, bất kể chỉ số kia
+
+/**
+ * CHẤM ĐIỂM ĐÚNG MỘT NGÀY — trả về 'ineffective' | 'bad' | 'over' | 'ok' | 'nodata'.
+ * Bộ luật giữ nguyên như bản đánh giá theo trung bình trước đây, chỉ đổi đầu vào từ
+ * "trung bình 3 ngày" thành "chính ngày đó":
+ *    · công suất phát là tiêu chí quyết định, giờ chạy chỉ dùng phân nặng/nhẹ
+ *    · CS < 50% hoặc giờ < 50%   → Không hiệu quả (tụt quá nửa thiết kế)
+ *    · CS < 80% và giờ ≥ 80%     → Không hiệu quả (chạy đủ giờ mà không ra điện → nghi hỏng)
+ *    · CS < 80% và giờ < 80%     → Kém hiệu quả  (ít được huy động)
+ *    · CS ≥ 80%                  → không vào danh sách, dù giờ chạy thấp
+ * PHẢI khớp z_dayStatus_() trong ZALO.gs — lệch một bên là web và tin nhắn nói hai
+ * chuyện khác nhau về cùng một cái máy.
+ */
+function effDayStatus_(pctHr, pctKw){
+  if (pctHr == null && pctKw == null) return 'nodata';
+  const badHr = pctHr != null && pctHr < BAD_THRESHOLD_PCT;
+  const badKw = pctKw != null && pctKw < BAD_THRESHOLD_PCT;
+  const sevHr = pctHr != null && pctHr < SEVERE_THRESHOLD_PCT;
+  const sevKw = pctKw != null && pctKw < SEVERE_THRESHOLD_PCT;
+  if (sevHr || sevKw || (badKw && !badHr)) return 'ineffective';
+  if (badKw && badHr) return 'bad';
+  return (pctKw != null && pctKw > CAPACITY_OVER_PCT) ? 'over' : 'ok';
+}
+const EFF_DAY_META = {
+  ineffective:{ label:'Không hiệu quả', badge:'br' },
+  bad:        { label:'Kém hiệu quả',   badge:'ba' },
+  ok:         { label:'Đạt',            badge:'bg' },
+  over:       { label:'Vượt TK',        badge:'bb' },
+  nodata:     { label:'—',              badge:'bmu' },
+};
 function pctClass_(p){ return p==null?'':(p<70?'bad':(p<90?'warn':'ok')); }
 function pctBadgeCls_(p){ const c = pctClass_(p); return c==='bad'?'br':(c==='warn'?'ba':(c===''?'bmu':'bg')); }
 
 /**
  * Tính danh sách máy kém hiệu quả / không hiệu quả từ S.efficiency.
- * Đánh giá theo TRUNG BÌNH {RECENT_DAYS_FOR_EVAL} ngày gần nhất so với thiết kế/ngày —
- * đúng bằng con số % hiển thị trên thẻ máy.
  *
- * XÉT THEO THỨ TỰ ƯU TIÊN TỪ TRÊN XUỐNG:
- *   1. Giờ chạy < 50% HOẶC công suất < 50%  → "Không hiệu quả"  (ngưỡng nặng, xét trước tiên)
- *   2. Công suất < 80% và giờ chạy ≥ 80%    → "Không hiệu quả"  (chạy đủ giờ mà không ra điện)
- *   3. Công suất < 80% và giờ chạy < 80%    → "Kém hiệu quả"    (ít được huy động)
- *   4. Còn lại (gồm cả giờ 50-80% mà CS ≥ 80%) → không vào danh sách
- *   → 2 nhóm loại trừ nhau.
- * Quy tắc 1 cố ý ghi đè miễn trừ ở quy tắc 4: giờ 71% + CS 104% được bỏ qua, nhưng
- * giờ 40% + CS 104% thì không — tụt quá nửa thiết kế là bất thường dù chỉ số kia đẹp.
+ * TỪ BẢN 09/2026: CHẤM ĐIỂM THEO TỪNG NGÀY, KHÔNG CÒN TRUNG BÌNH 3 NGÀY.
+ * Mỗi ngày trong EVAL_WINDOW_DAYS ngày gần nhất được chấm riêng bằng effDayStatus_
+ * (luật phân loại giữ nguyên như cũ, chỉ đổi đầu vào), kèm chênh lệch so với ngày
+ * được chấm liền trước. Kết luận trên thẻ máy = kết luận của NGÀY MỚI NHẤT đã chốt
+ * số liệu (hôm qua). Máy giữ nguyên tình trạng kém/không hiệu quả từ
+ * STREAK_ALERT_DAYS ngày liên tiếp trở lên được đánh dấu needCheck — đó là danh
+ * sách đi kiểm tra và cũng là tập máy duy nhất được phép nhắn Zalo cho KTV.
+ *
+ * BA LẦN SỬA — KHÔNG QUAY LẠI CÁCH CŨ:
+ *   1. Bản đầu phân loại theo TỪNG NGÀY nhưng chỉ cần 1 ngày dưới ngưỡng là liệt kê
+ *      → máy có ngày nghỉ luôn bị gắn "không hiệu quả" dù các ngày khác đạt 104%.
+ *   2. Bản sau chuyển sang TRUNG BÌNH 3 ngày → hết báo nhầm, nhưng trung bình che
+ *      mất hình dạng và làm chậm tín hiệu mất hai ngày.
+ *   3. Bản này lại chấm theo ngày, nhưng việc "có đáng đi kiểm tra không" do CHUỖI
+ *      ngày liên tiếp quyết định chứ không do một ngày đơn lẻ — giữ được độ nhạy của
+ *      cách 1 mà không mắc lại lỗi báo nhầm của nó.
  *
  * Lọc: chỉ tính máy Thuê/Hợp tác/Bán ở trạng thái HĐ bình thường.
- * Biểu đồ (drawEfficiencyChart) vẫn vẽ đủ dữ liệu cả tháng — chỉ phần đánh giá/badge dùng cửa sổ ngắn.
+ * Biểu đồ (drawEfficiencyChart) vẫn vẽ đủ dữ liệu cả tháng.
  * Muốn xem tổng kết CẢ THÁNG so với thiết kế (đạt bao nhiêu %) → dùng computeMonthlyReport().
  */
 /* Danh sách 4 phân loại dùng cho chip lọc ở trang Hiệu quả vận hành.
@@ -5817,72 +5926,94 @@ function computeEfficiencyAll_(masterRows){
     // Backward compat: points cho code cũ (chỉ dùng khối power)
     const points = daily.power.filter(p=>p.val!==null).map(p=>({ label:String(p.day), val:p.val }));
 
-    // TB {RECENT_DAYS_FOR_EVAL} ngày gần nhất = {RECENT_DAYS_FOR_EVAL} ngày liền TRƯỚC hôm nay
-    // (không tính hôm nay vì dữ liệu hôm nay thường chưa chốt xong) — VD hôm nay 7/8 → lấy ngày 4,5,6.
-    // Cửa sổ cố định neo theo ngày thực tế, KHÔNG dò lùi từ cuối mảng — tránh dính dữ liệu tháng
-    // trước còn sót ở các cột ngày 29/30/31 chưa dùng tới trong tháng này.
+    /* ===== ĐÁNH GIÁ THEO TỪNG NGÀY — MỖI NGÀY MỘT KẾT LUẬN RIÊNG (bản 09/2026) =====
+     *
+     * VÌ SAO BỎ TRUNG BÌNH 3 NGÀY: trung bình che mất hình dạng. Máy tụt hẳn từ hôm
+     * kia và máy chỉ hỏng đúng một ngày rồi tự tốt lại cho ra cùng một con số trung
+     * bình, trong khi việc phải làm với hai máy đó khác hẳn nhau. Trung bình cũng
+     * làm chậm tín hiệu: máy chết hẳn hôm nay phải đợi hai ngày nữa mới kéo được
+     * trung bình xuống dưới ngưỡng.
+     *
+     * CÁCH LÀM MỚI:
+     *   1 · Chấm điểm TỪNG NGÀY trong EVAL_WINDOW_DAYS ngày gần nhất (effDayStatus_).
+     *   2 · So ngày với ngày: mỗi ngày biết mình hơn/kém ngày được chấm liền trước
+     *       bao nhiêu điểm phần trăm (dHr/dKw) — đó là phần "có sự so sánh đánh giá".
+     *   3 · Đếm CHUỖI ngày liên tiếp có vấn đề, tính lùi từ ngày mới nhất. Chuỗi từ
+     *       STREAK_ALERT_DAYS ngày trở lên → needCheck = phải đi kiểm tra, và chỉ
+     *       những máy này mới được nhắn Zalo cho KTV phụ trách.
+     *
+     * NGÀY ĐÁNH GIÁ CHỐT = HÔM QUA: số liệu hôm nay Smartgen chưa chốt xong, lấy vào
+     * là mỗi sáng cả danh sách hoá đỏ rồi trưa lại tự khỏi. */
     const anchorDay = Math.max(1, Math.min(new Date().getDate() - 1, daysInMonth));
-    const recentKw = recentWindowAvg_(powerArr, anchorDay, RECENT_DAYS_FOR_EVAL);
-    const recentHr = recentWindowAvg_(hoursArr, anchorDay, RECENT_DAYS_FOR_EVAL);
-    const actualHr = recentHr.avg;
-    const actualKw = recentKw.avg;
-
-    // ĐÁNH GIÁ THEO TỪNG NGÀY — chỉ cần 1 ngày dưới ngưỡng là bị liệt vào danh sách
     const pctOf = (val, design) => (val!=null && design!=null && design>0) ? (val/design*100) : null;
-    const recentHrDays = recentWindowDays_(hoursArr, anchorDay, RECENT_DAYS_FOR_EVAL).map(d => ({ ...d, pct: pctOf(d.val, designHr) }));
-    const recentKwDays = recentWindowDays_(powerArr, anchorDay, RECENT_DAYS_FOR_EVAL).map(d => ({ ...d, pct: pctOf(d.val, designKw) }));
-    const allDayPcts = recentHrDays.concat(recentKwDays).filter(d => d.pct != null);
 
-    // Chỉ để hiển thị "ngày nào cần soi", KHÔNG dùng phân loại (xem giải thích bên dưới)
-    const worstDays = allDayPcts.filter(d => d.pct < SEVERE_THRESHOLD_PCT);
-    const badDays = allDayPcts.filter(d => d.pct < BAD_THRESHOLD_PCT);
-    // ===== PHÂN LOẠI THEO TRUNG BÌNH {RECENT_DAYS_FOR_EVAL} NGÀY GẦN NHẤT =====
-    // CÔNG SUẤT PHÁT LÀ TIÊU CHÍ QUYẾT ĐỊNH. Giờ chạy chỉ dùng để phân mức nặng/nhẹ.
-    //
-    //   Công suất ≥ 80%                     → KHÔNG vào danh sách, dù giờ chạy thấp bao nhiêu.
-    //       Máy chạy ít giờ nhưng vẫn phát đủ điện là máy tốt — ít giờ là do nhu cầu huy động,
-    //       không phải lỗi máy. (VD NS200KVA18: giờ 71% nhưng công suất 104% → máy bình thường.)
-    //   Công suất < 80% VÀ giờ chạy ≥ 80%   → "Không hiệu quả" (nặng).
-    //       Chạy đủ giờ mà không ra công suất → hỏng hóc/suy giảm thực sự, phải kiểm tra máy.
-    //   Công suất < 80% VÀ giờ chạy < 80%   → "Kém hiệu quả" (nhẹ hơn).
-    //       Cả hai cùng thấp tương ứng nhau → máy ít được huy động, cần rà lại kế hoạch vận
-    //       hành trước khi nghi ngờ thiết bị.
-    //
-    // LỊCH SỬ 2 LẦN SỬA — KHÔNG quay lại cách cũ:
-    //   1. Bản đầu phân loại theo TỪNG NGÀY (1 ngày dưới ngưỡng là bị liệt kê) → máy có ngày
-    //      nghỉ luôn bị gắn "không hiệu quả" dù TB đạt 85-104%.
-    //   2. Bản sau phân loại theo TB nhưng giờ chạy thấp vẫn tự kéo máy vào danh sách → vẫn
-    //      báo nhầm máy phát đủ điện.
-    const pctHr = pctOf(actualHr, designHr);
-    const pctKw = pctOf(actualKw, designKw);
+    const winFrom = Math.max(1, anchorDay - EVAL_WINDOW_DAYS + 1);
+    const dayEvals = [];
+    for (let day = winFrom; day <= anchorDay; day++){
+      const vHr = hoursArr[day-1], vKw = powerArr[day-1];
+      /* Trống cả hai vế = CHƯA ĐỒNG BỘ TỚI NGÀY NÀY, không phải ngày kém. Chấm điểm
+       * một ngày chưa có dữ liệu là cách nhanh nhất để cả hệ thống hoá đỏ mỗi sáng. */
+      if (vHr == null && vKw == null) continue;
+      const pHr = pctOf(vHr, designHr), pKw = pctOf(vKw, designKw);
+      if (pHr == null && pKw == null) continue;          // chưa khai định mức → không kết luận
+      dayEvals.push({ day, valHr:vHr, valKw:vKw, pctHr:pHr, pctKw:pKw, status:effDayStatus_(pHr, pKw) });
+    }
+    /* So với ngày ĐƯỢC CHẤM liền trước, không phải ngày lịch liền trước: nếu hôm kia
+     * chưa đồng bộ thì so với hôm kia là so với khoảng trắng. */
+    dayEvals.forEach((d, i) => {
+      const prev = dayEvals[i-1];
+      d.prevDay = prev ? prev.day : null;
+      d.dHr = (prev && d.pctHr != null && prev.pctHr != null) ? d.pctHr - prev.pctHr : null;
+      d.dKw = (prev && d.pctKw != null && prev.pctKw != null) ? d.pctKw - prev.pctKw : null;
+    });
+
+    const lastEval = dayEvals.length ? dayEvals[dayEvals.length-1] : null;
+
+    /* CHUỖI NGÀY CÓ VẤN ĐỀ — đếm lùi từ ngày mới nhất, dừng ngay khi gặp một ngày đạt.
+     * Đếm trên các ngày CÓ DỮ LIỆU: một ngày mất mạng không được phép xoá sạch chuỗi
+     * 5 ngày hỏng thật, nhưng cũng không được tự nối chuỗi thay cho ngày đó. */
+    let streak = 0; const streakKinds = new Set(); const streakDays = [];
+    for (let i = dayEvals.length - 1; i >= 0; i--){
+      const st = dayEvals[i].status;
+      if (st !== 'bad' && st !== 'ineffective') break;
+      streak++; streakKinds.add(st); streakDays.unshift(dayEvals[i].day);
+    }
+    const needCheck = streak >= STREAK_ALERT_DAYS;
+
+    /* Số hiển thị trên thẻ máy nay là số của NGÀY ĐÁNH GIÁ, không còn là trung bình.
+     * Tên trường giữ nguyên (actualHr/actualKw/pctHr/pctKw) để mọi nơi đang đọc —
+     * thẻ máy, biểu đồ, CSV, badge sidebar — không phải sửa theo. */
+    const actualHr = lastEval ? lastEval.valHr : null;
+    const actualKw = lastEval ? lastEval.valKw : null;
+    const pctHr    = lastEval ? lastEval.pctHr : null;
+    const pctKw    = lastEval ? lastEval.pctKw : null;
+    const evalDay  = lastEval ? lastEval.day   : null;
 
     const badHr = pctHr != null && pctHr < BAD_THRESHOLD_PCT;
     const badKw = pctKw != null && pctKw < BAD_THRESHOLD_PCT;
-    /* NGƯỠNG NẶNG (ưu tiên cao nhất): chỉ cần MỘT trong hai chỉ số tụt dưới 50% là
-     * "Không hiệu quả", kể cả khi chỉ số còn lại vẫn đạt. Quy tắc này CỐ Ý ghi đè
-     * miễn trừ "giờ thấp nhưng CS đạt" ở trên: giờ chạy 40% mà công suất 95% nghĩa là
-     * máy gần như không được huy động — dù mỗi giờ chạy vẫn ra điện tốt, đó vẫn là
-     * bất thường phải xem lại, không thể bỏ qua như trường hợp giờ 71%. */
-    const severeHr = pctHr != null && pctHr < SEVERE_THRESHOLD_PCT;
-    const severeKw = pctKw != null && pctKw < SEVERE_THRESHOLD_PCT;
 
-    const isIneffective = severeHr || severeKw || (badKw && !badHr);
-    const isBad         = !isIneffective && badKw && badHr;
+    const dayStatus     = lastEval ? lastEval.status : 'nodata';
+    const isIneffective = dayStatus === 'ineffective';
+    const isBad         = dayStatus === 'bad';
+    /* Không có ngày nào chấm được thì xếp 'ok' — im lặng, chứ không tô đỏ một cái máy
+     * mà ta không biết gì về nó. Việc thiếu dữ liệu đã có trang Cảnh báo lo. */
+    const effStatus = (dayStatus === 'nodata') ? 'ok' : dayStatus;
 
-    /* PHÂN LOẠI ĐẦY ĐỦ 4 NHÓM — dùng cho chip lọc ở trang Hiệu quả vận hành.
-     * 2 nhóm có vấn đề giữ nguyên logic cũ (không đổi 1 dòng nào ở trên).
-     * Phần còn lại tách tiếp theo công suất phát: >100% thiết kế là "vượt thiết kế",
-     * còn lại là "hoạt động ổn định" — đúng ngưỡng đã dùng ở bảng phân loại trang Phân tích. */
-    const effStatus = isIneffective ? 'ineffective'
-                    : (isBad ? 'bad'
-                    : ((pctKw != null && pctKw > CAPACITY_OVER_PCT) ? 'over' : 'ok'));
+    const recentHrDays = dayEvals.map(d => ({ day:d.day, val:d.valHr, pct:d.pctHr }));
+    const recentKwDays = dayEvals.map(d => ({ day:d.day, val:d.valKw, pct:d.pctKw }));
+    const allDayPcts = recentHrDays.concat(recentKwDays).filter(d => d.pct != null);
+    const worstDays  = allDayPcts.filter(d => d.pct < SEVERE_THRESHOLD_PCT);
+    const badDays    = allDayPcts.filter(d => d.pct < BAD_THRESHOLD_PCT);
 
     return {
       code, row:r, effRow, designHr, actualHr, designKw, actualKw,
       monthActualHr, monthActualKw, pctHr, pctKw,
-      recentDaysHr: recentHr.n, recentDaysKw: recentKw.n,
+      recentDaysHr: dayEvals.filter(d => d.valHr != null).length,
+      recentDaysKw: dayEvals.filter(d => d.valKw != null).length,
       recentHrDays, recentKwDays, worstDays, badDays,
       daily, points, powerArr, hoursArr, badHr, badKw,
+      dayEvals, evalDay, streak, streakDays, needCheck,
+      streakKinds:[...streakKinds],
       isIneffective, isBad, effStatus
     };
   });
@@ -7142,8 +7273,8 @@ const ANOMALY_CATS = [
   { id:'over-24h',       label:'Giờ chạy vượt 24h/ngày',        hint:'Không thể có ngày nào chạy quá 24 giờ' },
   { id:'over-kwh',       label:'Điện phát vượt 2500 kWh/ngày',  hint:'Vượt trần sản lượng hợp lý của 1 máy trong 1 ngày' },
   { id:'negative',       label:'Số liệu âm',                    hint:'Giờ chạy hoặc điện phát nhận giá trị âm' },
-  { id:'power-no-hours', label:'Số giờ bất thường',             hint:'Có điện phát ra nhưng giờ chạy = 0' },
-  { id:'hours-no-power', label:'Số điện bất thường',            hint:'Có giờ chạy nhưng điện phát = 0' },
+  { id:'power-no-hours', label:'Có kWh · MẤT số giờ chạy',      hint:'Ngày có điện phát nhưng ô giờ chạy = 0 hoặc bỏ trống — hầu hết là Smartgen/LIXISE ghi nhận thiếu, KTV vào sửa lại ô giờ' },
+  { id:'hours-no-power', label:'Có giờ chạy · MẤT số kWh',      hint:'Ngày có giờ chạy nhưng ô điện phát = 0 hoặc bỏ trống — hầu hết là Smartgen/LIXISE ghi nhận thiếu, KTV vào sửa lại ô kWh' },
   { id:'over-design',    label:'Vượt 150% thiết kế',            hint:'Giờ chạy hoặc điện phát vượt 1.5 lần định mức thiết kế/ngày' },
   { id:'over-capacity',  label:'Vượt công suất định mức máy',   hint:'Công suất trung bình mỗi giờ vượt quá công suất máy' },
   { id:'spike',          label:'Đột biến so với ngày trước',    hint:'Lệch quá 2.5 lần so với trung bình 3 ngày liền trước' },
@@ -7218,16 +7349,36 @@ function computeDataAnomalies(opts){
       if (h!=null && h < 0) flag(day, 'hours', `Giờ chạy ngày ${day} âm (${h}h)`, 'high', 'negative');
       if (p!=null && p < 0) flag(day, 'power', `Công suất phát ngày ${day} âm (${p} kWh)`, 'high', 'negative');
 
-      if (h!=null && p!=null){
-        // Có giờ chạy mà không ra điện → SỐ ĐIỆN sai
-        if (h > 0 && p === 0) flag(day, 'power', `Ngày ${day}: có giờ chạy (${h}h) nhưng không ghi nhận điện phát`, 'med', 'hours-no-power');
-        // Có điện phát mà không có giờ chạy → SỐ GIỜ sai
-        if (p > 0 && h === 0) flag(day, 'hours', `Ngày ${day}: có điện phát (${p} kWh) nhưng không ghi nhận giờ chạy`, 'med', 'power-no-hours');
-        if (h > 0 && p > 0 && ratedKw > 0){
-          const avgKw = p / h;
-          if (avgKw > ratedKw * ANOMALY_CFG.OVER_CAPACITY_RATIO){
-            flag(day, 'power', `Ngày ${day}: công suất TB ${nfd_(avgKw)}kW vượt ${pfmt_(avgKw/ratedKw*100)} định mức máy (${nfd_(ratedKw)}kW)`, 'high', 'over-capacity');
-          }
+      /* MỘT VẾ CÓ SỐ, VẾ KIA TRỐNG HOẶC BẰNG 0 — LỖI GHI NHẬN, KHÔNG PHẢI MÁY HỎNG
+       * ------------------------------------------------------------------------
+       * Máy chạy 8 tiếng thì phải ra điện, và ra điện thì phải có giờ chạy. Một vế
+       * có số mà vế kia không có gần như luôn là Smartgen/LIXISE rớt mất một chỉ số
+       * trong lượt đồng bộ, KHÔNG phải code đọc thiếu cột. Vì vậy đây là việc của
+       * KTV: vào sửa lại đúng ô đó trên web, chứ không phải đi kiểm tra máy.
+       *
+       * BẢN CŨ CHỈ BẮT ĐƯỢC MỘT NỬA SỐ CA: nó đòi `h!=null && p!=null` rồi mới so
+       * với 0. Nhưng khi hệ thống rớt chỉ số thì ô thường BỎ TRỐNG chứ không ghi
+       * số 0 — mà numOrNull_ trả null cho ô trống, nên đúng những ca cần bắt nhất
+       * lại lọt qua im lặng. Nay trống và 0 được đối xử như nhau ở vế thiếu.
+       * (Ngày trống CẢ HAI vế đã bị chặn từ trên: đó là ngày chưa đồng bộ.) */
+      const coH = h != null && h > 0;
+      const coP = p != null && p > 0;
+      if (coH && (p == null || p === 0)){
+        flag(day, 'power',
+          `Ngày ${day}: có giờ chạy ${nfd_(h)} h nhưng ô điện phát ${p == null ? 'BỎ TRỐNG' : '= 0'}`
+          + ` — nghi Smartgen/LIXISE ghi nhận thiếu, KTV kiểm tra và bổ sung số kWh`,
+          'high', 'hours-no-power');
+      }
+      if (coP && (h == null || h === 0)){
+        flag(day, 'hours',
+          `Ngày ${day}: có điện phát ${nfd_(p)} kWh nhưng ô giờ chạy ${h == null ? 'BỎ TRỐNG' : '= 0'}`
+          + ` — nghi Smartgen/LIXISE ghi nhận thiếu, KTV kiểm tra và bổ sung số giờ`,
+          'high', 'power-no-hours');
+      }
+      if (coH && coP && ratedKw > 0){
+        const avgKw = p / h;
+        if (avgKw > ratedKw * ANOMALY_CFG.OVER_CAPACITY_RATIO){
+          flag(day, 'power', `Ngày ${day}: công suất TB ${nfd_(avgKw)}kW vượt ${pfmt_(avgKw/ratedKw*100)} định mức máy (${nfd_(ratedKw)}kW)`, 'high', 'over-capacity');
         }
       }
       // Số liệu thực tế cao bất thường so với THIẾT KẾ/NGÀY (khác với vượt công suất định mức máy ở trên)
@@ -7312,11 +7463,21 @@ function openAnomalyCat(catId){
   nav('alerts');
 }
 
+/* ============================================================================
+ *  THẺ MÁY Ở TRANG HIỆU QUẢ VẬN HÀNH
+ * ----------------------------------------------------------------------------
+ *  Bản 09/2026 đổi từ "trung bình 3 ngày" sang CHẤM TỪNG NGÀY, nên thẻ máy phải
+ *  nói được ba chuyện mà một con số trung bình không nói được:
+ *      · kết luận của NGÀY MỚI NHẤT đã chốt số liệu (badge lớn ở đầu thẻ)
+ *      · từng ngày trong cửa sổ đạt bao nhiêu %, HƠN/KÉM ngày trước bao nhiêu (bảng)
+ *      · đã giữ nguyên tình trạng xấu bao nhiêu ngày liên tiếp (badge chuỗi)
+ *  Cột Δ là phần "có sự so sánh đánh giá": nhìn một cái biết máy đang tụt tiếp
+ *  hay đang hồi, thứ mà cột % của riêng ngày đó không trả lời được.
+ * ========================================================================== */
 function ineffCardHtml(x, uid){
-  const gap = (a,d) => (a!=null && d!=null && d>0) ? Math.round((a/d)*100) : null;
-  const pctHr = gap(x.actualHr, x.designHr);
-  const pctKw = gap(x.actualKw, x.designKw);
   const clsPct = pctClass_;
+  const pctHr = x.pctHr == null ? null : Math.round(x.pctHr);
+  const pctKw = x.pctKw == null ? null : Math.round(x.pctKw);
   const badgeStat = (label, cur, des, unit, cls) => `
     <div class="es">
       <div class="esl">${esc(label)}</div>
@@ -7324,8 +7485,49 @@ function ineffCardHtml(x, uid){
     </div>`;
   const r = x.row;
   const region = regionOf(r);
-  const nDays = Math.max(x.recentDaysHr||0, x.recentDaysKw||0) || RECENT_DAYS_FOR_EVAL;
   const anomalies = (S.alerts.alerts||[]).filter(a => a.type==='data-anomaly' && a.maCode===x.code);
+  const dayLbl = x.evalDay != null ? ('ngày ' + x.evalDay) : 'chưa có ngày nào chốt';
+
+  /* Δ hiển thị bằng điểm phần trăm (không phải %), vì nó là hiệu của hai tỷ lệ.
+   * Ngưỡng ±3 điểm mới tô màu: dao động nhỏ hơn thế là nhiễu của khí và tải. */
+  const delta = d => {
+    if (d == null) return '<span style="color:var(--mu)">—</span>';
+    const v = Math.round(d);
+    const cls = v <= -3 ? 'bad' : (v >= 3 ? 'ok' : '');
+    return `<span class="${cls}" style="font-weight:700">${v>0?'▲ +':(v<0?'▼ ':'')}${v}</span>`;
+  };
+  const pctCell = p => p == null ? '<span style="color:var(--mu)">—</span>'
+    : `<span class="${clsPct(p)}" style="font-weight:700">${Math.round(p)}%</span>`;
+
+  const dayRows = (x.dayEvals||[]).slice().reverse().map(d => {
+    const meta = EFF_DAY_META[d.status] || EFF_DAY_META.nodata;
+    const laNgayChot = d.day === x.evalDay;
+    return `<tr${laNgayChot?' style="background:#f8fafc"':''}>
+      <td style="white-space:nowrap"><b>Ngày ${d.day}</b>${laNgayChot?' <span class="b bmu" title="Ngày mới nhất đã chốt số liệu — kết luận của thẻ lấy ở đây">chốt</span>':''}</td>
+      <td style="text-align:right">${d.valKw==null?'—':nfd_(d.valKw)}</td>
+      <td style="text-align:right">${pctCell(d.pctKw)}</td>
+      <td style="text-align:right">${delta(d.dKw)}</td>
+      <td style="text-align:right">${d.valHr==null?'—':nfd_(d.valHr)}</td>
+      <td style="text-align:right">${pctCell(d.pctHr)}</td>
+      <td style="text-align:right">${delta(d.dHr)}</td>
+      <td><span class="b ${meta.badge}">${meta.label}</span></td>
+    </tr>`;
+  }).join('');
+
+  const bangNgay = (x.dayEvals && x.dayEvals.length) ? `
+    <div class="tw" style="margin:0 16px 12px;max-height:none">
+      <table style="font-size:11px">
+        <thead><tr>
+          <th>Ngày</th>
+          <th style="text-align:right">kWh phát</th><th style="text-align:right">%TK</th><th style="text-align:right" title="Chênh lệch điểm % so với ngày được chấm liền trước">Δ</th>
+          <th style="text-align:right">Giờ chạy</th><th style="text-align:right">%TK</th><th style="text-align:right" title="Chênh lệch điểm % so với ngày được chấm liền trước">Δ</th>
+          <th>Kết luận ngày</th>
+        </tr></thead>
+        <tbody>${dayRows}</tbody>
+      </table>
+    </div>`
+    : `<div style="margin:0 16px 12px;font-size:11px;color:var(--mu)">Chưa có ngày nào trong ${EVAL_WINDOW_DAYS} ngày gần nhất đủ dữ liệu để chấm điểm.</div>`;
+
   return `
     <div class="effcard ${(x.isIneffective||x.isBad)?'bad':''}">
       <div class="effhd">
@@ -7335,20 +7537,24 @@ function ineffCardHtml(x, uid){
             ${(r._byLetter[COL.TRAI]||'')?`<span class="b bmu" title="Trang trại">${esc(r._byLetter[COL.TRAI])}</span>`:''}
             <span class="b bmu">${esc(typeOf(r))}</span>
             <span class="b ${region==='Miền Bắc'?'bg':'bb'}">${esc(region)}</span>
-            <span class="b ${(EFF_STATUS_META[x.effStatus]||EFF_STATUS_META.ok).badge}">${(EFF_STATUS_META[x.effStatus]||EFF_STATUS_META.ok).label}</span>
+            <span class="b ${(EFF_STATUS_META[x.effStatus]||EFF_STATUS_META.ok).badge}" title="Kết luận của ${esc(dayLbl)}">${(EFF_STATUS_META[x.effStatus]||EFF_STATUS_META.ok).label} · ${esc(dayLbl)}</span>
+            ${x.needCheck?`<span class="b br" title="Giữ nguyên tình trạng kém/không hiệu quả ${x.streak} ngày liên tiếp (ngày ${x.streakDays.join(', ')}) — đã đưa vào diện kiểm tra và nhắn Zalo cho KTV phụ trách">🔔 CẦN KIỂM TRA · ${x.streak} ngày liên tiếp</span>`
+              :(x.streak?`<span class="b ba" title="Mới 1 ngày dưới mức — theo dõi thêm, chưa nhắn KTV">1 ngày dưới mức</span>`:'')}
             ${x.badHr?'<span class="b ba">Giờ chạy thấp</span>':''}
             ${x.badKw?'<span class="b br">Công suất thấp</span>':''}
-            ${anomalies.length?`<span class="b br">⚠ ${anomalies.length} ngày dữ liệu bất thường</span>`:''}
+            ${anomalies.length?`<span class="b br">⚠ ${anomalies.length} điểm dữ liệu bất thường</span>`:''}
           </div>
           <div class="effsub">${esc(r._byLetter[COL.TRAI]||'')} · ${esc(r._byLetter[COL.TINH]||'')} · Vận hành: ${esc(r._byLetter[COL.VH]||'—')}</div>
         </div>
       </div>
       <div class="effstats">
-        ${badgeStat(`Giờ chạy TB ${nDays}n gần nhất / TK`, x.actualHr, x.designHr, 'h', clsPct(pctHr))}
-        ${badgeStat(`Công suất TB ${nDays}n gần nhất / TK`, x.actualKw, x.designKw, ' kW', clsPct(pctKw))}
-        <div class="es"><div class="esl">Đạt giờ chạy</div><div class="esv ${clsPct(pctHr)}">${pctHr!=null?pctHr+'%':'—'}</div></div>
-        <div class="es"><div class="esl">Đạt công suất</div><div class="esv ${clsPct(pctKw)}">${pctKw!=null?pctKw+'%':'—'}</div></div>
+        ${badgeStat(`kWh phát ${dayLbl} / TK`, x.actualKw, x.designKw, ' kWh', clsPct(pctKw))}
+        ${badgeStat(`Giờ chạy ${dayLbl} / TK`, x.actualHr, x.designHr, 'h', clsPct(pctHr))}
+        <div class="es"><div class="esl">Đạt công suất (${esc(dayLbl)})</div><div class="esv ${clsPct(pctKw)}">${pctKw!=null?pctKw+'%':'—'}</div></div>
+        <div class="es"><div class="esl">Đạt giờ chạy (${esc(dayLbl)})</div><div class="esv ${clsPct(pctHr)}">${pctHr!=null?pctHr+'%':'—'}</div></div>
+        <div class="es"><div class="esl">Chuỗi ngày dưới mức</div><div class="esv ${x.needCheck?'bad':(x.streak?'warn':'ok')}">${x.streak||0} <span style="font-size:9px;color:var(--mu);font-weight:500">/ ngưỡng ${STREAK_ALERT_DAYS}</span></div></div>
       </div>
+      ${bangNgay}
       ${anomalies.length ? `
       <div style="margin:0 16px 6px;font-size:10px;color:#991b1b">⚠ Có dữ liệu bất thường — điểm cam to trên biểu đồ, bấm vào điểm đó để xem/sửa.</div>` : ''}
       <div class="effchart"><canvas id="${uid}_chart"></canvas></div>
@@ -11634,6 +11840,324 @@ async function bdPostService_(code, items, nguon, override){
  *  Không nằm trong bootstrap: sheet này chỉ có tăng, để trong bootstrap là mỗi lần
  *  mở web lại tải cả nghìn dòng. Tải theo yêu cầu, có bộ lọc.
  * ========================================================================== */
+
+/* ============================================================================
+ *  TAB HIỆU QUẢ BDSC — CHẤM ĐIỂM ĐỘI THEO DÕI VẬN HÀNH
+ * ----------------------------------------------------------------------------
+ *  CÂU HỎI TRANG NÀY TRẢ LỜI: từ lúc máy bắt đầu kêu "sắp đến hạn" cho tới lúc
+ *  quá hạn, bao nhiêu phần trăm số việc được xử lý (cập nhật mốc mới, tắt cảnh báo)
+ *  — và khi xử lý thì đã để quá chu kỳ bao xa.
+ *
+ *  THƯỚC ĐO CHÍNH — % QUÁ CHU KỲ LÚC XỬ LÝ:
+ *      quaHan% = (Giờ bộ đếm khi thay − Chu kỳ định mức) / Chu kỳ định mức × 100
+ *  Cả hai con số nằm sẵn trên từng dòng "12. Nhật ký bảo dưỡng" và được ĐÓNG BĂNG
+ *  lúc ghi, nên sửa chu kỳ ở Sheet 3 về sau không viết lại lịch sử đã chấm.
+ *
+ *  VÌ SAO CHẤM THEO % CHỨ KHÔNG THEO SỐ GIỜ: quá 100 h với hạng mục chu kỳ 250 h là
+ *  buông lỏng, còn với hạng mục 2000 h thì gần như đúng hạn. Cùng một con số giờ nói
+ *  hai điều khác nhau; quy về tỷ lệ mới cộng được các hạng mục thành một điểm chung.
+ *
+ *  BỐN MỨC (ba mức "quá hạn" theo yêu cầu, cộng mức 0 cho việc làm đúng hạn):
+ *      ≤ 0%      🟢 Đúng hạn        xử lý trước khi chạm chu kỳ            100 điểm
+ *      0–20%     🟢 Đạt             chậm trong ngưỡng chấp nhận             85 điểm
+ *      20–40%    🟡 Trung bình      chậm, cần chấn chỉnh                    60 điểm
+ *      > 40%     🔴 Kém             chậm nghiêm trọng, mất kiểm soát        20 điểm
+ *
+ *  Ngoài điểm chất lượng còn một con số thứ hai không thể thiếu: TỶ LỆ ĐÓNG CẢNH BÁO
+ *  = việc đã xử lý / (đã xử lý + đang quá hạn treo). Chấm điểm mà bỏ qua phần chưa
+ *  làm thì đội nào bỏ mặc máy khó sẽ có điểm đẹp nhất — chỉ cần không đụng vào nó.
+ * ========================================================================== */
+const BDKPI_LEVELS = [
+  { id:'ontime', label:'🟢 Đúng hạn',   hint:'Xử lý trước khi chạm chu kỳ',              max:0,        diem:100, cls:'bg' },
+  { id:'dat',    label:'🟢 Đạt',        hint:'Quá hạn ≤ 20% chu kỳ — chấp nhận được',    max:20,       diem:85,  cls:'bg' },
+  { id:'tb',     label:'🟡 Trung bình', hint:'Quá hạn 20–40% chu kỳ — cần chấn chỉnh',   max:40,       diem:60,  cls:'ba' },
+  { id:'kem',    label:'🔴 Kém',        hint:'Quá hạn trên 40% chu kỳ — mất kiểm soát',  max:Infinity, diem:20,  cls:'br' },
+];
+function bdKpiLevel_(pct){
+  if (pct == null || isNaN(pct)) return null;
+  return BDKPI_LEVELS.find(l => pct <= l.max) || BDKPI_LEVELS[BDKPI_LEVELS.length - 1];
+}
+
+S.bdKpi = S.bdKpi || { loaded:false, loading:false, rows:[], days:90, nguoi:'', khu:'' };
+
+async function bdLoadKpi(){
+  if (S.bdKpi.loading) return;
+  S.bdKpi.loading = true;
+  try {
+    const tu = new Date(Date.now() - (Number(S.bdKpi.days)||90) * 86400000).toISOString().slice(0,10);
+    /* Dùng lại đúng đường bdHistory của tab Lịch sử — cùng một nguồn, cùng một bộ lọc
+     * ngày, nên hai tab không bao giờ nói hai con số khác nhau về cùng một kỳ. */
+    const res = await apiPost({ action:'bdHistory', user:S.user.name, filter:{ tu, limit:2000 } });
+    S.bdKpi.rows = res.rows || [];
+    S.bdKpi.loaded = true;
+  } catch(e){ toast('Không tải được nhật ký bảo dưỡng: ' + e.message, 'err'); }
+  finally { S.bdKpi.loading = false; renderPage('tracking'); }
+}
+function bdKpiSetDays(n){ S.bdKpi.days = Number(n) || 90; S.bdKpi.loaded = false; bdLoadKpi(); }
+function bdKpiSetFilter(k, v){ S.bdKpi[k] = v; renderPage('tracking'); }
+
+/**
+ * Hai danh sách, hai câu hỏi khác nhau:
+ *   done — việc ĐÃ xử lý trong kỳ, chấm điểm theo % quá chu kỳ lúc xử lý.
+ *   open — việc ĐANG treo hôm nay (đọc từ chính danh sách cảnh báo đang hiện trên web,
+ *          không tính lại đường khác), để biết phần chưa làm lớn cỡ nào.
+ * "Kiểm tra không can thiệp" bị loại khỏi done: nó không đổi mốc nên không đóng được
+ * cảnh báo nào, tính vào thì đội chỉ cần đi ngó máy là có điểm.
+ */
+function bdKpiAnalyze_(){
+  const done = [];
+  ((S.bdKpi.rows) || []).forEach(r => {
+    if (String(r['Loại công việc']||'').trim() === 'Kiểm tra không can thiệp') return;
+    const cyc = bdN_(r['Chu kỳ định mức (h)']);
+    const gap = bdN_(r['Giờ bộ đếm khi thay']);
+    if (cyc == null || cyc <= 0 || gap == null) return;   // thiếu chu kỳ hoặc thiếu mốc → không chấm được
+    const pct = (gap - cyc) / cyc * 100;
+    done.push({
+      raw: r, cyc, gap, pct, lv: bdKpiLevel_(pct),
+      ngay:  String(r['Ngày thực hiện'] || r['Thời gian ghi'] || '').slice(0,10),
+      may:   String(r['Mã máy']||'').trim(),
+      ten:   String(r['Tên hạng mục']||'').trim() || '—',
+      nguoi: String(r['Người thực hiện']||'').trim() || '—',
+      khu:   String(r['Khu vực']||'').trim() || '—',
+      site:  [r['Đơn vị hợp tác'], r['Trang trại']].filter(Boolean).join(' · '),
+    });
+  });
+
+  const open = (S.alerts.alerts || [])
+    .filter(a => (a.type === 'overdue' || a.type === 'due-soon') && a.cycle > 0 && a.used != null)
+    .map(a => {
+      const pct = (a.used - a.cycle) / a.cycle * 100;
+      return { maCode:a.maCode, field:a.field, region:a.region||'—', site:a.site||'',
+               operator:a.operator||'', used:a.used, cycle:a.cycle, pct,
+               quaHan: a.type === 'overdue', lv: bdKpiLevel_(pct) };
+    });
+
+  return { done, open };
+}
+
+function bdKpiFiltered_(done){
+  const f = S.bdKpi;
+  return done.filter(d => (!f.nguoi || d.nguoi === f.nguoi) && (!f.khu || d.khu === f.khu));
+}
+
+/** Gộp một tập việc đã chấm thành bộ số dùng chung cho mọi bảng tổng hợp. */
+function bdKpiRollup_(list){
+  const n = list.length;
+  const cnt = {}; BDKPI_LEVELS.forEach(l => cnt[l.id] = 0);
+  let diem = 0, tongPct = 0, nPct = 0;
+  list.forEach(d => {
+    if (d.lv){ cnt[d.lv.id]++; diem += d.lv.diem; }
+    if (d.pct != null){ tongPct += Math.max(0, d.pct); nPct++; }
+  });
+  const dat = cnt.ontime + cnt.dat;
+  return {
+    n, cnt, dat,
+    tyLeDat: n ? Math.round(dat / n * 100) : null,
+    diem:    n ? Math.round(diem / n) : null,
+    quaHanTb: nPct ? Math.round(tongPct / nPct) : null,
+  };
+}
+
+function bdKpiScoreCls_(d){ return d == null ? '' : (d >= 85 ? 'ok' : (d >= 65 ? 'warn' : 'bad')); }
+
+function viewBdKpi(){
+  if (!S.bdKpi.loaded && !S.bdKpi.loading) setTimeout(bdLoadKpi, 0);
+  const A = bdKpiAnalyze_();
+  const doneAll = A.done;
+  const done = bdKpiFiltered_(doneAll);
+  const openQuaHan = A.open.filter(o => o.quaHan);
+  const openSap    = A.open.filter(o => !o.quaHan);
+  const R = bdKpiRollup_(done);
+
+  /* TỶ LỆ ĐÓNG CẢNH BÁO — mẫu số là mọi việc đã tới ngưỡng trong tầm nhìn của hệ thống:
+   * việc đã xử lý trong kỳ CỘNG việc đang quá hạn treo lại. Việc "sắp đến hạn" không
+   * vào mẫu số vì nó chưa tới lượt phải làm — đưa vào là phạt oan người làm đúng nhịp. */
+  const mauSo = done.length + openQuaHan.length;
+  const tyLeDong = mauSo ? Math.round(done.length / mauSo * 100) : null;
+
+  const box = (label, val, sub, cls) => `
+    <div class="es">
+      <div class="esl">${esc(label)}</div>
+      <div class="esv ${cls||''}">${val}${sub?` <span style="font-size:9px;color:var(--mu);font-weight:500">${sub}</span>`:''}</div>
+    </div>`;
+
+  /* --- Phổ 4 mức --- */
+  const phanBo = BDKPI_LEVELS.map(l => {
+    const c = R.cnt[l.id] || 0;
+    const p = R.n ? Math.round(c / R.n * 100) : 0;
+    return `<div class="es" title="${esc(l.hint)} · ${l.diem} điểm">
+        <div class="esl">${l.label}</div>
+        <div class="esv ${l.id==='kem'?'bad':(l.id==='tb'?'warn':'ok')}">${nint_(c)} <span style="font-size:9px;color:var(--mu);font-weight:500">${p}%</span></div>
+      </div>`;
+  }).join('');
+
+  /* --- Bảng theo người thực hiện --- */
+  const groupBy = (list, key) => {
+    const m = new Map();
+    list.forEach(d => { const k = d[key] || '—'; if (!m.has(k)) m.set(k, []); m.get(k).push(d); });
+    return [...m.entries()].map(([k, v]) => ({ key:k, ...bdKpiRollup_(v) }))
+      .sort((a,b) => (b.diem ?? -1) - (a.diem ?? -1) || b.n - a.n);
+  };
+  const bangNhom = (rows, tenCot) => `
+    <div class="tw"><table>
+      <thead><tr><th>${esc(tenCot)}</th><th style="text-align:right">Số việc</th>
+        <th style="text-align:right">Đúng hạn</th><th style="text-align:right">Đạt</th>
+        <th style="text-align:right">Trung bình</th><th style="text-align:right">Kém</th>
+        <th style="text-align:right" title="Tỷ lệ việc ở mức Đúng hạn hoặc Đạt">% Đạt trở lên</th>
+        <th style="text-align:right" title="Trung bình % quá chu kỳ của các việc đã xử lý">Quá hạn TB</th>
+        <th style="text-align:right">Điểm KPI</th></tr></thead>
+      <tbody>${rows.map(g => `<tr>
+        <td><b>${esc(g.key)}</b></td>
+        <td style="text-align:right">${nint_(g.n)}</td>
+        <td style="text-align:right">${nint_(g.cnt.ontime)}</td>
+        <td style="text-align:right">${nint_(g.cnt.dat)}</td>
+        <td style="text-align:right">${nint_(g.cnt.tb)}</td>
+        <td style="text-align:right">${nint_(g.cnt.kem)}</td>
+        <td style="text-align:right"><span class="b ${g.tyLeDat>=80?'bg':(g.tyLeDat>=60?'ba':'br')}">${g.tyLeDat==null?'—':g.tyLeDat+'%'}</span></td>
+        <td style="text-align:right">${g.quaHanTb==null?'—':'+'+g.quaHanTb+'%'}</td>
+        <td style="text-align:right"><b class="${bdKpiScoreCls_(g.diem)}">${g.diem==null?'—':g.diem}</b></td>
+      </tr>`).join('') || '<tr><td colspan="9"><div class="empty">Chưa có việc nào được chấm trong kỳ.</div></td></tr>'}</tbody>
+    </table></div>`;
+
+  /* --- Việc đang treo, nặng nhất lên trước --- */
+  const openRows = openQuaHan.slice().sort((a,b) => b.pct - a.pct).slice(0, 40).map(o => `
+    <tr>
+      <td><span class="mm" style="cursor:pointer;text-decoration:underline" onclick="bdOpenProfile('${esc(o.maCode)}')">${esc(o.maCode)}</span></td>
+      <td style="font-size:11px">${esc(o.site)||'—'}</td>
+      <td>${esc(normField(o.field))}</td>
+      <td style="text-align:right">${nfd_(o.used)}</td>
+      <td style="text-align:right">${nfmt_(o.cycle)}</td>
+      <td style="text-align:right"><span class="b ${o.lv?o.lv.cls:'bmu'}">+${Math.round(o.pct)}%</span></td>
+      <td>${o.lv?esc(o.lv.label):'—'}</td>
+      <td style="font-size:11px">${esc(o.operator)||'—'}</td>
+    </tr>`).join('');
+
+  /* --- Chi tiết từng lần xử lý --- */
+  const chiTiet = done.slice().sort((a,b) => String(b.ngay).localeCompare(String(a.ngay))).slice(0, 120).map(d => `
+    <tr>
+      <td style="white-space:nowrap">${esc(d.ngay)}</td>
+      <td><span class="mm" style="cursor:pointer;text-decoration:underline" onclick="bdOpenProfile('${esc(d.may)}')">${esc(d.may)}</span></td>
+      <td style="font-size:11px">${esc(d.site)||'—'}</td>
+      <td>${esc(d.ten)}</td>
+      <td style="text-align:right">${nfd_(d.gap)}</td>
+      <td style="text-align:right">${nfmt_(d.cyc)}</td>
+      <td style="text-align:right"><span class="b ${d.lv?d.lv.cls:'bmu'}">${d.pct>0?'+':''}${Math.round(d.pct)}%</span></td>
+      <td>${d.lv?esc(d.lv.label):'—'}</td>
+      <td style="font-size:11px">${esc(d.nguoi)}</td>
+    </tr>`).join('');
+
+  const nguoiList = [...new Set(doneAll.map(d => d.nguoi))].sort();
+  const khuList   = [...new Set(doneAll.map(d => d.khu))].sort();
+
+  return `
+    <div class="ph">
+      <h1>Hiệu quả thực hiện bảo dưỡng · sửa chữa</h1>
+      <p>${S.bdKpi.loading ? 'Đang tải nhật ký…' : `${nfmt_(doneAll.length)} việc đã xử lý trong ${S.bdKpi.days} ngày gần nhất`}
+        · ${nfmt_(openQuaHan.length)} việc đang quá hạn treo · ${nfmt_(openSap.length)} việc sắp đến hạn
+        <br><span style="font-size:11px;color:var(--mu)">Chấm theo <b>% quá chu kỳ lúc xử lý</b> = (giờ bộ đếm khi thay − chu kỳ định mức) / chu kỳ.
+        Quá ≤20% là <b>Đạt</b>, 20–40% là <b>Trung bình</b>, trên 40% là <b>Kém</b>; xử lý trước khi chạm chu kỳ là <b>Đúng hạn</b>.
+        Việc thiếu chu kỳ hoặc thiếu mốc cũ không chấm được nên không nằm trong bảng này.</span></p>
+    </div>
+
+    <div class="fbar">
+      <span class="mslbl">Kỳ đánh giá</span>
+      ${[30,60,90,180,365].map(n => `<button class="fchip ${S.bdKpi.days===n?'on':''}" onclick="bdKpiSetDays(${n})">${n} ngày</button>`).join('')}
+      <select class="sel" style="margin-left:14px" onchange="bdKpiSetFilter('nguoi',this.value)">
+        <option value="">— Mọi người thực hiện —</option>
+        ${nguoiList.map(n => `<option ${S.bdKpi.nguoi===n?'selected':''}>${esc(n)}</option>`).join('')}
+      </select>
+      <select class="sel" onchange="bdKpiSetFilter('khu',this.value)">
+        <option value="">— Mọi khu vực —</option>
+        ${khuList.map(n => `<option ${S.bdKpi.khu===n?'selected':''}>${esc(n)}</option>`).join('')}
+      </select>
+      <button class="btn bg-gr" onclick="S.bdKpi.loaded=false;bdLoadKpi()">↻ Tải lại</button>
+      <button class="btn bg-b" onclick="exportBdKpiCsv()">⬇ Xuất CSV</button>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>🎯 Điểm tổng hợp kỳ ${S.bdKpi.days} ngày</h3>
+        <span class="b ${bdKpiScoreCls_(R.diem)==='ok'?'bg':(bdKpiScoreCls_(R.diem)==='warn'?'ba':'br')}">${R.diem==null?'chưa đủ dữ liệu':R.diem+' / 100 điểm'}</span>
+      </div>
+      <div class="cb">
+        <div class="effstats">
+          ${box('Việc đã xử lý', nint_(R.n), 'lần', '')}
+          ${box('% Đạt trở lên', R.tyLeDat==null?'—':R.tyLeDat+'%', 'đúng hạn + đạt', bdKpiScoreCls_(R.tyLeDat))}
+          ${box('Điểm KPI chất lượng', R.diem==null?'—':R.diem, '/100', bdKpiScoreCls_(R.diem))}
+          ${box('Tỷ lệ đóng cảnh báo', tyLeDong==null?'—':tyLeDong+'%', `${nint_(done.length)}/${nint_(mauSo)} việc`, bdKpiScoreCls_(tyLeDong))}
+          ${box('Quá hạn trung bình', R.quaHanTb==null?'—':'+'+R.quaHanTb+'%', 'so với chu kỳ', R.quaHanTb==null?'':(R.quaHanTb<=20?'ok':(R.quaHanTb<=40?'warn':'bad')))}
+          ${box('Đang quá hạn treo', nint_(openQuaHan.length), 'chưa xử lý', openQuaHan.length?'bad':'ok')}
+        </div>
+        <div style="font-size:11px;color:var(--mu);margin-top:12px;line-height:1.7">
+          <b>Điểm KPI chất lượng</b> chỉ nói về những việc ĐÃ làm (đúng hạn 100 · đạt 85 · trung bình 60 · kém 20 điểm).
+          <b>Tỷ lệ đóng cảnh báo</b> mới nói về phần chưa làm — hai con số phải đọc cùng nhau: điểm chất lượng 95 mà tỷ lệ đóng 40%
+          nghĩa là đội chỉ làm những việc dễ và bỏ lại phần khó.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>📊 Phân bố mức độ kịp thời</h3><span class="b bmu">${nint_(R.n)} việc</span></div>
+      <div class="cb"><div class="effstats">${phanBo}</div></div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>👤 Theo người thực hiện</h3><span class="b bmu">${nguoiList.length} người</span></div>
+      <div class="cb">${bangNhom(groupBy(done, 'nguoi'), 'Người thực hiện')}</div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>🗺 Theo khu vực</h3></div>
+      <div class="cb">${bangNhom(groupBy(done, 'khu'), 'Khu vực')}</div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>⏳ Việc đang quá hạn chưa xử lý</h3>
+        <span class="b ${openQuaHan.length?'br':'bg'}">${nint_(openQuaHan.length)} việc</span></div>
+      <div class="cb">
+        <div class="tw" style="max-height:42vh"><table>
+          <thead><tr><th>Mã máy</th><th>Đơn vị · Trại</th><th>Hạng mục</th>
+            <th style="text-align:right">Đã chạy (h)</th><th style="text-align:right">Chu kỳ (h)</th>
+            <th style="text-align:right">Quá</th><th>Mức nếu xử lý hôm nay</th><th>Vận hành</th></tr></thead>
+          <tbody>${openRows || '<tr><td colspan="8"><div class="empty">✅ Không còn việc nào quá hạn.</div></td></tr>'}</tbody>
+        </table></div>
+        ${openQuaHan.length > 40 ? `<div style="font-size:10px;color:var(--mu);margin-top:8px">Hiện 40 việc quá hạn nặng nhất — xem đầy đủ ở trang Cảnh báo.</div>` : ''}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><h3>📋 Chi tiết từng lần xử lý</h3><span class="b bmu">${nint_(done.length)} bản ghi</span></div>
+      <div class="cb">
+        <div class="tw" style="max-height:48vh"><table>
+          <thead><tr><th>Ngày</th><th>Mã máy</th><th>Đơn vị · Trại</th><th>Hạng mục</th>
+            <th style="text-align:right">Bộ đếm khi thay</th><th style="text-align:right">Chu kỳ</th>
+            <th style="text-align:right">Quá hạn</th><th>Mức</th><th>Người thực hiện</th></tr></thead>
+          <tbody>${chiTiet || '<tr><td colspan="9"><div class="empty">Chưa có bản ghi nào chấm được trong kỳ.</div></td></tr>'}</tbody>
+        </table></div>
+        ${done.length > 120 ? `<div style="font-size:10px;color:var(--mu);margin-top:8px">Hiện 120 bản ghi mới nhất — bấm “Xuất CSV” để lấy đủ.</div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function exportBdKpiCsv(){
+  const done = bdKpiFiltered_(bdKpiAnalyze_().done);
+  if (!done.length){ toast('Chưa có dữ liệu để xuất','err'); return; }
+  const rows = done.map(d => ({
+    'Ngày thực hiện': d.ngay,
+    'Mã máy': d.may,
+    'Đơn vị · Trại': d.site,
+    'Khu vực': d.khu,
+    'Hạng mục': d.ten,
+    'Giờ bộ đếm khi thay': d.gap,
+    'Chu kỳ định mức (h)': d.cyc,
+    'Quá hạn (%)': Math.round(d.pct),
+    'Mức đánh giá': d.lv ? d.lv.label.replace(/^[^ ]+ /,'') : '',
+    'Điểm': d.lv ? d.lv.diem : '',
+    'Người thực hiện': d.nguoi,
+  }));
+  exportCsv({ headers:Object.keys(rows[0]), rows }, 'hieu-qua-bdsc-' + S.bdKpi.days + 'ngay');
+}
+
 S.bdHist = S.bdHist || { loaded:false, rows:[], loading:false };
 
 async function bdLoadHistory(){
