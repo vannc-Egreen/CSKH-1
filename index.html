@@ -5797,9 +5797,13 @@ async function fixNumFormat(){
     S.gio.loaded = false;
     await reloadAll();
     loadGio_();
+    const bad = res.bad || [];
     toast(res.fixed
       ? `✓ Đã sửa ${res.fixed} ô: ${(res.cells||[]).slice(0,3).join(' · ')}${res.fixed>3?' …':''}`
       : `Không có ô nào sai kiểu · đã thống nhất định dạng ${res.cols} cột`, 'ok');
+    /* Ô là chữ nhưng KHÔNG ép được về số thì phải nói ra. Im lặng ở đây nghĩa là người
+     * dùng chạy xong, thấy "0 ô", rồi tưởng sheet đã sạch trong khi #VALUE! vẫn nguyên. */
+    if (bad.length) toast(`⚠ ${bad.length} ô là chữ, không ép được về số — phải sửa tay: ${bad.slice(0,2).join(' · ')}`, 'err');
   } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
 }
 
@@ -8933,6 +8937,13 @@ function roundedSheet_(src){
  *  Số được ghi ra dạng THÔ (1234.56, dấu chấm) và để Excel tự định dạng — ghi ra
  *  chuỗi đã format sẵn là biến cột số thành cột chữ, cộng SUM không ra gì.
  * -------------------------------------------------------------------------- */
+/** Chuỗi tiếng Việt → mẩu tên file an toàn: bỏ dấu, thay khoảng trắng bằng gạch. */
+function qSlug_(s){
+  return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/đ/gi,'d').toLowerCase()
+    .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40);
+}
+
 function exportXls_(name, title, cols, rows){
   const esch = v => String(v == null ? '' : v)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -10270,6 +10281,9 @@ const Q = {
      * đơn vị hợp tác) để không phải học lại cách lọc ở mỗi trang. costFlag lọc theo kết
      * luận đánh giá: '' | 'over' | 'under' | 'ok' | 'nodata'. */
     costQ:'', costRegion:new Set(), costType:new Set(), costUnit:new Set(), costFlag:'',
+    /* Lọc theo LOẠI VẬT TƯ. Rỗng = tính tổng mọi loại (mặc định). Danh sách chip dựng
+     * từ "10. Danh mục vật tư" nên thêm/bớt vật tư ở đó là chip tự mọc/tự mất theo. */
+    costVt:new Set(),
   },
 };
 
@@ -12129,7 +12143,12 @@ function viewMatCost(){
    *  Ngược lại, các ô TỔNG thì có tính lại theo tập lọc — vì chúng trả lời câu "nhóm máy
    *  đang xem tốn bao nhiêu", không phải câu "máy này có bất thường không".
    * ---------------------------------------------------------------------- */
-  const all = d.rows || [];
+  /* CƠ SỞ TÍNH đã được qCostBase_() dựng lại theo bộ lọc vật tư — xem chú thích ở đó.
+   * Không lọc vật tư thì nó trả về nguyên số liệu backend, y như trước. */
+  const base = qCostBase_();
+  const all = base.rows;
+  const vtOn = base.vtOn;
+  const vtLabel = qCostVtLabel_();
   const lh  = r => String(r.loaiHinh||'').trim() || (qMachineOf_(r.code) ? String(qMachineOf_(r.code)._byLetter[COL.LOAI]||'').trim() : '');
   const kv  = r => String(r.region||'').trim()   || (qMachineOf_(r.code) ? String(qMachineOf_(r.code)._byLetter[COL.KHU]||'').trim()  : '');
   const dv  = r => String(r.donVi||'').trim()    || (qMachineOf_(r.code) ? String(qMachineOf_(r.code)._byLetter[COL.DONVI]||'').trim(): '');
@@ -12164,7 +12183,7 @@ function viewMatCost(){
 
   const tongTien = rows.reduce((s,r)=>s+(r.cost||0),0);
   const tongKwh  = rows.reduce((s,r)=>s+(r.kwh||0),0);
-  const nLoc = fReg.size + fTyp.size + fUnit.size + (fFlag?1:0) + (qs?1:0);
+  const nLoc = fReg.size + fTyp.size + fUnit.size + (fFlag?1:0) + (qs?1:0) + Q.f.costVt.size;
   const daLoc = rows.length !== all.length;
 
   /* Dải "Trung bình theo dòng máy" chỉ bày những dòng máy CÒN trong tập lọc — nhưng con
@@ -12172,7 +12191,7 @@ function viewMatCost(){
    * trung bình khác với mốc đang so là cách chắc chắn khiến người đọc tự tính lệch bằng
    * tay rồi thấy không khớp với cột Lệch ngay bên cạnh. */
   const modelsLoc = new Set(rows.map(r=>r.model));
-  const avgLoc = (d.avgByModel||[]).filter(a => modelsLoc.has(a.model));
+  const avgLoc = base.avg.filter(a => modelsLoc.has(a.model));
 
   const chipM = (v,set,key) => `<button class="fchip ${set.has(v)?'on':''}"
       onclick="qToggle(Q.f.${key},'${esc(v)}');renderPage('matcost')">${esc(v)}</button>`;
@@ -12187,11 +12206,29 @@ function viewMatCost(){
         ${types.map(v=>chipM(v,fTyp,'costType')).join('')}</div>`:''}
       ${units.length?`<div class="msg"><span class="mslbl">Đơn vị hợp tác</span>
         ${units.map(v=>chipM(v,fUnit,'costUnit')).join('')}</div>`:''}
+      ${(()=>{
+        /* Danh sách chip dựng THẲNG từ "10. Danh mục vật tư" qua qItems_(), nên thêm
+         * hoặc ngừng dùng một vật tư ở đó là chip tự mọc/tự mất theo — không có bảng
+         * cứng nào ở đây phải nhớ sửa cho khớp. Vật tư đã ngừng dùng bị loại sẵn. */
+        const cat = qItems_();
+        if (!cat.length) return '';
+        const byVt = new Map(qCostByVt_().rows.map(x => [x.vt, x]));
+        const chipV = v => {
+          const on = Q.f.costVt.has(v.vt);
+          const g = byVt.get(v.vt);
+          return `<button class="fchip ${on?'on':''}" title="${esc(v.ten)}${g?` · ${nint_(g.nMay)} máy đã dùng · ${vnd0_(g.tien)} đ`:' · chưa máy nào dùng trong tháng này'}"
+            onclick="qToggle(Q.f.costVt,'${esc(v.vt)}');renderPage('matcost')">${esc(v.ten)}${g?` · ${nint_(g.nMay)}`:''}</button>`;
+        };
+        return `<div class="msg"><span class="mslbl">Vật tư</span>
+          <button class="fchip ${Q.f.costVt.size?'':'on'}" title="Cộng tất cả các loại vật tư"
+            onclick="Q.f.costVt.clear();renderPage('matcost')">Tất cả</button>
+          ${cat.map(chipV).join('')}</div>`;
+      })()}
       <div class="msg"><span class="mslbl">Đánh giá</span>
         ${chipF('over','⛔ Vượt trung bình',nOverAll)}
         ${chipF('under','🔎 Thấp bất thường',nUnderAll)}
         ${chipF('ok','✅ Bình thường',nOkAll)}
-        ${chipF('nodata','— Chưa có điện phát',nNoAll)}
+        ${chipF('nodata', vtOn?'— Chưa dùng loại này':'— Chưa có điện phát', nNoAll)}
       </div>
       <div class="msg">
         <!-- id BẮT BUỘC — renderPage() chỉ trả lại con trỏ cho input CÓ id. Thiếu id là
@@ -12203,12 +12240,21 @@ function viewMatCost(){
     </div>`;
 
   return head + filterBar + `
+    ${vtOn?`<div class="card" style="border-left:4px solid var(--bl);margin-bottom:12px"><div class="cb" style="padding:10px 14px;font-size:11px;line-height:1.7">
+      <b style="color:var(--s2)">Đang chỉ tính riêng: ${esc(vtLabel)}.</b>
+      Mọi con số trên trang — chi phí, đ/kWh, trung bình dòng máy, cột Lệch — đều đã <b>tính lại</b> trên cơ sở này.
+      Nếu chỉ lọc tiền mà giữ nguyên mốc trung bình của tổng mọi vật tư thì cả đội máy sẽ hiện “Thấp bất thường”, và bộ lọc thành ra làm sai kết luận.<br>
+      Máy <b>không dùng loại này</b> trong tháng được xếp vào nhóm “chưa có số liệu”, KHÔNG tính là 0 đ/kWh —
+      cho số 0 vào phép trung bình sẽ kéo mốc xuống sát đáy và biến mọi máy có dùng thành “vượt”.
+      <span style="color:var(--mu)">Bấm chip <b>Tất cả</b> ở dải Vật tư để quay lại tổng mọi loại.</span>
+    </div></div>`:''}
+
     <!-- Mọi thẻ số liệu ở đây BẤM ĐƯỢC: một con số tổng mà không mở ra được các máy
          cấu thành nó thì KTV chỉ còn cách tin hoặc không tin, không có cách kiểm. -->
     <div class="krow r1">
       <div class="kcard" style="cursor:pointer" title="Bấm để xem từng máy góp bao nhiêu vào con số này"
            onclick="qCostDrill('cost')">
-        <div class="klbl">Tổng chi phí vật tư 🔍</div><div class="kval">${fmtVnd_(tongTien)}</div>
+        <div class="klbl">${vtOn?'Chi phí · '+esc(vtLabel):'Tổng chi phí vật tư'} 🔍</div><div class="kval">${fmtVnd_(tongTien)}</div>
         <div class="ksub">tháng ${esc(d.monthLabel)}${daLoc?` · chỉ ${nint_(rows.length)}/${nint_(all.length)} máy đang lọc`:''}</div></div>
       <div class="kcard" style="cursor:pointer" title="Bấm để xem điện phát từng máy"
            onclick="qCostDrill('kwh')">
@@ -12234,6 +12280,54 @@ function viewMatCost(){
         rồi bấm vào một ô vật tư trong dải TỔNG để điền đơn giá.
       </div>
     </div></div>`:''}
+
+    ${(()=>{
+      const g = qCostByVt_();
+      if (!g.rows.length) return '';
+      const maxT = Math.max.apply(null, g.rows.map(x=>x.tien));
+      return `<div class="card"><div class="ch"><h3>Chi phí theo loại vật tư</h3>
+        <span class="b bmu">${nint_(g.nMay)} máy đang lọc · tổng ${fmtVnd_(g.tong)}</span>
+        <button class="btn bg-gr sm" onclick="qCostExportByVt()">⤓ Excel</button></div>
+        <div class="tw" style="max-height:40vh"><table>
+          <thead><tr><th>Vật tư</th><th style="text-align:right">Số lượng</th><th style="text-align:center">ĐVT</th>
+            <th style="text-align:right">Đơn giá TB (đ)</th><th style="text-align:right">Thành tiền (đ)</th>
+            <th style="width:130px">% tổng</th><th style="text-align:center">Số máy</th>
+            <th style="text-align:center">Số phiếu</th><th></th></tr></thead>
+          <tbody>${g.rows.map(x=>{
+            const on = Q.f.costVt.has(x.vt);
+            return `<tr style="${on?'background:#f0fdf4':''}">
+              <td><b style="cursor:pointer;text-decoration:underline dotted"
+                     title="Bấm để chỉ tính riêng loại vật tư này"
+                     onclick="qToggle(Q.f.costVt,'${esc(x.vt)}');renderPage('matcost')">${esc(x.ten)}</b>
+                  <span style="font-size:10px;color:var(--mu)"> ${esc(x.vt)}</span></td>
+              <td style="text-align:right">${fmt2_(x.sl)}</td>
+              <td style="text-align:center;font-size:11px;color:var(--mu)">${esc(x.dvt||'')}</td>
+              <td style="text-align:right;font-family:var(--mono)">${x.donGiaTB==null?'—':vnd0_(x.donGiaTB)}</td>
+              <td style="text-align:right;font-family:var(--mono)"><b>${vnd0_(x.tien)}</b></td>
+              <td><div style="display:flex;align-items:center;gap:6px">
+                <div style="flex:1;height:7px;background:#eef2f7;border-radius:4px;overflow:hidden">
+                  <div style="height:100%;width:${maxT>0?(x.tien/maxT*100):0}%;background:var(--s3)"></div></div>
+                <span style="font-size:10px;color:var(--mu);min-width:42px;text-align:right">${x.pct==null?'—':fmt2_(x.pct)+'%'}</span>
+              </div></td>
+              <td style="text-align:center">${nint_(x.nMay)}</td>
+              <td style="text-align:center">${nint_(x.phieu)}</td>
+              <td><button class="btn ${on?'bg-g':'bg-gr'} sm"
+                    onclick="qToggle(Q.f.costVt,'${esc(x.vt)}');renderPage('matcost')">${on?'✓ đang lọc':'Lọc'}</button></td>
+            </tr>`;
+          }).join('')}</tbody>
+          ${g.rows.length>1?`<tfoot><tr style="font-weight:700;background:#f8fafc">
+            <td>TỔNG ${nint_(g.rows.length)} loại</td><td colspan="3"></td>
+            <td style="text-align:right;font-family:var(--mono)">${vnd0_(g.tong)}</td>
+            <td colspan="4"></td></tr></tfoot>`:''}
+        </table></div>
+        <div class="cb" style="font-size:11px;color:var(--mu);line-height:1.7">
+          Bảng này luôn bày <b>đủ mọi loại vật tư</b>, kể cả loại đang không được chọn — vì đây chính là chỗ để chọn.
+          Nó theo tập máy đang lọc theo khu vực / loại hình / đơn vị, nhưng <b>không</b> theo chip “Đánh giá”.
+          Danh sách loại vật tư lấy thẳng từ <b onclick="nav('vtcat')" style="color:var(--bl);cursor:pointer;text-decoration:underline">Danh mục vật tư</b> —
+          thêm hoặc ngừng dùng ở đó thì bộ lọc tự đổi theo.
+        </div>
+      </div>`;
+    })()}
 
     <div class="card"><div class="ch"><h3>Trung bình theo dòng máy</h3>
       <span class="b bmu">mốc so sánh: TOÀN ĐỘI, không đổi theo bộ lọc</span></div><div class="cb">
@@ -12272,7 +12366,8 @@ function viewMatCost(){
                 title="Bấm để xem các máy cùng dòng đã tạo ra con số trung bình này"
                 onclick="qCostDrill('model','${esc(r.model)}')">${r.modelAvg!=null?fmt2_(r.modelAvg):'—'}</td>
             <td style="text-align:right">${r.devPct!=null?`<span class="b ${cls}">${r.devPct>0?'+':''}${fmt2_(r.devPct)}%</span>`:'—'}</td>
-            <td>${r.flag?`<span class="b ${cls}">${esc(r.flag)}</span>`:'—'}</td>
+            <td>${r.flag?`<span class="b ${cls}">${esc(r.flag)}</span>`
+                  :(r.chuaDung?`<span class="b bmu" title="Tháng này máy không có phiếu xuất loại vật tư đang lọc — nên không đưa vào phép trung bình">chưa dùng loại này</span>`:'—')}</td>
             <td style="font-size:10px;color:var(--mu);max-width:260px;cursor:pointer"
                 onclick="qCostMachine('${esc(r.code)}')">${esc(det||'—')}</td>
           </tr>`;
@@ -12347,10 +12442,11 @@ function qCostDrill(kind, model){
     </tr>`;
   }).join('') || '<tr><td colspan="10"><div class="empty">Không có máy nào.</div></td></tr>';
 
+  const vtL = qCostVtLabel_();
   openOv(`
     <div class="mh">
-      <div><h2>🔍 ${esc(title)} · tháng ${esc(d.monthLabel)}</h2>
-      <p>${note}</p></div>
+      <div><h2>🔍 ${esc(title)}${vtL?` · chỉ tính ${esc(vtL)}`:''} · tháng ${esc(d.monthLabel)}</h2>
+      <p>${note}${vtL?` <b style="color:var(--s2)">Mọi con số dưới đây chỉ gồm ${esc(vtL)}, và mốc trung bình cũng đã tính lại trên cùng cơ sở đó.</b>`:''}</p></div>
       <button class="mcl" onclick="closeOv()">✕</button>
     </div>
     <div class="mb">
@@ -12383,10 +12479,11 @@ function qCostDrill(kind, model){
 function qCostExportDrill(){
   const dr = Q._drill; if (!dr){ toast('Chưa có bảng nào để xuất','err'); return; }
   const d = Q.matCost || {};
+  const vt = qCostVtLabel_();
   exportXls_(
     'chi-phi-vat-tu-' + (dr.kind === 'model' ? String(dr.model).toLowerCase() : dr.kind)
-      + '-' + String(d.monthLabel||'').replace('/','-'),
-    dr.title + ' · tháng ' + (d.monthLabel||''),
+      + (vt ? '-' + qSlug_(vt) : '') + '-' + String(d.monthLabel||'').replace('/','-'),
+    dr.title + (vt ? ' · chỉ tính ' + vt : '') + ' · tháng ' + (d.monthLabel||''),
     [{key:'code',label:'Mã máy',type:'text'}, {key:'site',label:'Trang trại',type:'text'},
      {key:'model',label:'Dòng máy',type:'text'}, {key:'loaiHinh',label:'Loại hình',type:'text'},
      {key:'cost',label:'Chi phí VT (đ)',type:'money'}, {key:'kwh',label:'Điện phát (kWh)',type:'num'},
@@ -12402,8 +12499,12 @@ function qCostExportDrill(){
 /** Bóc tách MỘT MÁY: từng loại vật tư đã dùng trong tháng, SL, tiền, số phiếu. */
 function qCostMachine(code){
   const d = Q.matCost; if (!d || !d.ok){ toast('Chưa có dữ liệu chi phí','err'); return; }
-  const r = (d.rows||[]).find(x => String(x.code).toUpperCase() === String(code).toUpperCase());
+  /* Đọc từ qCostBase_() chứ không từ d.rows: đang lọc "Nhớt" mà bấm vào một máy thì
+   * bảng chi tiết phải nói về nhớt, không phải về tổng mọi vật tư. */
+  const base = qCostBase_();
+  const r = base.rows.find(x => String(x.code).toUpperCase() === String(code).toUpperCase());
   if (!r){ toast('Không thấy máy ' + code + ' trong tháng này','err'); return; }
+  const vtLabel = qCostVtLabel_();
 
   const items = (r.items || []).slice();
   Q._drillM = { code:r.code, items:items, row:r };
@@ -12424,7 +12525,7 @@ function qCostMachine(code){
   openOv(`
     <div class="mh">
       <div><h2>🔍 Vật tư đã dùng · ${codeFarmLine_(String(r.code))}</h2>
-      <p>Tháng ${esc(d.monthLabel)} · chỉ tính phiếu <b>Xuất – Sử dụng</b>.
+      <p>Tháng ${esc(d.monthLabel)}${base.vtOn?` · <b style="color:var(--s2)">đang chỉ tính riêng ${esc(vtLabel)}</b>`:''} · chỉ tính phiếu <b>Xuất – Sử dụng</b>.
       Phiếu <b>Mang đi</b> làm giảm tồn kho nhưng KHÔNG tính vào chi phí máy này — vật tư rời trại đi nơi khác,
       tính vào đây thì đ/kWh vọt lên vì một món hàng máy chưa hề dùng.
       <b>Đơn giá TB</b> = thành tiền ÷ số lượng, nên nó phản ánh giá thực tế đã ghi trên phiếu chứ không phải giá đang khai ở Sheet 11.</p></div>
@@ -12481,9 +12582,13 @@ function qCostExportMachine(){
 function qCostExportMain(){
   const d = Q.matCost || {};
   const rows = qCostFiltered_();
+  /* Tên file và tiêu đề PHẢI mang theo loại vật tư đang lọc. Hai file cùng tên
+   * "chi-phi-vat-tu-09-2026" mà một cái là tổng, một cái chỉ nhớt, thì đến tuần sau
+   * không ai phân biệt được — và con số trong đó thì trông vẫn hợp lý như nhau. */
+  const vt = qCostVtLabel_();
   exportXls_(
-    'chi-phi-vat-tu-' + String(d.monthLabel||'').replace('/','-'),
-    'Chi phí vật tư theo máy · tháng ' + (d.monthLabel||''),
+    'chi-phi-vat-tu-' + (vt ? qSlug_(vt) + '-' : '') + String(d.monthLabel||'').replace('/','-'),
+    'Chi phí vật tư theo máy' + (vt ? ' · chỉ tính ' + vt : '') + ' · tháng ' + (d.monthLabel||''),
     [{key:'code',label:'Mã máy',type:'text'}, {key:'site',label:'Trang trại',type:'text'},
      {key:'model',label:'Dòng máy',type:'text'}, {key:'loaiHinh',label:'Loại hình',type:'text'},
      {key:'cost',label:'Chi phí VT (đ)',type:'money'}, {key:'kwh',label:'Điện phát (kWh)',type:'num'},
@@ -12494,6 +12599,22 @@ function qCostExportMain(){
       site: r.site || farmOfCode_(r.code) || '',
       _vt: Object.keys(r.detail||{}).map(k=>`${k}: ${r.detail[k]}`).join(' · ')
     })));
+}
+
+/** Bảng gộp theo LOẠI VẬT TƯ đang hiện trên màn hình. */
+function qCostExportByVt(){
+  const d = Q.matCost || {};
+  const g = qCostByVt_();
+  if (!g.rows.length){ toast('Không có phiếu xuất nào trong tập đang lọc','err'); return; }
+  exportXls_(
+    'chi-phi-theo-loai-vat-tu-' + String(d.monthLabel||'').replace('/','-'),
+    'Chi phí theo loại vật tư · tháng ' + (d.monthLabel||'') + ' · ' + g.nMay + ' máy',
+    [{key:'vt',label:'Mã VT',type:'text'}, {key:'ten',label:'Tên vật tư',type:'text'},
+     {key:'sl',label:'Số lượng',type:'num'}, {key:'dvt',label:'ĐVT',type:'text'},
+     {key:'donGiaTB',label:'Đơn giá TB (đ)',type:'money'}, {key:'tien',label:'Thành tiền (đ)',type:'money'},
+     {key:'pct',label:'% tổng',type:'num'}, {key:'nMay',label:'Số máy',type:'int'},
+     {key:'phieu',label:'Số phiếu',type:'int'}],
+    g.rows);
 }
 
 /** Một dòng cho MỖI CẶP (máy, vật tư) — bảng để lọc/pivot trong Excel. */
@@ -12522,29 +12643,133 @@ function qCostExportItems(){
 
 function qClearCostFilters(){
   Q.f.costQ = ''; Q.f.costFlag = '';
-  Q.f.costRegion.clear(); Q.f.costType.clear(); Q.f.costUnit.clear();
+  Q.f.costRegion.clear(); Q.f.costType.clear(); Q.f.costUnit.clear(); Q.f.costVt.clear();
   renderPage('matcost');
 }
 
 /** Tập máy đang hiện ở trang Chi phí — dùng chung cho bảng và cho nút xuất CSV,
  *  để file tải về khớp đúng cái đang nhìn thấy trên màn hình. */
-function qCostFiltered_(){
-  const d = Q.matCost; if (!d || !d.ok) return [];
-  const mOf = c => qMachineOf_(c);
-  const lh = r => String(r.loaiHinh||'').trim() || (mOf(r.code) ? String(mOf(r.code)._byLetter[COL.LOAI]||'').trim() : '');
-  const kv = r => String(r.region||'').trim()   || (mOf(r.code) ? String(mOf(r.code)._byLetter[COL.KHU]||'').trim()  : '');
-  const dv = r => String(r.donVi||'').trim()    || (mOf(r.code) ? String(mOf(r.code)._byLetter[COL.DONVI]||'').trim(): '');
-  const flagKey = r => r.costPerKwh==null ? 'nodata'
-    : r.flag==='Vượt trung bình' ? 'over' : r.flag==='Thấp bất thường' ? 'under' : 'ok';
-  const qs = (Q.f.costQ||'').toLowerCase().trim();
-  return (d.rows||[]).filter(r => {
-    if (Q.f.costRegion.size && !Q.f.costRegion.has(kv(r))) return false;
-    if (Q.f.costType.size   && !Q.f.costType.has(lh(r)))   return false;
-    if (Q.f.costUnit.size   && !Q.f.costUnit.has(dv(r)))   return false;
-    if (Q.f.costFlag && flagKey(r) !== Q.f.costFlag)       return false;
-    if (!qs) return true;
-    return `${r.code} ${r.model} ${r.site} ${dv(r)} ${kv(r)}`.toLowerCase().includes(qs);
+/* ============================================================================
+ *  LỌC THEO LOẠI VẬT TƯ
+ * ----------------------------------------------------------------------------
+ *  Chọn "Nhớt" thì con số của mọi máy phải được TÍNH LẠI trên cơ sở chỉ-nhớt: chi phí,
+ *  đ/kWh, trung bình dòng máy, và cả cột Lệch. Nếu chỉ lọc chi phí mà giữ nguyên
+ *  modelAvg do backend tính trên TỔNG mọi vật tư, thì tiền tử số tụt xuống còn mẫu số
+ *  so sánh vẫn ở mức cũ — cả đội máy lập tức hiện "Thấp bất thường". Một bộ lọc làm
+ *  sai kết luận còn tệ hơn không có bộ lọc.
+ *
+ *  Trung bình vẫn tính trên TOÀN ĐỘI, không tính theo khu vực/đơn vị đang lọc — giữ
+ *  đúng nguyên tắc cũ: mốc so sánh không được đổi theo chip người xem đang bấm.
+ *
+ *  Máy KHÔNG dùng loại vật tư đang lọc → costPerKwh = null chứ không phải 0. Cho số 0
+ *  vào phép trung bình sẽ kéo mốc xuống sát đáy và biến mọi máy có dùng thành "vượt".
+ *  "Tháng này không thay nhớt" là chưa có số liệu, không phải hao 0 đ/kWh.
+ * ========================================================================== */
+function qCostBase_(){
+  const d = Q.matCost;
+  if (!d || !d.ok) return { rows:[], avg:[], vtOn:false };
+  const sel = Q.f.costVt;
+  if (!sel || !sel.size) return { rows: d.rows||[], avg: d.avgByModel||[], vtOn:false };
+
+  const r2 = v => Math.round(v*100)/100;
+  const lim = Number(d.deviationPct) || 30;
+
+  const rows = (d.rows||[]).map(r => {
+    const items = (r.items||[]).filter(x => sel.has(String(x.vt||'').toUpperCase()));
+    const cost = r2(items.reduce((s,x)=>s+(x.tien||0),0));
+    const detail = {}; items.forEach(x => { detail[x.ten] = x.sl; });
+    const dung = items.length > 0;
+    return Object.assign({}, r, {
+      items, cost, detail, chuaDung: !dung,
+      costPerKwh: (dung && r.kwh > 0) ? r2(cost/r.kwh) : null,
+      modelAvg:null, devPct:null, flag:''
+    });
   });
+
+  const by = new Map();
+  rows.forEach(r => { if (r.costPerKwh == null) return;
+    const a = by.get(r.model) || { s:0, n:0 }; a.s += r.costPerKwh; a.n++; by.set(r.model, a); });
+  const avgMap = new Map([...by].map(([k,v]) => [k, r2(v.s/v.n)]));
+
+  rows.forEach(r => {
+    const a = avgMap.get(r.model);
+    r.modelAvg = (a != null) ? a : null;
+    r.devPct = (a && a > 0 && r.costPerKwh != null) ? r2((r.costPerKwh - a)/a*100) : null;
+    r.flag = r.devPct == null ? ''
+      : (r.devPct >  lim ? 'Vượt trung bình'
+      : (r.devPct < -lim ? 'Thấp bất thường' : 'Bình thường'));
+  });
+
+  return { rows,
+           avg: [...avgMap].map(([model,v]) => ({ model, avgCostPerKwh:v, n: by.get(model).n })),
+           vtOn:true };
+}
+
+/** Tên hiển thị của bộ lọc vật tư đang bật — dùng trong tiêu đề, chú thích, tên file. */
+function qCostVtLabel_(){
+  const sel = Q.f.costVt;
+  if (!sel || !sel.size) return '';
+  const ten = qItems_().filter(v => sel.has(v.vt)).map(v => v.ten);
+  return ten.length ? ten.join(' + ') : [...sel].join(' + ');
+}
+
+/** Bộ lọc theo VỊ TRÍ (khu vực / loại hình / đơn vị / ô tìm) — tách riêng vì bảng
+ *  "Chi phí theo loại vật tư" cần đúng tập máy này nhưng KHÔNG lọc theo vật tư,
+ *  nếu không thì bấm vào một loại là các loại còn lại biến mất khỏi bảng chọn. */
+function qCostLocPass_(r){
+  const mOf = c => qMachineOf_(c);
+  const lh = String(r.loaiHinh||'').trim() || (mOf(r.code) ? String(mOf(r.code)._byLetter[COL.LOAI]||'').trim() : '');
+  const kv = String(r.region||'').trim()   || (mOf(r.code) ? String(mOf(r.code)._byLetter[COL.KHU]||'').trim()  : '');
+  const dv = String(r.donVi||'').trim()    || (mOf(r.code) ? String(mOf(r.code)._byLetter[COL.DONVI]||'').trim(): '');
+  if (Q.f.costRegion.size && !Q.f.costRegion.has(kv)) return false;
+  if (Q.f.costType.size   && !Q.f.costType.has(lh))   return false;
+  if (Q.f.costUnit.size   && !Q.f.costUnit.has(dv))   return false;
+  const qs = (Q.f.costQ||'').toLowerCase().trim();
+  if (!qs) return true;
+  return `${r.code} ${r.model} ${r.site} ${dv} ${kv}`.toLowerCase().includes(qs);
+}
+
+function qCostFlagKey_(r){
+  return r.costPerKwh==null ? 'nodata'
+    : r.flag==='Vượt trung bình' ? 'over'
+    : r.flag==='Thấp bất thường' ? 'under' : 'ok';
+}
+
+function qCostFiltered_(){
+  return qCostBase_().rows.filter(r =>
+    qCostLocPass_(r) && (!Q.f.costFlag || qCostFlagKey_(r) === Q.f.costFlag));
+}
+
+/** Gộp chi phí theo TỪNG LOẠI VẬT TƯ trên tập máy đang lọc theo vị trí.
+ *  Cố ý KHÔNG áp bộ lọc vật tư vào đây: bảng này là chỗ để CHỌN loại vật tư, nên nó
+ *  phải luôn bày đủ mọi loại — kể cả loại đang không được chọn. */
+function qCostByVt_(){
+  const d = Q.matCost; if (!d || !d.ok) return { rows:[], nMay:0, tong:0 };
+  const cat = qItems_();
+  const order = new Map(cat.map((v,i) => [v.vt, i]));
+  const ten = new Map(cat.map(v => [v.vt, v.ten]));
+  const dvtOf = new Map(cat.map(v => [v.vt, v.dvt]));
+
+  const agg = new Map();
+  const base = (d.rows||[]).filter(qCostLocPass_);
+  base.forEach(r => (r.items||[]).forEach(x => {
+    const vt = String(x.vt||'').toUpperCase(); if (!vt) return;
+    const a = agg.get(vt) || { vt, ten: ten.get(vt) || x.ten || vt, dvt: dvtOf.get(vt) || x.dvt || '',
+                               sl:0, tien:0, phieu:0, may:new Set() };
+    a.sl += (x.sl||0); a.tien += (x.tien||0); a.phieu += (x.phieu||0); a.may.add(r.code);
+    agg.set(vt, a);
+  }));
+
+  const tong = [...agg.values()].reduce((s,a)=>s+a.tien, 0);
+  const rows = [...agg.values()].map(a => ({
+    vt:a.vt, ten:a.ten, dvt:a.dvt,
+    sl: Math.round(a.sl*100)/100, tien: Math.round(a.tien*100)/100,
+    phieu:a.phieu, nMay:a.may.size,
+    pct: tong > 0 ? Math.round(a.tien/tong*10000)/100 : null,
+    donGiaTB: a.sl > 0 ? Math.round(a.tien/a.sl*100)/100 : null
+  }));
+  rows.sort((x,y) => y.tien - x.tien || (order.get(x.vt)??99) - (order.get(y.vt)??99));
+  return { rows, nMay: base.length, tong: Math.round(tong*100)/100 };
 }
 
 async function afterMatCost(){
@@ -12567,7 +12792,9 @@ function qExportCost(){
       'Loại hình':r.loaiHinh||'','Khu vực':r.region||'','Trại':r.site,
       'Chi phí VT (đ)':r.cost,'Điện phát (kWh)':r.kwh,'đ/kWh':r.costPerKwh??'',
       'TB dòng máy':r.modelAvg??'','Lệch %':r.devPct??'','Đánh giá':r.flag })),
-  }, 'chi-phi-vat-tu-'+String(d.monthLabel).replace('/','-')
+  }, 'chi-phi-vat-tu-'
+     + (qCostVtLabel_() ? qSlug_(qCostVtLabel_()) + '-' : '')
+     + String(d.monthLabel).replace('/','-')
      + (rows.length !== (d.rows||[]).length ? '-da-loc' : ''));
 }
 
