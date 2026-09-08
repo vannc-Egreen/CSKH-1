@@ -5412,6 +5412,31 @@ function openResetForm(code){
           </div>
         </div>
       </div>
+      <div class="fsec">
+        <div class="fsh"><div class="fsn">3</div><div class="fst">Thay MÀN HÌNH hay thay MÁY? · hai việc khác hẳn nhau</div></div>
+        <div class="fgrid">
+          <div class="iw"><div class="il">Loại việc</div>
+            <select class="sel" id="gnThayMay" onchange="var b=document.getElementById('gnSwapBox'); if(b) b.style.display=(this.value==='1'?'':'none')">
+              <option value="0" selected>Thay màn hình / KTV reset bộ đếm — máy vẫn là máy cũ, GIỮ NGUYÊN mốc bảo dưỡng</option>
+              <option value="1">Thay MÁY — cỗ máy là cỗ khác, các hạng mục tích dưới đây đặt lại về 0</option>
+            </select>
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Chọn sai chiều nào cũng hỏng: thay màn hình mà reset mốc là <b>xoá lịch sử</b> của một cỗ máy đang chạy;
+              thay máy mà giữ mốc là cả cụm <b>đỏ rực ngay sau khi vừa làm xong</b>, rồi người vận hành học cách phớt lờ màu đỏ.</div>
+          </div>
+        </div>
+        <div id="gnSwapBox" style="display:none;margin-top:6px">
+          <div class="il">Hạng mục đã được làm mới cùng lúc thay máy — mốc sẽ nhảy lên bằng tổng giờ hiện tại</div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;padding:10px">
+            ${BD.items().filter(it => it.dangDung && it.colT).map(it => {
+              const mac = ['NHOT','LOC_NHOT','DAI_TU'].indexOf(String(it.ma).toUpperCase()) >= 0;
+              return `<label style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600">
+                <input type="checkbox" class="gnSwapIt" value="${esc(it.ma)}" ${mac?'checked':''}> ${esc(it.ten)}</label>`;
+            }).join('')}
+          </div>
+          <div style="font-size:9px;color:var(--mu);margin-top:3px">Mặc định tích <b>Nhớt · Lọc nhớt · Đại tu</b> vì lắp cỗ máy khác vào là ba thứ đó chắc chắn mới.
+            Hạng mục nào máy đang khai <b>X</b> (không áp dụng) thì bỏ qua, không bị bật lại — người ta đã cố ý tắt nó.</div>
+        </div>
+      </div>
       <div class="msg" style="font-size:11px;color:var(--mu);line-height:1.7">
         Sau khi lưu: <b>Giờ bù = Tổng giờ cũ − Số đọc mới</b> (âm hay dương đều hợp lệ), và cột “Số giờ máy chạy”
         ở Sheet 2 được ghi lại đúng bằng tổng giờ cũ. Mọi lượt đồng bộ sau đó tự áp giờ bù nên số không lệch lần nữa.
@@ -5432,13 +5457,31 @@ async function saveResetForm(code){
    * chạy 3.000 h là chuyện có thật, và khi đó giờ bù ÂM mới là con số đúng. */
   setStatus(true,'Đang lưu khai báo…');
   try {
-    const res = await apiPost({ action:'gnReset', maCode:code, tongGioCu:cu, soDocMoi:moi, lyDo:lyDo, user:S.user.name });
+    /* THAY MÁY thì ngoài giờ bù còn phải đặt lại mốc bảo dưỡng. Gửi kèm trong CÙNG
+     * một lượt gọi: tách làm hai lượt thì có ngày lượt sau đứt và để lại một cỗ máy
+     * đã khai thay nhưng mốc vẫn của máy cũ — không ai nhìn ra được từ giao diện. */
+    const thayMay = $('gnThayMay') && $('gnThayMay').value === '1';
+    const resetItems = thayMay
+      ? Array.prototype.slice.call(document.querySelectorAll('.gnSwapIt:checked')).map(el => el.value)
+      : [];
+    if (thayMay && !resetItems.length){
+      toast('Thay máy nhưng chưa chọn hạng mục nào để đặt lại mốc','err');
+      setStatus(false); return;
+    }
+
+    const res = await apiPost({ action:'gnReset', maCode:code, tongGioCu:cu, soDocMoi:moi, lyDo:lyDo,
+      thayMay:thayMay, resetItems:resetItems, user:S.user.name });
     if (!res.ok) throw new Error(res.error);
     closeOv();
     S.gio.loaded = false;
     await reloadAll();
     loadGio_();
-    toast(`✓ ${code}: giờ bù ${res.offset>0?'+':''}${nfmt_(res.offset)} h · tổng giờ giữ nguyên ${nfmt_(res.total)} h`,'ok');
+    const bd = res.bdReset || {};
+    const nReset = (bd.done || []).length;
+    toast(`✓ ${code}: giờ bù ${res.offset>0?'+':''}${nfmt_(res.offset)} h · tổng giờ giữ nguyên ${nfmt_(res.total)} h`
+      + (nReset ? ` · đặt lại mốc ${nReset} hạng mục: ${bd.done.map(x=>x.ten).join(', ')}` : ''),'ok');
+    if (bd.ok === false) toast('⚠ Không đặt lại được mốc: ' + bd.error,'err');
+    else if ((bd.skipped || []).length) toast('⚠ Bỏ qua: ' + bd.skipped[0],'err');
   } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
 }
 
@@ -6158,7 +6201,15 @@ function viewSpec(){
       <button class="btn bg-g" onclick="bdEditItem('')">＋ Thêm hạng mục</button>
       <button class="btn bg-b" onclick="bdRunSync(false)">⟳ Đồng bộ cột Sheet 2</button>
       <button class="btn bg-gr" title="Đổi luôn tiêu đề cột ở Sheet 2 cho khớp tên hạng mục" onclick="bdRunSync(true)">⟳ Đồng bộ + đổi tên cột</button>
+      <button class="btn bg-b" title="Tích chọn máy nào có / không có hạng mục nào" onclick="bdOpenApplyMatrix()">🧩 Áp dụng theo từng máy</button>
     </div>
+    <div class="card" style="border-left:3px solid var(--bl);margin-bottom:12px"><div class="cb" style="padding:10px 14px;font-size:11px;color:var(--mu);line-height:1.7">
+      <b style="color:var(--s2)">Hai tầng lọc, đừng lẫn.</b>
+      <b>“Áp dụng cho”</b> ở bảng dưới lọc theo <b>DÒNG MÁY</b> (<code>*</code>, <code>NS250KVA</code>, <code>!MCM</code>) — khai một lần cho cả dòng.
+      <b>“Áp dụng theo từng máy”</b> lọc theo <b>ĐÚNG MỘT CON MÁY</b> — dùng khi cùng dòng máy mà máy có máy không (bơm nước điện, turbo…).
+      Tầng thứ hai ghi chữ <b>X</b> vào ô “Thời điểm…” của máy đó ở Sheet 2, nên nhìn thẳng sheet là biết,
+      và gõ tay chữ <b>X</b> trên sheet cũng có tác dụng y hệt bấm nút ở đây.
+    </div></div>
     <div class="card"><div class="tw"><table>
       <thead><tr><th>Mã</th><th>Tên hạng mục</th><th>Nhóm</th>
         <th style="text-align:right">Chu kỳ (h)</th><th style="text-align:right">Cảnh báo trước (h)</th>
@@ -10336,7 +10387,16 @@ function qMachineCard_(c){
   const bad = c.sts.filter(x => x.st.kind==='overdue' || x.st.kind==='soon').length;
 
   const cell = ({ it, st }) => {
-    if (st.kind === 'skip') return '';
+    /* Tắt theo DÒNG MÁY (Sheet 3) thì giấu hẳn — cả dòng máy không có thì nhắc làm gì.
+     * Tắt theo TỪNG MÁY thì vẫn hiện, xám: người xem cần thấy "đã cố ý tắt", chứ
+     * không phải "quên khai" — hai thứ đó nhìn giống hệt nhau khi ô trống rỗng. */
+    if (st.kind === 'skip'){
+      if (!st.na) return '';
+      return `<div class="qcell muted" onclick="bdOpenApply('${esc(c.code)}')"
+                   title="Máy này khai không có hạng mục đó — bấm để bật lại">
+        <div class="qct">${esc(it.ten)}</div>
+        <div class="qcs">không áp dụng</div></div>`;
+    }
     const tenVt = it.vt ? ` · ${esc(it.vt)}` : '';
 
     if (st.kind === 'na' || st.kind === 'nocycle'){
@@ -10374,7 +10434,11 @@ function qMachineCard_(c){
           ${esc(c.donVi)} · ${esc(c.khu)} · ODO <b>${c.odo!=null?fmt2_(c.odo):'—'} h</b>
         </div>
       </div>
-      <button class="btn bg-b sm" onclick="openTrackingEdit(${c.row._row})">✎ Cập nhật số giờ</button>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn bg-gr sm" title="Chọn máy này có / không có hạng mục nào"
+                onclick="bdOpenApply('${esc(c.code)}')">🧩 Hạng mục áp dụng</button>
+        <button class="btn bg-b sm" onclick="openTrackingEdit(${c.row._row})">✎ Cập nhật số giờ</button>
+      </div>
     </div>
     <div class="cb"><div class="qgrid">${c.sts.map(cell).join('')}</div></div>
   </div>`;
@@ -12342,10 +12406,26 @@ function bdB_(v, d){
  *  'nocycle' thì KHÁC và vẫn giữ: hạng mục chưa điền chu kỳ ở Sheet 3 thì ta biết máy
  *  đã chạy bao nhiêu nhưng không biết thế là nhiều hay ít. Tô xanh khi đó là nói dối.
  */
+/* ----------------------------------------------------------------------------
+ *  KÝ HIỆU "MÁY NÀY KHÔNG CÓ HẠNG MỤC ĐÓ"
+ *  Giữ HẸP có chủ ý: nếu mọi chuỗi chữ đều tắt được cảnh báo thì một ô lỡ gõ nhầm sẽ
+ *  làm hạng mục biến mất im lặng — kiểu hỏng đắt nhất, vì chẳng có gì để nhìn thấy.
+ *  Phải khớp đúng bộ ký hiệu mà HANGMUCMAY.gs công bố.
+ * -------------------------------------------------------------------------- */
+const BD_NA_RE = /^(x|-|--|\u2013|\u2014|n\/a|na|ko|k|kh[o\u00f4]ng|#)$/i;
+function bdIsNa_(v){
+  const s = String(v == null ? '' : v).trim();
+  return !!s && BD_NA_RE.test(s);
+}
+
 function bdCell_(raw, it){
   const cyc = (it && it.chuKy !== null && it.chuKy !== undefined && it.chuKy > 0) ? it.chuKy : null;
   const s = String(raw == null ? '' : raw).trim();
   if (!s) return { kind:'na', n:null, cyc, remain:null };
+  /* 'skip' + na:true = KHÔNG ÁP DỤNG cho riêng máy này. Khác 'na' (chưa có số liệu)
+   * và khác 'skip' không có na (tắt cả dòng máy ở cột "Áp dụng cho" của Sheet 3) —
+   * ba thứ này trông giống nhau nếu gộp, mà xử lý thì khác hẳn. */
+  if (BD_NA_RE.test(s)) return { kind:'skip', na:true, n:null, cyc, remain:null };
   /* Ô còn sót chữ "⛔ Chưa có mốc" từ bản cũ (chưa chạy lại bdSyncTracking) → coi mốc
    * là 0, tức đã chạy đúng bằng ODO. Không trả 'nobase' nữa: hai bản dữ liệu cũ/mới
    * phải cho ra cùng một kết luận, nếu không thì tuỳ lúc đồng bộ mà máy đổi màu. */
@@ -12365,11 +12445,165 @@ function bdCell_(raw, it){
   return { kind:'ok', n, cyc, remain };
 }
 function bdChip_(st){
+  if (st.kind === 'skip') return `<span class="b bmu" title="Máy này khai KHÔNG có hạng mục đó — ô &quot;Thời điểm…&quot; ở Sheet 2 đang là X">không áp dụng</span>`;
   if (st.kind === 'nocycle') return `<span class="b bmu" title="Hạng mục chưa điền Định mức giờ bảo dưỡng ở Sheet 3">đã chạy ${nfd_(st.n)} h · chưa có chu kỳ</span>`;
   if (st.kind === 'overdue') return `<span class="b br" title="Đã chạy ${nfd_(st.n)} h / chu kỳ ${nfmt_(st.cyc)} h">quá ${nfd_(Math.abs(st.remain))} h</span>`;
   if (st.kind === 'soon')    return `<span class="b ba" title="Đã chạy ${nfd_(st.n)} h / chu kỳ ${nfmt_(st.cyc)} h">còn ${nfd_(st.remain)} h</span>`;
   if (st.kind === 'ok')      return `<span class="b bg" title="Đã chạy ${nfd_(st.n)} h / chu kỳ ${nfmt_(st.cyc)} h">còn ${nfd_(st.remain)} h</span>`;
   return '<span style="color:var(--mu)">—</span>';
+}
+
+/* ============================================================================
+ *  ÁP DỤNG HẠNG MỤC THEO TỪNG MÁY
+ * ----------------------------------------------------------------------------
+ *  Không có "sổ cấu hình" nào ở đây: trạng thái đọc thẳng từ ô Sheet 2 mà web đang
+ *  giữ sẵn trong S.tracking, và lưu bằng cách ghi ngược chữ X vào chính ô đó. Một
+ *  nguồn, một chỗ sửa — nên không có khe nào để web và sheet nói khác nhau.
+ * ========================================================================== */
+function bdOpenApply(code){
+  const CODE = String(code || '').trim();
+  const r = S.tracking.rows.find(x =>
+    String(x._byLetter[COL.MA] || '').trim().toUpperCase() === CODE.toUpperCase());
+  if (!r){ toast('Máy ' + CODE + ' chưa có dòng ở Sheet 2', 'err'); return; }
+
+  const items = BD.items().filter(it => it.dangDung && it.colT && it.colW);
+
+  const line = it => {
+    const rule = !BD.applies(it, CODE);            // tắt theo dòng máy — không sửa lẻ được
+    const off  = bdIsNa_(r[it.colT]);
+    const on   = !rule && !off;
+    const moc  = bdN_(r[it.colT]);
+    return `<tr>
+      <td style="text-align:center"><input type="checkbox" data-ma="${esc(it.ma)}" data-was="${on?'1':'0'}"
+            ${rule?'disabled':''} ${on?'checked':''}></td>
+      <td><b>${esc(it.ten)}</b>
+        <div style="font-size:10px;color:var(--mu)">${esc(it.ma)} · chu kỳ ${it.chuKy==null?'—':nfmt_(it.chuKy)} h</div></td>
+      <td style="text-align:right">${off ? '<span class="b bmu">X</span>'
+          : (moc==null ? '<span style="color:var(--mu)">trống</span>' : nfd_(moc))}</td>
+      <td>${rule ? `<span class="b bmu" title="Sheet 3 · Áp dụng cho = ${esc(it.apDung)}">tắt theo dòng máy</span>`
+          : (off ? '<span class="b bmu">không áp dụng</span>' : '<span class="b bg">đang đếm</span>')}</td>
+    </tr>`;
+  };
+
+  openOv(`
+    <div class="mh">
+      <div><h2>🧩 Hạng mục áp dụng cho ${codeFarmLine_(CODE)}</h2>
+      <p>Bỏ tích = máy này <b>không có</b> hạng mục đó → ghi chữ <b>X</b> vào ô “Thời điểm…” ở Sheet 2, thôi đếm và thôi cảnh báo.
+      Tích lại = khôi phục đúng mốc giờ cũ đã cất ở sổ 33.</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button>
+    </div>
+    <div class="mb">
+      <div class="card"><div class="tw" style="max-height:46vh"><table id="apTbl">
+        <thead><tr><th style="width:44px;text-align:center">Có</th><th>Hạng mục</th>
+          <th style="text-align:right">Mốc đang có</th><th>Trạng thái</th></tr></thead>
+        <tbody>${items.map(line).join('') || '<tr><td colspan="4"><div class="empty">Chưa có hạng mục nào gắn cột ở Sheet 2.</div></td></tr>'}</tbody>
+      </table></div></div>
+      <div class="iw" style="margin-top:10px"><div class="il">Lý do · để người sau đọc hồ sơ còn hiểu</div>
+        <input class="inp" id="apLyDo" placeholder="VD: máy này làm mát bằng bơm cơ, không có bơm nước điện"></div>
+      <div class="msg" style="font-size:11px;color:var(--mu);line-height:1.7;margin-top:8px">
+        Ô bị tắt <b>không mất mốc</b>: con số cũ được cất vào “33. Nhật ký bật/tắt hạng mục theo máy”,
+        bật lại là trả về đúng chỗ. Lịch sử ở Sheet 12 không đụng tới.
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Hủy</button>
+      <button class="btn bg-g" onclick="bdSaveApply('${esc(CODE)}')">💾 Lưu</button>
+    </div>`);
+}
+
+async function bdSaveApply(code){
+  const changes = [];
+  document.querySelectorAll('#apTbl input[type=checkbox][data-ma]').forEach(el => {
+    if (el.disabled) return;
+    if (el.checked !== (el.dataset.was === '1'))
+      changes.push({ maCode: code, ma: el.dataset.ma, ap: el.checked });
+  });
+  if (!changes.length){ closeOv(); toast('Không có thay đổi', 'info'); return; }
+  setStatus(true, 'Đang lưu hạng mục áp dụng…');
+  try {
+    const res = await apiPost({ action:'bdSetApply', changes: changes,
+      lyDo: ($('apLyDo') ? $('apLyDo').value : ''), user: S.user.name });
+    if (!res.ok) throw new Error(res.error);
+    closeOv();
+    await reloadAll();
+    toast(`✓ ${code}: cập nhật ${res.changed} hạng mục`, 'ok');
+    if ((res.skipped || []).length) toast('⚠ ' + res.skipped[0], 'err');
+  } catch(e){ toast('Lỗi: ' + e.message, 'err'); setStatus(false, '❌ ' + e.message, true); }
+}
+
+/** Bảng tích chọn HÀNG LOẠT — máy × hạng mục. Lọc bằng cách ẩn dòng, KHÔNG render lại:
+ *  render lại thì mỗi lần gõ một chữ là mất sạch những ô vừa tích. */
+function bdOpenApplyMatrix(){
+  const items = BD.items().filter(it => it.dangDung && it.colT && it.colW);
+  const mBy = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA] || '').trim(), m]));
+
+  const body = S.tracking.rows.map(r => {
+    const code = String(r._byLetter[COL.MA] || '').trim();
+    if (!code) return '';
+    const m = mBy.get(code);
+    const trai = m ? String(m._byLetter[COL.TRAI] || '') : '';
+    const donVi = m ? String(m._byLetter[COL.DONVI] || '') : '';
+    const tds = items.map(it => {
+      const rule = !BD.applies(it, code);
+      const on = !rule && !bdIsNa_(r[it.colT]);
+      return `<td style="text-align:center">${rule
+        ? '<span style="color:var(--mu)" title="Tắt theo “Áp dụng cho” ở Sheet 3">·</span>'
+        : `<input type="checkbox" data-code="${esc(code)}" data-ma="${esc(it.ma)}" data-was="${on?'1':'0'}" ${on?'checked':''}>`}</td>`;
+    }).join('');
+    return `<tr data-hay="${esc((code + ' ' + donVi + ' ' + trai).toLowerCase())}">
+      <td><span class="mm">${esc(code)}</span></td>
+      <td style="font-size:11px">${esc(trai) || '—'}</td>${tds}</tr>`;
+  }).join('');
+
+  openOv(`
+    <div class="mh">
+      <div><h2>🧩 Áp dụng hạng mục theo từng máy</h2>
+      <p>Bỏ tích = máy đó không có hạng mục đó. Dấu <b>·</b> là đã tắt sẵn theo <b>dòng máy</b> ở cột “Áp dụng cho” (Sheet 3) — sửa ở đó, không sửa lẻ được tại đây.</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button>
+    </div>
+    <div class="mb">
+      <input class="si" style="width:100%;margin-bottom:10px" placeholder="🔍 Lọc theo mã máy, đơn vị, trại…"
+             oninput="bdApFilter(this.value)">
+      <div class="card"><div class="tw" style="max-height:56vh"><table id="apmTbl">
+        <thead><tr><th>Mã máy</th><th>Trang trại</th>
+          ${items.map(it => `<th style="text-align:center;font-size:9px" title="${esc(it.ten)}">${esc(it.ten)}</th>`).join('')}
+        </tr></thead>
+        <tbody>${body}</tbody>
+      </table></div></div>
+      <div class="iw" style="margin-top:10px"><div class="il">Lý do chung cho lần lưu này</div>
+        <input class="inp" id="apmLyDo" placeholder="VD: rà lại theo biên bản kiểm kê tháng 9"></div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Hủy</button>
+      <button class="btn bg-g" onclick="bdSaveApplyMatrix()">💾 Lưu thay đổi</button>
+    </div>`);
+}
+
+function bdApFilter(v){
+  const q = String(v || '').toLowerCase().trim();
+  document.querySelectorAll('#apmTbl tbody tr').forEach(tr => {
+    tr.style.display = (!q || (tr.dataset.hay || '').includes(q)) ? '' : 'none';
+  });
+}
+
+async function bdSaveApplyMatrix(){
+  const changes = [];
+  document.querySelectorAll('#apmTbl input[type=checkbox][data-ma]').forEach(el => {
+    if (el.checked !== (el.dataset.was === '1'))
+      changes.push({ maCode: el.dataset.code, ma: el.dataset.ma, ap: el.checked });
+  });
+  if (!changes.length){ closeOv(); toast('Không có thay đổi', 'info'); return; }
+  if (!confirm(`Lưu ${changes.length} thay đổi?\n\nBỏ tích sẽ ghi chữ X vào ô "Thời điểm…" của máy đó ở Sheet 2 và ngưng cảnh báo hạng mục đó.`)) return;
+  setStatus(true, `Đang lưu ${changes.length} thay đổi…`);
+  try {
+    const res = await apiPost({ action:'bdSetApply', changes: changes,
+      lyDo: ($('apmLyDo') ? $('apmLyDo').value : ''), user: S.user.name });
+    if (!res.ok) throw new Error(res.error);
+    closeOv();
+    await reloadAll();
+    toast(`✓ Đã cập nhật ${res.changed} ô`, 'ok');
+    if ((res.skipped || []).length) toast(`⚠ Bỏ qua ${res.skipped.length}: ${res.skipped[0]}`, 'err');
+  } catch(e){ toast('Lỗi: ' + e.message, 'err'); setStatus(false, '❌ ' + e.message, true); }
 }
 
 /* ============================================================================
