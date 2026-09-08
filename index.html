@@ -519,6 +519,12 @@ const S = {
   /* Sheet 22 · Lịch sử điều chuyển máy. KHÔNG nằm trong gói bootstrap — nạp riêng khi
    * người dùng mở tab "Lịch sử điều chuyển" (xem loadTransfers_). */
   transfers:{ headers:[], rows:[], loaded:false, loading:false, err:'', at:'' },
+  /* Module GIONHOT.gs · mốc bộ đếm giờ (giữ tổng giờ liên tục qua các lần thay màn hình)
+   * và nhật ký hao nhớt (để tính được TRUNG BÌNH THỰC TẾ, không chỉ con số mới nhất).
+   * Cũng KHÔNG nằm trong gói bootstrap — nạp riêng khi mở 1 trong 2 tab mới. */
+  gio:{ base:[], resets:[], pending:[], oil:[], usage:[],
+        cfg:{ dev:30, tol:2, maxDay:24, stuck:3, block:20, usageDays:90 },
+        hasNormCol:false, loaded:false, loading:false, err:'', at:'' },
   dropdowns:{},
   alerts:{ alerts:[], towerStates:[], total:0 },
   user:{ name:'Admin', login:'', role:'' },
@@ -580,7 +586,14 @@ const S = {
      *   status      : multi-select PHÂN LOẠI hiệu quả — 'ineffective' | 'bad' | 'ok' | 'over'
      *                 Mặc định chỉ hiện 2 nhóm có vấn đề (giữ nguyên hành vi cũ của trang);
      *                 bấm thêm chip để xem máy chạy ổn định / vượt thiết kế. */
-    eff:{ region:new Set(), type:new Set(), status:new Set(['ineffective','bad']), streakOnly:false },
+    /*   q  : ô TÌM MÃ MÁY. Gõ vào đây thì BỎ QUA chip phân loại và chip "cần kiểm tra" —
+     *        người gõ đúng mã máy là người muốn xem CHÍNH máy đó, không phải muốn biết
+     *        nó có lọt bộ lọc hiện tại hay không. */
+    eff:{ region:new Set(), type:new Set(), status:new Set(['ineffective','bad']), streakOnly:false, q:'' },
+    gioQ:'',            // tab "Bộ đếm giờ & reset" — ô tìm mã máy
+    oilQ:'',            // tab "Hao nhớt" — ô tìm mã máy
+    oilStatus:'',       // tab "Hao nhớt" — '' | 'high' | 'low' | 'ok' | 'bad' | 'nodata'
+    usageVt:'',         // bảng tiêu hao vật tư — lọc theo 1 tên vật tư
     /* Trang Phân tích — MẶC ĐỊNH lọc sẵn 2 loại hình Thuê + Hợp tác.
      * Đây là tập máy eGreen thực sự chịu trách nhiệm vận hành; máy "Bán" đã bàn giao cho
      * khách nên đưa vào cùng biểu đồ sẽ kéo lệch mọi số trung bình. Người dùng vẫn bỏ hoặc
@@ -754,26 +767,19 @@ function computeClientAlerts(){
   const alerts = [];
   const hdrs = S.tracking.headers.filter(Boolean);
   const warnHeaders = hdrs.filter(h => /theo dõi[\s\/]*cảnh báo/i.test(h));
-  const oilHeader   = hdrs.find(h => /hao nhớt/i.test(h));
+  const oilHeader   = oilActualHeader_();
   const hatLoc      = bdHatLocItem_();
 
   // Xây map Mã máy → thông tin master (đơn vị, trại, khu vực, vận hành, SĐT)
   const mByCode = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA]||'').trim(), m]));
 
-  // Định mức hao nhớt/20h — lấy từ Sheet 4 (cột K) nếu có, mặc định 0.5 l/20h
-  const oilLimit = (() => {
-    if (!S.filter?.rows?.length) return 0.5;
-    const H = S.filter.headers.filter(Boolean);
-    const kIdx = 10; // K = index 10
-    const kHeader = H[kIdx];
-    if (!kHeader) return 0.5;
-    // lấy trung bình hoặc phần tử đầu tiên có giá trị
-    for (const row of S.filter.rows){
-      const v = Number(String(row[kHeader]||row._byLetter?.K||'').replace(/,/g,'.'));
-      if (!isNaN(v) && v > 0) return v;
-    }
-    return 0.5;
-  })();
+  /* ĐỊNH MỨC HAO NHỚT nay lấy THEO TỪNG MÁY (oilNormOf_): ô định mức của chính máy đó
+   * ở Sheet 2 → định mức dòng máy ở Sheet 4 cột K → 0.5 l/20h. Bản cũ lấy MỘT con số
+   * chung cho cả 79 máy — con số đầu tiên đọc được ở Sheet 4 — nên máy 250 kVA và máy
+   * 100 kVA bị đo bằng cùng một cái thước, và cảnh báo hao nhớt gần như vô nghĩa.
+   * Ngưỡng cũng đổi từ "vượt định mức" sang "lệch quá ±30%": hao nhớt dao động vài phần
+   * trăm quanh định mức là bình thường, kêu ở mức đó thì ngày nào cũng kêu. */
+  const OIL_DEV_PCT = 30;
 
   S.tracking.rows.forEach(r => {
     const code = String(r._byLetter?.[COL.MA]||'').trim();
@@ -830,18 +836,21 @@ function computeClientAlerts(){
       }
     }
 
-    // Cảnh báo hao nhớt
+    // Cảnh báo hao nhớt — so với định mức CỦA CHÍNH MÁY ĐÓ
     if (oilHeader){
-      const oil = Number(String(r[oilHeader]||'').replace(/,/g,'.'));
-      if (!isNaN(oil) && oil > oilLimit){
-        alerts.push({
-          type:'oil-high', maCode:code, region, site, operator:oper, phone,
-          field:'Hao nhớt',
-          message:`${fmt2_(oil)} l/20h · vượt định mức ${fmt2_(oilLimit)} l/20h`,
-          severity: oil > oilLimit*1.5 ? 'high' : 'med',
-          row: r._row,
-          remain: oil
-        });
+      const oil  = oilVal_(r[oilHeader]);
+      const norm = oilNormOf_(code, r);
+      if (oil !== null && norm.value > 0){
+        const dev = (oil - norm.value) / norm.value * 100;
+        if (dev > OIL_DEV_PCT){
+          alerts.push({
+            type:'oil-high', maCode:code, region, site, operator:oper, phone,
+            field:'Hao nhớt',
+            message:`${fmt2_(oil)} l/20h · cao hơn định mức ${fmt2_(norm.value)} l (+${fmt2_(dev)}%) — kiểm tra rò rỉ, bạc xéc-măng`,
+            severity: dev > OIL_DEV_PCT*2 ? 'high' : 'med',
+            row: r._row, remain: oil
+          });
+        }
       }
     }
   });
@@ -989,7 +998,9 @@ const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','bdTransfers','mater
                        /* Chẩn đoán số liệu tháng + danh sách/xem trước Zalo: đọc và tính, không ghi.
                         * Phải khớp EG_READONLY_ACTIONS bên Code.gs, nếu không chức danh chỉ xem
                         * sẽ bị chặn ở một bên và đi lọt ở bên kia. */
-                       'diagMonthly','zaloList','zaloPreview','zaloStatus'];
+                       'diagMonthly','zaloList','zaloPreview','zaloStatus',
+                       /* GIONHOT.gs — gói mốc bộ đếm giờ + phân tích hao nhớt: chỉ đọc rồi tính. */
+                       'gnData'];
 /* Action chạy nền, có thanh trạng thái riêng → cũng không hiện lớp chặn. */
 const POST_BACKGROUND = ['smartgenRun','smartgenAutoSync'];
 
@@ -2040,8 +2051,14 @@ function viewDash(){
     </div>
   `;
 
+  /* Nạp nền gói bộ đếm để thẻ "chờ xác nhận" xuất hiện ngay ở trang chủ, không bắt
+   * người dùng phải mở tab bộ đếm một lần mới biết là có việc. */
+  ensureGio_();
+
   return `
     <div class="ph"><h1>Tổng quan hệ thống</h1><p>Cập nhật: ${new Date().toLocaleString('vi-VN')}</p></div>
+
+    ${gioDashCard_()}
 
     <div class="krow r1">
       <div class="kcard" onclick="navMasterWith('')">
@@ -4443,12 +4460,17 @@ function viewTracking(){
       ${t('counter','⏱ Bộ đếm theo giờ','Thẻ từng máy có thanh tiến độ % chu kỳ · cùng số liệu với bảng Sheet 2')}
       ${t('history','📜 Lịch sử bảo dưỡng','Mỗi lần đổi mốc là 1 dòng: ai làm, khi nào, lúc đó máy ở trại nào')}
       ${t('kpi','🎯 Hiệu quả BDSC','Chấm điểm đội theo dõi vận hành: cảnh báo được đóng bao nhiêu %, và xử lý khi đã quá bao nhiêu % chu kỳ')}
+      ${t('hours','🔁 Bộ đếm giờ & reset','Thay màn hình hay reset bộ đếm thì khai ở đây — tổng giờ vận hành không bị đứt, kể cả khi màn mới đọc cao hơn')}
+      ${t('oil','🛢 Hao nhớt & tiêu hao vật tư','Suất khai dùng lập phiếu xuất · định mức để so sánh · tiêu hao thực tế suy từ sổ phiếu xuất')}
     </div>`;
   /* Bộ đếm nay đọc S.tracking + S.spec (bootstrap chính), không đọc module vật tư
    * nữa — nên tab này không còn hỏng khi QLVT.gs chưa cài / chưa deploy. */
   if (tab === 'counter') return tabs + viewBdCounter();
   if (tab === 'history') return tabs + viewBdHistory();
   if (tab === 'kpi')     return tabs + viewBdKpi();
+  /* Hai tab dưới đọc module GIONHOT.gs — không nằm trong gói bootstrap, nạp khi mở. */
+  if (tab === 'hours'){ ensureGio_(); return tabs + viewHourBase(); }
+  if (tab === 'oil'){   ensureGio_(); return tabs + viewOilRate(); }
   return tabs + viewTrackingSheet();
 }
 
@@ -4462,7 +4484,7 @@ function viewTracking(){
 function viewTrackingSheet(){
   const q = (S.filters.tracking||'').toLowerCase();
   const items = BD.active();
-  const oilHeader = S.tracking.headers.filter(x=>x).find(h=>/hao nhớt/i.test(h));
+  const oilHeader = oilActualHeader_();
 
   if (!items.length) return `<div class="ph"><h1>Theo dõi hoạt động bảo dưỡng</h1></div>
     <div class="card"><div class="empty">Sổ hạng mục chưa gắn được cột nào ở Sheet 2. Mở trang
@@ -4513,7 +4535,7 @@ function viewTrackingSheet(){
       <thead><tr>
         <th>Mã máy</th><th>Trang trại</th><th>Đơn vị</th><th>Khu vực</th>
         ${items.map(it=>`<th style="text-align:right" title="${esc(it.ten)} · chu kỳ ${nint_(it.chuKy)} h · vàng khi đã chạy ≥ ${nint_((it.chuKy||0)-BD.amber(it))} h · đỏ khi đã chạy ≥ ${nint_(it.chuKy)} h">${esc(it.ten)}<br><span style="font-weight:400;text-transform:none;font-size:9px">đã chạy / ${nint_(it.chuKy)} h</span></th>`).join('')}
-        ${oilHeader?`<th style="text-align:right">Hao nhớt/20h</th>`:''}
+        ${oilHeader?`<th style="text-align:right" title="Số lít nhớt hao trong 20 h vận hành do KTV báo · so với định mức của chính máy đó">Hao nhớt/20h<br><span style="font-weight:400;text-transform:none;font-size:9px">thực tế / định mức</span></th>`:''}
         <th></th>
       </tr></thead>
       <tbody>${rows.map(r=>{
@@ -4531,6 +4553,29 @@ function viewTrackingSheet(){
           const tip = `Đã chạy ${nfd_(s.n)} h / chu kỳ ${nfmt_(s.cyc)} h · ${s.remain<=0?'quá hạn '+nfd_(Math.abs(s.remain)):'còn '+nfd_(s.remain)} h`;
           return `<td style="text-align:right"><span class="b ${s.kind==='overdue'?'br':(s.kind==='soon'?'ba':'bg')}" title="${esc(tip)}">${nfd_(s.n)}</span></td>`;
         }).join('');
+        /* Ô HAO NHỚT — ba trạng thái phải phân biệt được bằng mắt, không gộp làm một:
+         *   có số hợp lệ  → so với định mức của chính máy đó, tô màu theo mức lệch
+         *   ô có nội dung nhưng KHÔNG phải số (bị định dạng thành ngày) → chip đỏ "sai định dạng"
+         *   ô trống       → gạch ngang
+         * Bản cũ in thẳng nội dung ô ra nên một ô chứa "2026-05-01T07:00:00.000Z" trông
+         * y như một số liệu bình thường, và nó vẫn chạy vào mọi báo cáo tính trên cột này. */
+        let oilCell = '';
+        if (oilHeader){
+          const ov = oilVal_(r[oilHeader]);
+          const nrm = oilNormOf_(code, r);
+          if (oilBad_(r[oilHeader])){
+            oilCell = `<td style="text-align:right"><span class="b br" title="Ô đang chứa: ${esc(String(r[oilHeader]))} — không phải số lít. Bấm ✎ Cập nhật để nhập lại.">⚠ sai định dạng</span></td>`;
+          } else if (ov === null){
+            oilCell = `<td style="text-align:right;color:var(--mu)">— / ${fmt2_(nrm.value)}</td>`;
+          } else {
+            const dev = nrm.value > 0 ? (ov - nrm.value)/nrm.value*100 : null;
+            const cls = dev === null ? 'bmu' : (dev > 30 ? 'br' : (dev < -30 ? 'ba' : 'bg'));
+            const tipO = `Thực tế ${fmt2_(ov)} l/20h · định mức ${fmt2_(nrm.value)} l (nguồn: ${nrm.src})`
+                       + (dev === null ? '' : ` · lệch ${dev>0?'+':''}${fmt2_(dev)}%`);
+            oilCell = `<td style="text-align:right"><span class="b ${cls}" title="${esc(tipO)}">${fmt2_(ov)}</span>`
+                    + `<span style="font-size:9px;color:var(--mu)"> / ${fmt2_(nrm.value)}</span></td>`;
+          }
+        }
         return `<tr>
           <td><span class="mm" style="cursor:pointer;text-decoration:underline" title="Mở hồ sơ máy"
                 onclick="bdOpenProfile('${esc(code)}')">${esc(code)}</span></td>
@@ -4538,7 +4583,7 @@ function viewTrackingSheet(){
           <td>${esc(m?(m._byLetter[COL.DONVI]||''):'')||'—'}</td>
           <td>${esc(m?(m._byLetter[COL.KHU]||''):'')}</td>
           ${cells}
-          ${oilHeader?`<td style="text-align:right">${fmt2_(r[oilHeader])}</td>`:''}
+          ${oilCell}
           <td style="white-space:nowrap">
             <button class="btn bg-b sm" onclick="openTrackingEdit(${r._row})">✎ Sửa mốc</button>
             <button class="btn bg-g sm" onclick="openTrackingEdit(${r._row})">✎ Cập nhật</button>
@@ -4660,13 +4705,14 @@ function openTrackingEdit(rowId){
   const hE = headers[4] || 'Số giờ máy chạy';
 
   const timeHeaders = headers.filter(h => /thời điểm/i.test(h) && !isSkip(h) && !isFormula(h));
-  const oilHeader = headers.find(h=>/hao nhớt/i.test(h));
+  const oilHeader  = headers.find(h=>/hao nhớt/i.test(h) && !/định\s*mức/i.test(h));
+  const oilNormHeader = headers.find(h=>/hao nhớt/i.test(h) && /định\s*mức/i.test(h));
   const warnHeaders = headers.filter(h => isFormula(h));
   const towerHeaders = headers.filter(h => /tháp lọc/i.test(h));
 
   // "Thông tin khác" = mọi cột nhập tay chưa được nhóm — chỉ đọc, làm tròn 2 chữ số
   const other = headers.filter(h => !isSkip(h) && !isFormula(h) && h !== hE
-    && !timeHeaders.includes(h) && h !== oilHeader && !towerHeaders.includes(h));
+    && !timeHeaders.includes(h) && h !== oilHeader && h !== oilNormHeader && !towerHeaders.includes(h));
   const key = h => 'th_'+btoa(unescape(encodeURIComponent(h))).replace(/[^A-Za-z0-9]/g,'');
 
   // Chuẩn hóa hiển thị số (đầu vào có thể là chuỗi, số, hoặc date)
@@ -4704,7 +4750,15 @@ function openTrackingEdit(rowId){
           <div class="iw">
             <div class="il">${esc(hE)} <span style="color:var(--amb);font-weight:400">· tự đồng bộ Smartgen</span></div>
             <input class="inp" id="${key(hE)}" type="number" step="any" value="${esc(numVal(row[hE]))}" placeholder="Số giờ đang chạy">
-            <div style="font-size:9px;color:var(--mu);margin-top:3px">Giá trị này còn được cập nhật tự động từ Smartgen; nhập tay để chỉnh sửa khi cần</div>
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Giá trị này còn được cập nhật tự động từ Smartgen; nhập tay để chỉnh sửa khi cần —
+              số bạn gõ được hiểu là <b>tổng giờ đúng</b>, hệ thống tự chỉnh lại giờ bù quanh nó nên lượt đồng bộ sau không đạp mất.</div>
+            <div style="margin-top:6px">
+              <button class="btn bg-b sm" onclick="closeOv();S.filters.trackingTab='hours';renderPage('tracking');setTimeout(()=>openResetForm('${esc(String(row._byLetter[COL.MA]||''))}'),400)">
+                🔁 Vừa thay màn hình / reset bộ đếm?</button>
+              <div style="font-size:9px;color:var(--mu);margin-top:3px">Đừng gõ tay bù vào ô trên. Khai báo để hệ thống giữ giờ bù —
+                nếu không, lượt đồng bộ kế tiếp sẽ kéo số về đúng con số trên màn hình mới.
+                Màn thay vào <b>không nhất thiết phải là 0</b>: màn đã qua sử dụng, thậm chí đọc cao hơn máy cũ, đều khai được.</div>
+            </div>
           </div>
           ${timeHeaders.map(h=>`
             <div class="iw">
@@ -4728,16 +4782,38 @@ function openTrackingEdit(rowId){
         </div>
       </div>`:''}
 
-      ${oilHeader ? `
+      ${oilHeader ? (()=>{
+        const cur  = oilVal_(row[oilHeader]);
+        const bad  = oilBad_(row[oilHeader]);
+        const nrm  = oilNormOf_(String(row._byLetter[COL.MA]||''), row);
+        const dev  = (cur !== null && nrm.value > 0) ? (cur - nrm.value)/nrm.value*100 : null;
+        return `
       <div class="fsec">
-        <div class="fsh"><div class="fsn">3</div><div class="fst">Chỉ số vận hành</div></div>
+        <div class="fsh"><div class="fsn">3</div><div class="fst">Hao nhớt · thực tế và định mức</div></div>
+        ${bad ? `<div style="margin:0 0 10px;padding:9px 12px;background:#fef2f2;border-left:3px solid var(--red);border-radius:6px;font-size:11px;color:#7f1d1d;line-height:1.6">
+          <b>Ô này đang chứa giá trị không phải số:</b> \u201c${esc(String(row[oilHeader]))}\u201d — nhiều khả năng ô bị định dạng thành ngày tháng.
+          Giá trị đó đang làm sai mọi báo cáo tính trên cột hao nhớt. Nhập lại số lít rồi lưu là ô được sửa.
+        </div>` : ''}
         <div class="fgrid fg2">
-          <div class="iw"><div class="il">${esc(oilHeader)}</div>
-            <input class="inp" id="${key(oilHeader)}" type="number" step="0.01" value="${esc(row[oilHeader]||'')}" placeholder="VD: 0.15">
-            <div style="font-size:9px;color:var(--mu);margin-top:3px">So với định mức hao nhớt/20h (Sheet 4 cột K) để bật cảnh báo hao nhớt cao</div>
+          <div class="iw"><div class="il">${esc(oilHeader)} <span style="color:var(--amb);font-weight:400">· KTV báo</span></div>
+            <input class="inp" id="${key(oilHeader)}" type="number" step="0.01" min="0" max="50" value="${esc(cur === null ? '' : cur)}" placeholder="VD: 1.50">
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Chỉ nhận <b>số lít</b> (0–50).
+              Đây là con số <b>phiếu xuất nhớt tự động dùng để tính</b>: đổi hôm nay thì chỉ phần giờ MỚI chạy kể từ hôm nay
+              tính theo số mới, phiếu đã lập trước đó giữ nguyên — không tính lại. Mỗi lần đổi được ghi vào
+              \u201c32. Nhật ký đổi suất hao nhớt\u201d để sau này còn giải thích được vì sao phiếu đổi.</div>
           </div>
+          ${oilNormHeader ? `
+          <div class="iw"><div class="il">${esc(oilNormHeader)}</div>
+            <input class="inp" id="${key(oilNormHeader)}" type="number" step="0.01" min="0" value="${esc(numVal(row[oilNormHeader]))}" placeholder="VD: 1.50">
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Đang áp dụng <b>${fmt2_(nrm.value)}</b> L (nguồn: ${esc(nrm.src)})${dev===null?'':` · thực tế đang lệch <b>${dev>0?'+':''}${fmt2_(dev)}%</b>`}.
+              Bỏ trống thì lấy định mức của dòng máy.</div>
+          </div>` : `
+          <div class="iw"><div class="il">Định mức đang áp dụng</div>
+            <div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:600">${fmt2_(nrm.value)} L / 20h <span style="font-weight:400;color:var(--mu)">(${esc(nrm.src)})</span></div>
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Chưa có cột định mức theo máy ở Sheet 2. Chạy <code>gnSetup()</code> trong Apps Script để thêm.</div>
+          </div>`}
         </div>
-      </div>`:''}
+      </div>`;})():''}
 
       ${other.length? `
       <div class="fsec">
@@ -4779,7 +4855,7 @@ function openTrackingEdit(rowId){
       <button class="btn bg-g" onclick="saveTracking(${rowId})">💾 Lưu vào Google Sheet</button>
     </div>
   `);
-  window._trackingKeys = { hE, timeHeaders, oilHeader, towerHeaders, key };
+  window._trackingKeys = { hE, timeHeaders, oilHeader, oilNormHeader, towerHeaders, key };
   // Draft persistence
   const dk = 'tracking:'+rowId;
   const allFields = [];
@@ -4787,12 +4863,13 @@ function openTrackingEdit(rowId){
   (timeHeaders||[]).forEach(h => allFields.push(key(h)));
   (towerHeaders||[]).forEach(h => allFields.push(key(h)));
   if (oilHeader) allFields.push(key(oilHeader));
+  if (oilNormHeader) allFields.push(key(oilNormHeader));
   setDraftContext(dk, allFields);
 }
 
 async function saveTracking(rowId){
   const row = S.tracking.rows.find(r=>r._row===rowId);
-  const { hE, timeHeaders, oilHeader, towerHeaders, key } = window._trackingKeys || {};
+  const { hE, timeHeaders, oilHeader, oilNormHeader, towerHeaders, key } = window._trackingKeys || {};
   const updates = {};
   const push = h => {
     const el = $(key(h)); if (!el) return;
@@ -4804,6 +4881,19 @@ async function saveTracking(rowId){
   (timeHeaders||[]).forEach(push);
   (towerHeaders||[]).forEach(push);
   if (oilHeader) push(oilHeader);
+  if (oilNormHeader) push(oilNormHeader);
+
+  /* CHẶN NGAY TẠI CHỖ NHẬP. Server cũng chặn lần nữa, nhưng nếu chỉ chặn ở server thì
+   * người dùng bấm Lưu rồi mới biết mình gõ sai — và thứ họ gõ sai nhiều nhất chính là
+   * dán nhầm một cái ngày vào ô số lít. */
+  if (oilHeader && updates[oilHeader] !== undefined && String(updates[oilHeader]).trim() !== ''
+      && oilVal_(updates[oilHeader]) === null){
+    toast('Ô hao nhớt chỉ nhận số lít (0–50), không nhận ngày tháng hay chữ','err'); return;
+  }
+  if (oilNormHeader && updates[oilNormHeader] !== undefined && String(updates[oilNormHeader]).trim() !== ''
+      && oilVal_(updates[oilNormHeader]) === null){
+    toast('Ô định mức hao nhớt chỉ nhận số lít lớn hơn 0','err'); return;
+  }
 
   if (!Object.keys(updates).length){ closeOv(); toast('Không có thay đổi','info'); return; }
   setStatus(true,'Đang lưu…');
@@ -5007,6 +5097,608 @@ function exportFilterCsv(){
   exportCsv({ headers:Object.keys(rows[0]||{}), rows }, 'data-thay-loc');
 }
 
+/* ============================================================================
+ *  BỘ ĐẾM GIỜ LIÊN TỤC  +  TIÊU HAO VẬT TƯ THỰC TẾ   (PHẦN 8 của Code.gs)
+ * ----------------------------------------------------------------------------
+ *  Ba việc phần này lo, mà bản cũ không có chỗ nào lo:
+ *
+ *  1. THAY MÀN HÌNH / RESET BỘ ĐẾM. Màn hình thay được, máy thì vẫn là máy cũ. Màn
+ *     mới có thể bắt đầu từ 0, từ 3.200 h, hoặc CAO HƠN cả máy cũ (tháo từ máy khác
+ *     sang). Server giữ một "giờ bù" cho từng máy nên tổng giờ liên tục qua cả ba
+ *     trường hợp. Máy tự phát hiện được thì báo lên Tổng quan chờ KTV xác nhận.
+ *
+ *  2. Ô HAO NHỚT BỊ ĐIỀN SAI ĐỊNH DẠNG (thành ngày tháng). Chặn tại chỗ nhập, đánh
+ *     dấu bằng chip đỏ trên bảng, có nút dọn hàng loạt.
+ *
+ *  3. TIÊU HAO THỰC TẾ CỦA MỌI VẬT TƯ. Suy từ chính sổ phiếu xuất (Sheet 15) chia
+ *     cho giờ chạy thật (Sheet 5) — không dựng thêm sổ song song, vì hai sổ cho cùng
+ *     một con số thì sớm muộn sẽ nói khác nhau.
+ * ========================================================================== */
+
+/* ---- DÒ CỘT HAO NHỚT Ở SHEET 2 -------------------------------------------
+ * Hai cột cùng chứa chữ "hao nhớt" (thực tế và định mức) nên MỌI chỗ dò cột thực tế
+ * đều phải loại trừ "định mức", nếu không find() sẽ vớ nhầm và đem so số với chính nó. */
+function oilActualHeader_(){
+  return (S.tracking.headers || []).filter(Boolean)
+    .find(h => /hao nhớt/i.test(h) && !/định\s*mức/i.test(h)) || null;
+}
+function oilNormHeader_(){
+  return (S.tracking.headers || []).filter(Boolean)
+    .find(h => /hao nhớt/i.test(h) && /định\s*mức/i.test(h)) || null;
+}
+
+/** Số lít hợp lệ, hay không phải số? Chuỗi ngày ISO / dd-mm-yyyy / chữ → null. */
+function oilVal_(v){
+  if (v === '' || v === null || v === undefined) return null;
+  if (v instanceof Date) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return null;
+  if (/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/.test(s)) return null;
+  const n = Number(s.replace(/\s/g,'').replace(/,/g,'.'));
+  if (!isFinite(n) || n < 0 || n > 50) return null;
+  return Math.round(n*100)/100;
+}
+/** Ô có nội dung nhưng đọc không ra số → ô sai định dạng, phải hiện rõ chứ không in ra. */
+function oilBad_(v){
+  const s = (v === null || v === undefined) ? '' : String(v).trim();
+  return !!s && oilVal_(v) === null;
+}
+
+/** Định mức hao nhớt/20h của 1 máy. Ưu tiên: ô của chính máy → Sheet 4 cột K theo
+ *  dòng máy → 0.5 l/20h. Trả { value, src }. */
+function oilNormOf_(code, row){
+  const hN = oilNormHeader_();
+  if (hN && row){
+    const v = oilVal_(row[hN]);
+    if (v !== null && v > 0) return { value:v, src:'máy' };
+  }
+  const model = String(code||'').trim().toUpperCase().replace(/\d+$/,'');
+  if (model && S.filter && S.filter.rows && S.filter.rows.length){
+    const H = S.filter.headers.filter(Boolean);
+    const hMa = H.find(h => /^m[ãa]$/i.test(String(h).trim())) || H[1];
+    const hK  = H[10];
+    if (hMa && hK){
+      const r = S.filter.rows.find(x => String(x[hMa]||'').trim().toUpperCase() === model);
+      const v = r ? oilVal_(r[hK]) : null;
+      if (v !== null && v > 0) return { value:v, src:'dòng máy' };
+    }
+  }
+  return { value:0.5, src:'mặc định' };
+}
+
+/* ---- NẠP GÓI DỮ LIỆU ------------------------------------------------------ */
+async function loadGio_(){
+  if (S.gio.loading) return;
+  S.gio.loading = true; S.gio.err = '';
+  renderPage('tracking');
+  try {
+    const d = await apiPost({ action:'gnData' });
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Không đọc được gói bộ đếm giờ');
+    S.gio.base    = d.base    || [];
+    S.gio.resets  = d.resets  || [];
+    S.gio.pending = d.pending || [];
+    S.gio.oil     = d.oil     || [];
+    S.gio.usage   = d.usage   || [];
+    S.gio.cfg     = d.cfg     || S.gio.cfg;
+    S.gio.hasNormCol = !!d.hasNormCol;
+    S.gio.loaded = true;
+    S.gio.at = new Date().toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'});
+  } catch(e){
+    S.gio.err = e.message;
+  } finally {
+    S.gio.loading = false;
+    renderPage('tracking');
+    /* Tổng quan có thẻ "bộ đếm cần xác nhận" đọc cùng gói này — không vẽ lại thì
+     * người dùng phải mở tab bộ đếm một lần mới thấy thẻ xuất hiện ở trang chủ. */
+    try { if ($('pg-dash')) renderPage('dash'); } catch(e){}
+  }
+}
+function ensureGio_(){ if (!S.gio.loaded && !S.gio.loading && !S.gio.err) loadGio_(); }
+function reloadGio_(){ S.gio.loaded = false; S.gio.err = ''; loadGio_(); }
+
+function gioNotReady_(){
+  if (S.gio.loading) return `<div class="card"><div class="empty">⏳ Đang đọc mốc bộ đếm giờ và sổ phiếu xuất vật tư…</div></div>`;
+  if (S.gio.err) return `<div class="card" style="background:#fffbeb;border-left:4px solid var(--amb)">
+      <div style="padding:14px 16px;font-size:12px;color:#78350f;line-height:1.7">
+        <b>Chưa đọc được dữ liệu:</b> ${esc(S.gio.err)}<br>
+        Nếu báo <i>Unknown action: gnData</i> nghĩa là Code.gs trên Apps Script chưa có PHẦN 8.
+        Dán lại <b>Code.gs</b>, chạy hàm <code>gnSetup()</code>, rồi Deploy lại Web App.
+        <div style="margin-top:10px"><button class="btn bg-b sm" onclick="reloadGio_()">↻ Thử lại</button></div>
+      </div></div>`;
+  return null;
+}
+
+/* ============================================================================
+ *  THẺ Ở TỔNG QUAN — chỉ hiện khi có việc phải làm
+ * ----------------------------------------------------------------------------
+ *  Máy tự phát hiện được là bộ đếm vừa bị thay/reset thì nó ĐÃ tự bù rồi, nhưng người
+ *  vận hành vẫn phải biết: một là để kiểm chứng con số bù có đúng không, hai là vì
+ *  thay màn hình thường đi kèm một việc khác ở hiện trường mà không ai báo lại.
+ *  Bấm xác nhận thì thẻ biến khỏi Tổng quan, bản ghi vẫn nằm nguyên ở sổ tra cứu.
+ * ========================================================================== */
+function gioDashCard_(){
+  const pend = (S.gio.pending || []);
+  const stuck = (S.gio.base || []).filter(b => b.stuck);
+  if (!pend.length && !stuck.length) return '';
+
+  const rows = pend.slice(0, 8).map(r => `<tr>
+      <td><span class="mm">${esc(r.code)}</span></td>
+      <td>${esc(r.chieu || r.loai)}</td>
+      <td style="text-align:right">${r.truoc==null?'—':nfmt_(r.truoc)} → ${r.sau==null?'—':nfmt_(r.sau)}</td>
+      <td style="text-align:right"><b>${r.buThem==null?'—':(r.buThem>0?'+':'')+nfmt_(r.buThem)} h</b></td>
+      <td style="text-align:right">${r.tong==null?'—':nfmt_(r.tong)}</td>
+      <td style="font-size:10px;color:var(--mu)">${esc(r.at||'')}</td>
+      <td><button class="btn bg-g sm" onclick="gioAck(['${esc(r.id)}'])">✓ Xác nhận</button></td>
+    </tr>`).join('');
+
+  return `
+  <div class="card" style="background:#fff7ed;border-left:4px solid var(--amb);margin-bottom:14px">
+    <div style="padding:13px 16px">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <div style="font-size:20px">🔁</div>
+        <div style="flex:1;font-size:12px;color:#7c2d12;line-height:1.6">
+          <b>${pend.length} lần thay/reset bộ đếm giờ chờ xác nhận</b>${stuck.length?` · <b>${stuck.length} máy có bộ đếm đứng yên</b>`:''}.
+          Hệ thống đã tự cộng/trừ giờ bù để tổng giờ không đứt — hãy đối chiếu rồi bấm xác nhận.
+          Xác nhận xong thẻ này biến mất, bản ghi vẫn nằm ở sổ tra cứu.
+        </div>
+        ${pend.length>1?`<button class="btn bg-g sm" onclick="gioAck(${esc(JSON.stringify(pend.map(x=>x.id)))})">✓ Xác nhận tất cả (${pend.length})</button>`:''}
+        <button class="btn bg-gr sm" onclick="S.filters.trackingTab='hours';nav('tracking')">Mở sổ bộ đếm →</button>
+      </div>
+      ${pend.length?`<div class="tw"><table>
+        <thead><tr><th>Mã máy</th><th>Kiểu</th><th style="text-align:right">Số đọc trước → sau</th>
+          <th style="text-align:right">Giờ bù</th><th style="text-align:right">Tổng giờ</th><th>Lúc</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`:''}
+      ${stuck.length?`<div style="margin-top:8px;font-size:11px;color:#7c2d12">
+        <b>Bộ đếm đứng yên</b> (số đọc không đổi qua ${nfmt_((S.gio.cfg||{}).stuck||3)} lượt đồng bộ liên tiếp):
+        ${stuck.slice(0,12).map(b=>`<span class="mm">${esc(b.code)}</span>`).join(', ')}${stuck.length>12?` và ${stuck.length-12} máy nữa`:''}.
+        Trường hợp này <b>không bù tự động được</b> — không có cách nào suy ra số giờ đã mất, nên hệ thống chỉ báo chứ không đoán.
+      </div>`:''}
+    </div>
+  </div>`;
+}
+
+async function gioAck(ids){
+  setStatus(true,'Đang ghi xác nhận…');
+  try {
+    const res = await apiPost({ action:'gnAck', ids:ids, user:S.user.name });
+    if (!res.ok) throw new Error(res.error);
+    S.gio.loaded = false;
+    await loadGio_();
+    toast(`✓ Đã xác nhận ${res.acked} bản ghi`,'ok');
+  } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
+}
+
+/* ============================================================================
+ *  TAB "BỘ ĐẾM GIỜ & RESET"
+ * ========================================================================== */
+function viewHourBase(){
+  const notReady = gioNotReady_();
+  if (notReady) return notReady;
+
+  const q = (S.filters.gioQ||'').toLowerCase();
+  const tByCode = new Map(S.tracking.rows.map(t => [String(t._byLetter[COL.MA]||'').trim().toUpperCase(), t]));
+  const hOdo = (S.tracking.headers||[]).find(h => /số giờ máy chạy/i.test(h));
+  const base = new Map(S.gio.base.map(b => [String(b.code||'').toUpperCase(), b]));
+
+  const list = S.master.rows.map(m => {
+    const code = String(m._byLetter[COL.MA]||'').trim();
+    const t = tByCode.get(code.toUpperCase());
+    const sheetOdo = (t && hOdo) ? Number(String(t[hOdo]||'').replace(/,/g,'')) : NaN;
+    return { code, m, b: base.get(code.toUpperCase()) || {}, sheetOdo: isFinite(sheetOdo)?sheetOdo:null };
+  }).filter(x => !q || `${x.code} ${x.m._byLetter[COL.DONVI]||''} ${x.m._byLetter[COL.TRAI]||''}`.toLowerCase().includes(q));
+
+  const nReset  = S.gio.base.filter(b => (b.resets||0) > 0).length;
+  const nOffset = S.gio.base.filter(b => Math.abs(Number(b.offset)||0) > 0.01).length;
+  const nStuck  = S.gio.base.filter(b => b.stuck).length;
+
+  const rows = list.map(x => {
+    const b = x.b;
+    const raw = b.raw == null ? null : Number(b.raw);
+    const off = Number(b.offset)||0;
+    const lech = (x.sheetOdo != null && b.total != null && Math.abs(x.sheetOdo - Number(b.total)) > 1);
+    return `<tr>
+      <td><span class="mm" style="cursor:pointer;text-decoration:underline" onclick="bdOpenProfile('${esc(x.code)}')">${esc(x.code)}</span>
+        ${b.stuck?'<br><span class="b br" title="Số đọc không đổi qua nhiều lượt đồng bộ — kiểm tra màn hình">⏸ đứng yên</span>':''}</td>
+      ${farmCellVal_(x.m._byLetter[COL.TRAI]||'')}
+      <td>${esc(x.m._byLetter[COL.DONVI]||'')||'—'}</td>
+      <td style="text-align:right">${raw==null?'<span class="b bmu" title="Chưa có lượt đồng bộ nào ghi nhận số đọc thô">chưa có</span>':nfmt_(raw)}</td>
+      <td style="text-align:right">${Math.abs(off)>0.01
+          ? `<span class="b ${off>0?'ba':'br'}" title="${off>0?'Số giờ máy đã chạy trước các lần thay bộ đếm — được CỘNG thêm':'Màn hình thay vào có sẵn giờ cao hơn — phải TRỪ bớt phần dôi ra'}">${off>0?'+':''}${nfmt_(off)}</span>`
+          : '<span style="color:var(--mu)">0</span>'}</td>
+      <td style="text-align:right"><b>${b.total==null?'—':nfmt_(b.total)}</b></td>
+      <td style="text-align:right">${x.sheetOdo==null?'—':(lech?`<span class="b br" title="Lệch so với mốc — bấm Khai báo để chốt lại">${nfmt_(x.sheetOdo)}</span>`:nfmt_(x.sheetOdo))}</td>
+      <td style="text-align:center">${(b.resets||0)>0?`<span class="b br">${b.resets}</span>`:'<span style="color:var(--mu)">0</span>'}</td>
+      <td style="font-size:10px;color:var(--mu)">${esc(b.lastReset||'—')}</td>
+      <td><button class="btn bg-b sm" onclick="openResetForm('${esc(x.code)}')">🔁 Khai báo</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="99"><div class="empty">Không có máy nào khớp.</div></td></tr>';
+
+  const logs = (S.gio.resets||[]).slice(0,80).map(r => `<tr>
+      <td style="font-size:10px;white-space:nowrap">${esc(r.at||'')}</td>
+      <td><span class="mm">${esc(r.code||'')}</span></td>
+      <td>${esc(r.loai||'')}${r.chieu?`<br><span style="font-size:9px;color:var(--mu)">${esc(r.chieu)}</span>`:''}</td>
+      <td style="text-align:right">${r.truoc==null?'—':nfmt_(r.truoc)}</td>
+      <td style="text-align:right">${r.sau==null?'—':nfmt_(r.sau)}</td>
+      <td style="text-align:right">${r.buThem==null?'—':(r.buThem>0?'+':'')+nfmt_(r.buThem)}</td>
+      <td style="text-align:right"><b>${r.tong==null?'—':nfmt_(r.tong)}</b></td>
+      <td style="font-size:10px">${esc(r.lyDo||'')}</td>
+      <td style="font-size:10px">${esc(r.nguoi||'')}</td>
+      <td>${r.trangThai==='Đã xác nhận'
+            ? `<span class="b bg" title="${esc(r.nguoiXn||'')}">✓ đã xác nhận</span>`
+            : `<button class="btn bg-g sm" onclick="gioAck(['${esc(r.id)}'])">✓ Xác nhận</button>`}</td>
+    </tr>`).join('') || '<tr><td colspan="99"><div class="empty">Chưa có lần thay/reset nào được ghi nhận.</div></td></tr>';
+
+  return `
+    <div class="ph">
+      <h1>Bộ đếm giờ &amp; lịch sử thay/reset</h1>
+      <p>${S.gio.base.length} máy có mốc · <b style="color:var(--red)">${nReset}</b> máy đã từng thay/reset bộ đếm ·
+        <b style="color:var(--amb)">${nOffset}</b> máy đang được bù giờ ·
+        <b style="color:var(--red)">${nStuck}</b> máy bộ đếm đứng yên · cập nhật ${esc(S.gio.at||'—')}
+        <br><span style="font-size:11px;color:var(--mu)">
+        <b>Số đọc thô</b> = con số đang hiện trên màn hình máy (Smartgen/LIXiSE trả về).
+        <b>Giờ bù</b> = phần chênh do thay bộ đếm — <b>dương</b> khi màn mới đọc thấp hơn (cộng lại phần đã mất),
+        <b>âm</b> khi màn mới là màn đã dùng đọc cao hơn (trừ đi phần dôi ra).
+        <b>Tổng giờ</b> = số đọc thô + giờ bù, và đây là số ghi vào cột “Số giờ máy chạy” của Sheet 2.
+        <br>Máy tự nhận ra bất thường theo <b>trần vật lý</b>: tụt quá ${nfmt_((S.gio.cfg||{}).tol||2)} h,
+        hoặc tăng quá ${nfmt_((S.gio.cfg||{}).maxDay||24)} h × số ngày kể từ lượt đồng bộ trước.
+        Nhưng thay màn hình xong nên <b>khai báo ngay</b> thay vì chờ máy đoán.</span></p>
+    </div>
+    <div class="fbar">
+      <input class="si" id="gioSearch" autocomplete="off" placeholder="🔍 Tìm mã máy, đơn vị, trại…" value="${esc(S.filters.gioQ||'')}"
+        oninput="S.filters.gioQ=this.value;renderPage('tracking')">
+      <button class="btn bg-gr" onclick="reloadGio_()">↻ Tải lại</button>
+    </div>
+    <div class="card"><div class="tw" style="max-height:50vh"><table>
+      <thead><tr>
+        <th>Mã máy</th><th>Trang trại</th><th>Đơn vị</th>
+        <th style="text-align:right">Số đọc thô (h)</th>
+        <th style="text-align:right">Giờ bù (h)</th>
+        <th style="text-align:right">Tổng giờ (h)</th>
+        <th style="text-align:right">Đang ghi ở Sheet 2</th>
+        <th style="text-align:center">Số lần thay</th>
+        <th>Thay gần nhất</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div></div>
+
+    <div class="ph" style="margin-top:18px"><h1 style="font-size:15px">Lịch sử thay &amp; reset bộ đếm</h1>
+      <p>80 bản ghi gần nhất · nguồn “31. Lịch sử thay &amp; reset bộ đếm giờ”. Dòng chưa xác nhận sẽ nổi lên trang Tổng quan.</p></div>
+    <div class="card"><div class="tw" style="max-height:40vh"><table>
+      <thead><tr><th>Thời gian</th><th>Mã máy</th><th>Kiểu</th>
+        <th style="text-align:right">Trước (h)</th><th style="text-align:right">Sau (h)</th>
+        <th style="text-align:right">Bù (h)</th><th style="text-align:right">Tổng giữ nguyên (h)</th>
+        <th>Lý do</th><th>Người ghi</th><th>Trạng thái</th></tr></thead>
+      <tbody>${logs}</tbody>
+    </table></div></div>`;
+}
+
+/* ---- FORM KHAI BÁO THAY / RESET ------------------------------------------- */
+function openResetForm(code){
+  const b = (S.gio.base||[]).find(x => String(x.code||'').toUpperCase() === String(code||'').toUpperCase()) || {};
+  const t = S.tracking.rows.find(r => String(r._byLetter[COL.MA]||'').trim().toUpperCase() === String(code||'').toUpperCase());
+  const hOdo = (S.tracking.headers||[]).find(h => /số giờ máy chạy/i.test(h));
+  const goiY = (b.total != null) ? b.total : (t && hOdo ? Number(String(t[hOdo]||'').replace(/,/g,'')) : '');
+
+  openOv(`
+    <div class="mh">
+      <div><h2>🔁 Khai báo thay / reset bộ đếm giờ · ${codeFarmLine_(String(code))}</h2>
+      <p>Dùng khi <b>thay màn hình</b> hoặc <b>KTV reset bộ đếm</b>. Máy vẫn là máy cũ, chỉ bộ đếm là mới —
+      khai báo ở đây để tổng số giờ vận hành không bị đứt và lịch bảo dưỡng không bị đẩy lùi về đầu.</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button>
+    </div>
+    <div class="mb">
+      <div class="fsec">
+        <div class="fsh"><div class="fsn">1</div><div class="fst">Chỉ cần đúng hai con số</div></div>
+        <div class="fgrid fg2">
+          <div class="iw">
+            <div class="il">Tổng giờ máy đã chạy TRƯỚC khi thay (h)</div>
+            <input class="inp" id="gnResetCu" type="number" step="any" value="${esc(goiY===''||goiY==null||isNaN(goiY)?'':goiY)}">
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Điền sẵn tổng giờ hệ thống đang giữ. Sửa lại nếu bạn đã chụp được số cuối cùng trên màn hình cũ.</div>
+          </div>
+          <div class="iw">
+            <div class="il">Số đang hiện trên bộ đếm MỚI (h)</div>
+            <input class="inp" id="gnResetMoi" type="number" step="any" value="0">
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Màn mới thường là 0, nhưng <b>không bắt buộc</b>: màn đã qua sử dụng có thể là 3.200 h,
+              thậm chí cao hơn cả máy cũ. Cứ điền đúng số đang hiện, công thức lo phần còn lại.</div>
+          </div>
+        </div>
+      </div>
+      <div class="fsec">
+        <div class="fsh"><div class="fsn">2</div><div class="fst">Lý do · để người sau đọc hồ sơ còn hiểu</div></div>
+        <div class="fgrid">
+          <div class="iw"><div class="il">Lý do</div>
+            <input class="inp" id="gnResetLyDo" placeholder="VD: Thay màn hình Smartgen HGM6120, màn cũ hỏng LCD; màn thay là màn tháo từ NS250KVA07">
+          </div>
+        </div>
+      </div>
+      <div class="msg" style="font-size:11px;color:var(--mu);line-height:1.7">
+        Sau khi lưu: <b>Giờ bù = Tổng giờ cũ − Số đọc mới</b> (âm hay dương đều hợp lệ), và cột “Số giờ máy chạy”
+        ở Sheet 2 được ghi lại đúng bằng tổng giờ cũ. Mọi lượt đồng bộ sau đó tự áp giờ bù nên số không lệch lần nữa.
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Hủy</button>
+      <button class="btn bg-g" onclick="saveResetForm('${esc(code)}')">💾 Lưu khai báo</button>
+    </div>`);
+}
+
+async function saveResetForm(code){
+  const cu  = $('gnResetCu')  ? $('gnResetCu').value  : '';
+  const moi = $('gnResetMoi') ? $('gnResetMoi').value : '';
+  const lyDo= $('gnResetLyDo')? $('gnResetLyDo').value: '';
+  if (cu === '' || moi === ''){ toast('Phải điền cả hai con số','err'); return; }
+  /* CỐ Ý KHÔNG chặn "tổng giờ cũ < số đọc mới": lắp màn đã chạy 5.000 h vào máy mới
+   * chạy 3.000 h là chuyện có thật, và khi đó giờ bù ÂM mới là con số đúng. */
+  setStatus(true,'Đang lưu khai báo…');
+  try {
+    const res = await apiPost({ action:'gnReset', maCode:code, tongGioCu:cu, soDocMoi:moi, lyDo:lyDo, user:S.user.name });
+    if (!res.ok) throw new Error(res.error);
+    closeOv();
+    S.gio.loaded = false;
+    await reloadAll();
+    loadGio_();
+    toast(`✓ ${code}: giờ bù ${res.offset>0?'+':''}${nfmt_(res.offset)} h · tổng giờ giữ nguyên ${nfmt_(res.total)} h`,'ok');
+  } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
+}
+
+/* ============================================================================
+ *  TAB "HAO NHỚT & TIÊU HAO VẬT TƯ"
+ * ----------------------------------------------------------------------------
+ *  Ba con số phải phân biệt rạch ròi, vì bản đầu tôi gộp nhầm hai cái đầu:
+ *    SUẤT KHAI    — số KTV đang điền ở Sheet 2. Đây là con số DÙNG ĐỂ LẬP PHIẾU XUẤT.
+ *    ĐỊNH MỨC     — con số chuẩn để so sánh.
+ *    THỰC TẾ      — suy ngược từ sổ phiếu xuất: tổng lít đã xuất ÷ tổng giờ chạy × 20.
+ *  Suất khai và thực tế lệch nhau khi suất bị đổi giữa kỳ — và đó chính là thông tin
+ *  cần thấy, chứ không phải thứ cần làm cho trùng nhau.
+ * ========================================================================== */
+function viewOilRate(){
+  const notReady = gioNotReady_();
+  if (notReady) return notReady;
+
+  const q = (S.filters.oilQ||'').toLowerCase();
+  const st = S.filters.oilStatus || '';
+  const mByCode = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA]||'').trim().toUpperCase(), m]));
+
+  /* Chỉ xét máy đang hoạt động: máy chưa lắp hoặc đã thu hồi thì không hao nhớt,
+   * để lẫn vào chỉ làm loãng danh sách cần đi kiểm tra. */
+  const all = (S.gio.oil||[]).filter(x => {
+    const m = mByCode.get(String(x.code||'').toUpperCase());
+    return m && statusKey(m) === 'active';
+  });
+
+  const cnt = {
+    total: all.length,
+    high: all.filter(x=>x.status==='high').length,
+    low:  all.filter(x=>x.status==='low').length,
+    ok:   all.filter(x=>x.status==='ok').length,
+    bad:  all.filter(x=>x.status==='bad').length,
+    nodata: all.filter(x=>x.status==='nodata').length
+  };
+
+  const shown = all
+    .filter(x => !st || x.status === st)
+    .filter(x => {
+      if (!q) return true;
+      const m = mByCode.get(String(x.code||'').toUpperCase());
+      return `${x.code} ${m?m._byLetter[COL.DONVI]:''} ${m?m._byLetter[COL.TRAI]:''}`.toLowerCase().includes(q);
+    })
+    .sort((a,b) => (Math.abs(b.dev||0) - Math.abs(a.dev||0)));
+
+  const badge = s => ({
+    high:  '<span class="b br">● Hao cao</span>',
+    low:   '<span class="b ba">● Hao thấp bất thường</span>',
+    ok:    '<span class="b bg">● Trong định mức</span>',
+    bad:   '<span class="b br">⚠ Sai định dạng</span>',
+    nodata:'<span class="b bmu">— chưa đủ số liệu</span>'
+  })[s] || '';
+
+  const chip = (key,label,n) => `<button class="fchip ${st===key?'on':''}" onclick="S.filters.oilStatus='${key}';renderPage('tracking')">${label} · ${n}</button>`;
+  const devPct = (S.gio.cfg||{}).dev || 30;
+
+  const rows = shown.map(x => {
+    const m = mByCode.get(String(x.code||'').toUpperCase());
+    const devCls = x.dev==null ? 'bmu' : (x.dev > devPct ? 'br' : (x.dev < -devPct ? 'ba' : 'bg'));
+    return `<tr>
+      <td><span class="mm" style="cursor:pointer;text-decoration:underline" onclick="bdOpenProfile('${esc(x.code)}')">${esc(x.code)}</span></td>
+      ${farmCellVal_(m?(m._byLetter[COL.TRAI]||''):'')}
+      <td>${esc(m?(m._byLetter[COL.DONVI]||''):'')||'—'}</td>
+      <td style="text-align:right">${fmt2_(x.norm)} <span style="font-size:9px;color:var(--mu)">(${esc(x.normSrc||'')})</span></td>
+      <td style="text-align:right">${x.status==='bad'
+        ? `<span class="b br" title="Ô đang chứa: ${esc(x.badRaw)}">⚠ sai định dạng</span>`
+        : (x.current==null?'<span style="color:var(--mu)">—</span>':fmt2_(x.current))}</td>
+      <td style="text-align:right">${x.thucTe==null?'<span style="color:var(--mu)">—</span>':`<b>${fmt2_(x.thucTe)}</b>`}
+        <span style="font-size:9px;color:var(--mu)">${x.gioKy?`(${nfmt_(x.litKy)} L / ${nfmt_(x.gioKy)} h)`:''}</span></td>
+      <td style="text-align:right">${x.dev==null?'—':`<span class="b ${devCls}">${x.dev>0?'+':''}${fmt2_(x.dev)}%</span>`}</td>
+      <td>${badge(x.status)}</td>
+      <td style="text-align:center">${x.soPhieu||0}</td>
+      <td><button class="btn bg-b sm" onclick="openOilNormForm('${esc(x.code)}')">✎ Định mức</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="99"><div class="empty">Không có máy nào khớp bộ lọc.</div></td></tr>';
+
+  return `
+    <div class="ph">
+      <h1>Hao nhớt &amp; tiêu hao vật tư</h1>
+      <p>${cnt.total} máy đang hoạt động ·
+        <b style="color:var(--red)">${cnt.high} hao cao</b> ·
+        <b style="color:var(--amb)">${cnt.low} hao thấp bất thường</b> ·
+        <b style="color:var(--g)">${cnt.ok} trong định mức</b> ·
+        <b style="color:var(--red)">${cnt.bad} ô sai định dạng</b>
+        <br><span style="font-size:11px;color:var(--mu)">
+        <b>Suất khai</b> là con số KTV đang điền ở Sheet 2 — <b>phiếu xuất nhớt tự động lấy chính con số này</b>,
+        và chỉ áp cho phần giờ MỚI chạy kể từ lúc đổi; phiếu đã lập trước đó giữ nguyên, không tính lại.
+        <b>Thực tế</b> suy ngược từ sổ phiếu xuất: tổng lít đã xuất ÷ tổng giờ chạy × ${nfmt_((S.gio.cfg||{}).block||20)},
+        lấy trong ${nfmt_((S.gio.cfg||{}).usageDays||90)} ngày gần nhất. Hai số lệch nhau là bình thường khi suất bị đổi giữa kỳ —
+        đó chính là thứ cần thấy. Lệch quá ±${nfmt_(devPct)}% so với <b>định mức</b> thì vào diện phải kiểm tra:
+        hao cao nghi rò rỉ / bạc xéc-măng; hao thấp bất thường gần như luôn là ghi chép sai, máy không tự tiết kiệm nhớt được.</span></p>
+    </div>
+
+    ${cnt.bad ? `<div class="card" style="background:#fef2f2;border-left:4px solid var(--red);margin-bottom:12px">
+      <div style="padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div style="font-size:12px;color:#7f1d1d;line-height:1.6;flex:1">
+          <b>${cnt.bad} ô hao nhớt đang chứa giá trị không phải số</b> (ô bị định dạng thành ngày tháng).
+          Những ô này đang làm sai cả phiếu xuất lẫn báo cáo. Dọn sẽ xoá trắng ô và ghi giá trị cũ vào nhật ký
+          để biết máy nào cần KTV nhập lại.
+        </div>
+        <button class="btn bg-r sm" onclick="fixOilFormat()">🧹 Dọn ${cnt.bad} ô sai định dạng</button>
+      </div></div>` : ''}
+
+    <div class="fbar">
+      <input class="si" id="oilSearch" autocomplete="off" placeholder="🔍 Tìm mã máy, đơn vị, trại…" value="${esc(S.filters.oilQ||'')}"
+        oninput="S.filters.oilQ=this.value;renderPage('tracking')">
+      <button class="btn bg-gr" onclick="reloadGio_()">↻ Tải lại</button>
+    </div>
+    <div class="fbar">
+      <span class="mslbl">Tình trạng</span>
+      ${chip('','Tất cả',cnt.total)}
+      ${chip('high','🔴 Hao cao',cnt.high)}
+      ${chip('low','🟡 Hao thấp bất thường',cnt.low)}
+      ${chip('ok','🟢 Trong định mức',cnt.ok)}
+      ${chip('bad','⚠ Sai định dạng',cnt.bad)}
+      ${chip('nodata','Chưa đủ số liệu',cnt.nodata)}
+    </div>
+
+    <div class="card"><div class="tw" style="max-height:50vh"><table>
+      <thead><tr>
+        <th>Mã máy</th><th>Trang trại</th><th>Đơn vị</th>
+        <th style="text-align:right">Định mức<br><span style="font-weight:400;text-transform:none;font-size:9px">L/${nfmt_((S.gio.cfg||{}).block||20)}h</span></th>
+        <th style="text-align:right">Suất khai<br><span style="font-weight:400;text-transform:none;font-size:9px">dùng lập phiếu xuất</span></th>
+        <th style="text-align:right">Thực tế<br><span style="font-weight:400;text-transform:none;font-size:9px">suy từ phiếu xuất</span></th>
+        <th style="text-align:right">Lệch</th>
+        <th>Tình trạng</th><th style="text-align:center">Số phiếu</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div></div>
+
+    ${viewUsageTable_()}`;
+}
+
+/* ----------------------------------------------------------------------------
+ *  TIÊU HAO THỰC TẾ CỦA MỌI VẬT TƯ GỬI TẠI TRẠI
+ *  Nhớt chỉ là một dòng trong bảng này. Lọc gió, lọc nhớt, bugi, hạt lọc… đều gửi
+ *  tại trại và đều tiêu hao theo giờ chạy, nên đều phải đo được bằng cùng một thước.
+ * -------------------------------------------------------------------------- */
+function viewUsageTable_(){
+  const u = S.gio.usage || [];
+  if (!u.length) return '';
+  const devPct = (S.gio.cfg||{}).dev || 30;
+  const only = S.filters.usageVt || '';
+  const vts = [...new Set(u.map(x => x.ten || x.vt))].sort();
+
+  const shown = u.filter(x => !only || (x.ten || x.vt) === only).slice(0, 200);
+  const rows = shown.map(x => {
+    const cls = x.dev==null ? 'bmu' : (x.dev > devPct ? 'br' : (x.dev < -devPct ? 'ba' : 'bg'));
+    return `<tr>
+      <td><span class="mm" style="cursor:pointer;text-decoration:underline" onclick="bdOpenProfile('${esc(x.code)}')">${esc(x.code)}</span></td>
+      <td>${esc(x.ten||x.vt)}</td>
+      <td style="text-align:right">${nfmt_(x.sl)}</td>
+      <td style="text-align:center">${x.lan}</td>
+      <td style="text-align:right">${x.gioChay?nfmt_(x.gioChay):'<span style="color:var(--mu)">—</span>'}</td>
+      <td style="text-align:right">${x.thucTe==null?'—':`<b>${fmt2_(x.thucTe)}</b>`}</td>
+      <td style="text-align:right">${x.dinhMuc==null?'<span style="color:var(--mu)">chưa khai</span>':fmt2_(x.dinhMuc)}</td>
+      <td style="text-align:right">${x.dev==null?'—':`<span class="b ${cls}">${x.dev>0?'+':''}${fmt2_(x.dev)}%</span>`}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="ph" style="margin-top:18px"><h1 style="font-size:15px">Tiêu hao thực tế · mọi vật tư gửi tại trại</h1>
+      <p>${nfmt_((S.gio.cfg||{}).usageDays||90)} ngày gần nhất · tổng SL đã xuất ÷ tổng giờ chạy × 1.000 —
+      giờ chạy lấy từ số giờ THẬT theo từng ngày ở Sheet 5, không phải hiệu hai mốc ODO
+      (hiệu hai mốc sẽ nuốt luôn phần giờ do thay bộ đếm mà ra). Định mức tra Sheet 11 theo dòng máy.</p></div>
+    <div class="fbar">
+      <span class="mslbl">Vật tư</span>
+      <button class="fchip ${!only?'on':''}" onclick="S.filters.usageVt='';renderPage('tracking')">Tất cả</button>
+      ${vts.slice(0,14).map(v=>`<button class="fchip ${only===v?'on':''}" onclick="S.filters.usageVt='${esc(v)}';renderPage('tracking')">${esc(v)}</button>`).join('')}
+    </div>
+    <div class="card"><div class="tw" style="max-height:44vh"><table>
+      <thead><tr><th>Mã máy</th><th>Vật tư</th>
+        <th style="text-align:right">SL xuất trong kỳ</th><th style="text-align:center">Số phiếu</th>
+        <th style="text-align:right">Giờ chạy trong kỳ</th>
+        <th style="text-align:right">Thực tế /1.000h</th><th style="text-align:right">Định mức /1.000h</th>
+        <th style="text-align:right">Lệch</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="99"><div class="empty">Chưa có phiếu xuất nào trong kỳ.</div></td></tr>'}</tbody>
+    </table></div></div>`;
+}
+
+function openOilNormForm(code){
+  const x = (S.gio.oil||[]).find(o => String(o.code||'').toUpperCase() === String(code||'').toUpperCase()) || {};
+  const model = String(code||'').toUpperCase().replace(/\d+$/,'');
+  const blk = nfmt_((S.gio.cfg||{}).block||20);
+  openOv(`
+    <div class="mh">
+      <div><h2>✎ Định mức hao nhớt/${blk}h · ${codeFarmLine_(String(code))}</h2>
+      <p>Định mức là con số để SO SÁNH, không phải con số dùng lập phiếu xuất.
+      Phiếu xuất lấy <b>suất khai</b> ở ô hao nhớt của Sheet 2.</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button>
+    </div>
+    <div class="mb">
+      <div class="fsec">
+        <div class="fsh"><div class="fsn">1</div><div class="fst">Định mức mới</div></div>
+        <div class="fgrid fg2">
+          <div class="iw"><div class="il">Lượng nhớt hao định mức (Lít / ${blk}h)</div>
+            <input class="inp" id="gnNormVal" type="number" step="0.01" min="0" value="${esc(x.norm==null?'':x.norm)}" placeholder="VD: 1.50">
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Đang áp dụng <b>${fmt2_(x.norm)}</b> (nguồn: ${esc(x.normSrc||'—')})</div>
+          </div>
+          <div class="iw"><div class="il">Áp dụng cho</div>
+            <select class="sel" id="gnNormScope">
+              <option value="one">Chỉ máy ${esc(code)}</option>
+              <option value="model">Cả dòng máy ${esc(model)}</option>
+            </select>
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Chọn “cả dòng máy” khi khai lần đầu cho một loại máy, rồi tinh chỉnh từng máy sau.</div>
+          </div>
+        </div>
+      </div>
+      <div class="fsec">
+        <div class="fsh" style="background:linear-gradient(90deg,#f0f9ff,#fff)"><div class="fsn" style="background:var(--bl)">2</div>
+          <div class="fst">Số liệu đang có của máy này</div></div>
+        <div class="fgrid fg3">
+          <div class="iw"><div class="il">Suất khai (lập phiếu xuất)</div>
+            <div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:600">${x.current==null?'chưa có':fmt2_(x.current)+' L/'+blk+'h'}</div></div>
+          <div class="iw"><div class="il">Thực tế suy từ phiếu xuất</div>
+            <div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:600">${x.thucTe==null?'chưa đủ số liệu':fmt2_(x.thucTe)+' L/'+blk+'h'}</div></div>
+          <div class="iw"><div class="il">Cơ sở tính</div>
+            <div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:600">${x.gioKy?`${nfmt_(x.litKy)} L / ${nfmt_(x.gioKy)} h · ${x.soPhieu||0} phiếu`:'—'}</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Hủy</button>
+      <button class="btn bg-g" onclick="saveOilNorm('${esc(code)}','${esc(model)}')">💾 Lưu định mức</button>
+    </div>`);
+}
+
+async function saveOilNorm(code, model){
+  const v = $('gnNormVal') ? $('gnNormVal').value : '';
+  const scope = $('gnNormScope') ? $('gnNormScope').value : 'one';
+  if (v === '' || Number(v) <= 0){ toast('Định mức phải là số lít lớn hơn 0','err'); return; }
+  setStatus(true,'Đang lưu định mức…');
+  try {
+    const body = { action:'gnSetNorm', value:v, user:S.user.name };
+    if (scope === 'model') body.model = model; else body.maCode = code;
+    const res = await apiPost(body);
+    if (!res.ok) throw new Error(res.error);
+    closeOv();
+    S.gio.loaded = false;
+    await reloadAll();
+    loadGio_();
+    toast(`✓ Đã đặt định mức ${fmt2_(res.value)} L cho ${res.updated} máy`,'ok');
+  } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
+}
+
+async function fixOilFormat(){
+  if (!confirm('Xoá trắng những ô hao nhớt đang chứa giá trị không phải số?\n\nGiá trị cũ được ghi lại vào "32. Nhật ký đổi suất hao nhớt" nên không mất dấu vết.')) return;
+  setStatus(true,'Đang dọn ô sai định dạng…');
+  try {
+    const res = await apiPost({ action:'gnFixOil', user:S.user.name });
+    if (!res.ok) throw new Error(res.error);
+    S.gio.loaded = false;
+    await reloadAll();
+    loadGio_();
+    toast(res.fixed ? `✓ Đã dọn ${res.fixed} ô sai định dạng` : 'Không có ô nào sai định dạng','ok');
+  } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
+}
+
+
 /* Legacy modal removed – vẫn giữ hàm openFilterEdit làm no-op để nút cũ không lỗi */
 function openFilterEdit(){ toast('Đã chuyển sang chỉnh sửa trực tiếp trên bảng','info'); }
 async function saveFilter(){ /* legacy */ }
@@ -5031,10 +5723,14 @@ function computeEfficiencyPageList_(filteredMasterRows){
   const all = computeEfficiencyAll_(filteredMasterRows);
   const byCode = new Map(all.map(x => [x.code, x]));
   const sSet = S.filters.eff.status;
+  /* Đang TÌM một mã máy cụ thể thì bỏ qua chip phân loại và chip "cần kiểm tra".
+   * Gõ đúng mã máy rồi mà vẫn không thấy vì nó đang "ổn định" là cách chắc chắn nhất
+   * làm người dùng tin rằng máy đó không tồn tại trên trang này. */
+  const searching = !!(S.filters.eff.q || '').trim();
   return filteredMasterRows.map(r => byCode.get(String(r._byLetter.B||'').trim()) || null)
     .filter(Boolean)
-    .filter(x => !sSet.size || sSet.has(x.effStatus))
-    .filter(x => !S.filters.eff.streakOnly || x.needCheck)
+    .filter(x => searching || !sSet.size || sSet.has(x.effStatus))
+    .filter(x => searching || !S.filters.eff.streakOnly || x.needCheck)
     /* Nặng nhất lên đầu: máy đang trong diện phải kiểm tra (chuỗi ≥ STREAK_ALERT_DAYS
      * ngày) luôn đứng trước, rồi mới tới phân loại của ngày mới nhất. Chuỗi dài hơn
      * đứng trước chuỗi ngắn hơn — đó mới là thứ tự đi hiện trường. */
@@ -5052,10 +5748,16 @@ function viewEfficiency(){
   // Áp dụng bộ lọc đa chọn
   const rSet = S.filters.eff.region;
   const tSet = S.filters.eff.type;
+  /* Ô TÌM MÃ MÁY. Trang này là danh sách thẻ dài, mỗi thẻ kèm 1 biểu đồ — cuộn tay tìm
+   * một mã máy cụ thể vừa chậm vừa dễ trượt. Khớp cả mã máy, đơn vị và tên trại vì
+   * người dùng nhớ trại nhiều hơn nhớ mã. */
+  const effQ = (S.filters.eff.q || '').trim().toLowerCase();
   const filtered = base.filter(r => {
     const okR = !rSet.size || rSet.has(regionOf(r));
     const okT = !tSet.size || tSet.has(typeOf(r));
-    return okR && okT;
+    const hay = `${r._byLetter[COL.MA]||''} ${r._byLetter[COL.DONVI]||''} ${r._byLetter[COL.TRAI]||''} ${r._byLetter[COL.TINH]||''}`.toLowerCase();
+    const okQ = !effQ || hay.includes(effQ);
+    return okR && okT && okQ;
   });
 
   /* Đếm theo TOÀN BỘ máy sau lọc khu vực/loại hình — KHÔNG đếm trên danh sách đã lọc
@@ -5111,6 +5813,13 @@ function viewEfficiency(){
           onclick="toggleEffStreakOnly()">🔔 Cần kiểm tra (≥${STREAK_ALERT_DAYS} ngày) · ${nStreak}</button>
       </div>
       <div class="msg">
+        <input class="si" id="effSearch" autocomplete="off" style="max-width:460px"
+          placeholder="🔍 Tìm mã máy, đơn vị, trại… (gõ đúng mã máy là ra thẳng máy đó)"
+          value="${esc(S.filters.eff.q||'')}" oninput="S.filters.eff.q=this.value;renderPage('efficiency')">
+        ${S.filters.eff.q ? `<button class="fchip on" title="Bỏ tìm để quay lại bộ lọc phân loại"
+            onclick="S.filters.eff.q='';renderPage('efficiency')">✕ đang tìm “${esc(S.filters.eff.q)}”</button>` : ''}
+      </div>
+      <div class="msg">
         <span class="mslbl">Khu vực</span>
         ${chip('region','Miền Bắc')}
         ${chip('region','Miền Nam')}
@@ -5161,6 +5870,7 @@ function toggleEffStreakOnly(){
 function clearEffFilters(){
   S.filters.eff.region.clear();
   S.filters.eff.type.clear();
+  S.filters.eff.q = '';
   // Trả bộ lọc phân loại về mặc định (2 nhóm có vấn đề) chứ không xoá trắng —
   // xoá trắng sẽ đổ ra toàn bộ máy kèm biểu đồ, nặng và không phải ý người dùng khi bấm "Bỏ lọc".
   S.filters.eff.status = new Set(['ineffective','bad']);
