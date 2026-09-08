@@ -1036,7 +1036,14 @@ async function apiPost(body){
   const action = String((body && body.action) || '');
   const b = Object.assign({}, body);
   if (S.token) b.token = S.token;
-  if (!b.user && S.user && S.user.login) b.user = S.user.login;
+  /* GỬI TÊN ĐĂNG NHẬP, KHÔNG GỬI HỌ TÊN.
+   * Rất nhiều chỗ gọi apiPost({... user:S.user.name}) — tức là gửi "Nguyễn Cẩm Vân",
+   * trong khi Sheet 25 tra theo tên đăng nhập. Server nào lỡ tra quyền bằng chuỗi này
+   * sẽ không thấy ai và trả về quyền Khách, dù người dùng đang đăng nhập Admin.
+   * Ghi đè ở đây để trường user LUÔN là một danh tính tra được. Họ tên hiển thị thì
+   * server tự lấy từ token, không cần web gửi lên. */
+  if (S.user && S.user.login) b.user = S.user.login;
+  else if (!b.user && S.user && S.user.name) b.user = S.user.name;
 
   const quiet = POST_READONLY.indexOf(action) >= 0 || POST_BACKGROUND.indexOf(action) >= 0;
   const writes = POST_READONLY.indexOf(action) < 0;
@@ -4547,6 +4554,7 @@ function viewTrackingSheet(){
          * suy ra được, để trong tooltip — bảng này tồn tại để đối chiếu 1-1 với Sheet 2,
          * hiện một con số khác con số trên sheet là quay lại đúng cái bệnh đang dẹp. */
         const cells = sts.map(s => {
+          if (s.kind === 'bad')     return `<td style="text-align:center"><span class="b br" title="Ô “Số giờ máy chạy” đang là văn bản — cả dòng tính ra lỗi">⚠</span></td>`;
           if (s.kind === 'skip')    return `<td style="text-align:center;color:var(--mu)" title="Không áp dụng cho máy này">·</td>`;
           if (s.kind === 'na')      return `<td style="text-align:right;color:var(--mu)">—</td>`;
           if (s.kind === 'nocycle') return `<td style="text-align:right"><span class="b bmu" title="Chưa điền chu kỳ ở Sheet 3 — chưa so được">${nfd_(s.n)}</span></td>`;
@@ -5348,6 +5356,8 @@ function viewHourBase(){
       <input class="si" id="gioSearch" autocomplete="off" placeholder="🔍 Tìm mã máy, đơn vị, trại…" value="${esc(S.filters.gioQ||'')}"
         oninput="S.filters.gioQ=this.value;renderPage('tracking')">
       <button class="btn bg-gr" onclick="reloadGio_()">↻ Tải lại</button>
+      <button class="btn bg-r" title="Ép các ô số đang bị lưu thành văn bản về đúng kiểu số, và thống nhất định dạng hiển thị"
+              onclick="fixNumFormat()">🧹 Dọn ô số sai định dạng</button>
     </div>
     <div class="card"><div class="tw" style="max-height:50vh"><table>
       <thead><tr>
@@ -5573,7 +5583,9 @@ function viewOilRate(){
         <b>Thực tế</b> suy ngược từ sổ phiếu xuất: tổng lít đã xuất ÷ tổng giờ chạy × ${nfmt_((S.gio.cfg||{}).block||20)},
         lấy trong ${nfmt_((S.gio.cfg||{}).usageDays||90)} ngày gần nhất. Hai số lệch nhau là bình thường khi suất bị đổi giữa kỳ —
         đó chính là thứ cần thấy. Lệch quá ±${nfmt_(devPct)}% so với <b>định mức</b> thì vào diện phải kiểm tra:
-        hao cao nghi rò rỉ / bạc xéc-măng; hao thấp bất thường gần như luôn là ghi chép sai, máy không tự tiết kiệm nhớt được.</span></p>
+        hao cao nghi rò rỉ / bạc xéc-măng; hao thấp bất thường gần như luôn là ghi chép sai, máy không tự tiết kiệm nhớt được.
+        <br><b>Định mức</b> lấy ở <b>“4. Data thay lọc” cột K</b>, tra theo <b>dòng máy</b> (NS200KVA18 → NS200KVA) —
+        khai một lần, mọi máy cùng mã dùng chung. Cột định mức ở Sheet 2 chỉ là công thức tra sang đó.</span></p>
     </div>
 
     ${cnt.bad ? `<div class="card" style="background:#fef2f2;border-left:4px solid var(--red);margin-bottom:12px">
@@ -5669,9 +5681,10 @@ function openOilNormForm(code){
   const blk = nfmt_((S.gio.cfg||{}).block||20);
   openOv(`
     <div class="mh">
-      <div><h2>✎ Định mức hao nhớt/${blk}h · ${codeFarmLine_(String(code))}</h2>
-      <p>Định mức là con số để SO SÁNH, không phải con số dùng lập phiếu xuất.
-      Phiếu xuất lấy <b>suất khai</b> ở ô hao nhớt của Sheet 2.</p></div>
+      <div><h2>✎ Định mức hao nhớt/${blk}h · dòng máy <span class="mm">${esc(model)}</span></h2>
+      <p>Định mức là con số để SO SÁNH, không phải con số dùng lập phiếu xuất — phiếu xuất lấy <b>suất khai</b> ở ô hao nhớt của Sheet 2.
+      Nó là thuộc tính của <b>động cơ</b>, nên khai một lần cho cả dòng máy tại
+      <b>“4. Data thay lọc” cột K</b>. Cột định mức ở Sheet 2 chỉ tra sang đó, không sửa trực tiếp được.</p></div>
       <button class="mcl" onclick="closeOv()">✕</button>
     </div>
     <div class="mb">
@@ -5682,12 +5695,11 @@ function openOilNormForm(code){
             <input class="inp" id="gnNormVal" type="number" step="0.01" min="0" value="${esc(x.norm==null?'':x.norm)}" placeholder="VD: 1.50">
             <div style="font-size:9px;color:var(--mu);margin-top:3px">Đang áp dụng <b>${fmt2_(x.norm)}</b> (nguồn: ${esc(x.normSrc||'—')})</div>
           </div>
-          <div class="iw"><div class="il">Áp dụng cho</div>
-            <select class="sel" id="gnNormScope">
-              <option value="one">Chỉ máy ${esc(code)}</option>
-              <option value="model">Cả dòng máy ${esc(model)}</option>
-            </select>
-            <div style="font-size:9px;color:var(--mu);margin-top:3px">Chọn “cả dòng máy” khi khai lần đầu cho một loại máy, rồi tinh chỉnh từng máy sau.</div>
+          <div class="iw"><div class="il">Phạm vi áp dụng</div>
+            <div style="padding:8px 11px;background:#f1f5f9;border:1.5px solid var(--bd);border-radius:8px;font-size:12px;font-weight:600">
+              Toàn bộ dòng máy <span class="mm">${esc(model)}</span></div>
+            <div style="font-size:9px;color:var(--mu);margin-top:3px">Không còn lựa chọn “chỉ máy này” — cố ý.
+              Hai máy cùng dòng mà khác định mức thì <b>một trong hai con số chắc chắn sai</b>, và không có cách nào biết là con nào.</div>
           </div>
         </div>
       </div>
@@ -5706,25 +5718,47 @@ function openOilNormForm(code){
     </div>
     <div class="mf">
       <button class="btn bg-gr" onclick="closeOv()">Hủy</button>
-      <button class="btn bg-g" onclick="saveOilNorm('${esc(code)}','${esc(model)}')">💾 Lưu định mức</button>
+      <button class="btn bg-g" onclick="saveOilNorm('${esc(code)}','${esc(model)}')">💾 Lưu vào Sheet 4</button>
     </div>`);
 }
 
 async function saveOilNorm(code, model){
   const v = $('gnNormVal') ? $('gnNormVal').value : '';
-  const scope = $('gnNormScope') ? $('gnNormScope').value : 'one';
   if (v === '' || Number(v) <= 0){ toast('Định mức phải là số lít lớn hơn 0','err'); return; }
-  setStatus(true,'Đang lưu định mức…');
+  setStatus(true,'Đang lưu định mức vào “4. Data thay lọc”…');
   try {
-    const body = { action:'gnSetNorm', value:v, user:S.user.name };
-    if (scope === 'model') body.model = model; else body.maCode = code;
-    const res = await apiPost(body);
+    /* Luôn gửi model: server ghi đúng một ô ở Sheet 4, cột định mức ở Sheet 2 là công
+     * thức nên cả dòng máy đổi theo mà không cần ghi 79 ô. */
+    const res = await apiPost({ action:'gnSetNorm', value:v, model:model, user:S.user.name });
     if (!res.ok) throw new Error(res.error);
     closeOv();
     S.gio.loaded = false;
     await reloadAll();
     loadGio_();
-    toast(`✓ Đã đặt định mức ${fmt2_(res.value)} L cho ${res.updated} máy`,'ok');
+    toast(`✓ ${res.model}: định mức ${res.cu==null?'(chưa có)':fmt2_(res.cu)} → ${fmt2_(res.value)} L · áp cho ${res.updated} máy`,'ok');
+  } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
+}
+
+/* ----------------------------------------------------------------------------
+ *  DỌN Ô SỐ ĐANG LÀ VĂN BẢN
+ *  Khác hẳn fixOilFormat: hàm kia XOÁ ô hỏng (ngày tháng lọt vào cột lít), hàm này
+ *  CHUYỂN KIỂU và giữ nguyên giá trị — "413.72" vẫn là 413,72 h, chỉ thôi là văn bản.
+ * -------------------------------------------------------------------------- */
+async function fixNumFormat(){
+  if (!confirm('Quét Sheet 2 và ép về đúng kiểu số các ô đang bị lưu thành văn bản?\n\n'
+    + 'Áp dụng cho: “Số giờ máy chạy”, mọi cột “Thời điểm…”, và cột hao nhớt.\n'
+    + 'Giá trị KHÔNG đổi, chỉ đổi kiểu dữ liệu và định dạng hiển thị.\n'
+    + 'Ký hiệu “X” (không áp dụng) được giữ nguyên.')) return;
+  setStatus(true,'Đang quét và ép kiểu số…');
+  try {
+    const res = await apiPost({ action:'gnFixNum', user:S.user.name });
+    if (!res.ok) throw new Error(res.error);
+    S.gio.loaded = false;
+    await reloadAll();
+    loadGio_();
+    toast(res.fixed
+      ? `✓ Đã sửa ${res.fixed} ô: ${(res.cells||[]).slice(0,3).join(' · ')}${res.fixed>3?' …':''}`
+      : `Không có ô nào sai kiểu · đã thống nhất định dạng ${res.cols} cột`, 'ok');
   } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
 }
 
@@ -10399,6 +10433,13 @@ function qMachineCard_(c){
     }
     const tenVt = it.vt ? ` · ${esc(it.vt)}` : '';
 
+    if (st.kind === 'bad'){
+      return `<div class="qcell bad" onclick="openTrackingEdit(${c.row._row})"
+                   title="Ô “Số giờ máy chạy” đang là văn bản, không phải số">
+        <div class="qct">${esc(it.ten)}</div>
+        <div class="qcs">⚠ ODO sai định dạng</div></div>`;
+    }
+
     if (st.kind === 'na' || st.kind === 'nocycle'){
       const phu = st.kind === 'nocycle'
         ? `đã chạy ${nfd_(st.n)} h · chưa có chu kỳ`
@@ -12426,6 +12467,10 @@ function bdCell_(raw, it){
    * và khác 'skip' không có na (tắt cả dòng máy ở cột "Áp dụng cho" của Sheet 3) —
    * ba thứ này trông giống nhau nếu gộp, mà xử lý thì khác hẳn. */
   if (BD_NA_RE.test(s)) return { kind:'skip', na:true, n:null, cyc, remain:null };
+  /* Công thức Sheet 2 trả chuỗi bắt đầu bằng ⚠ khi ô "Số giờ máy chạy" của dòng đó
+   * là VĂN BẢN chứ không phải số. Phải có trạng thái RIÊNG: gộp vào 'na' (chưa có số
+   * liệu) là biến một lỗi sửa được thành một dấu gạch ngang không ai để ý. */
+  if (s.charAt(0) === '⚠') return { kind:'bad', n:null, cyc, remain:null, msg:s };
   /* Ô còn sót chữ "⛔ Chưa có mốc" từ bản cũ (chưa chạy lại bdSyncTracking) → coi mốc
    * là 0, tức đã chạy đúng bằng ODO. Không trả 'nobase' nữa: hai bản dữ liệu cũ/mới
    * phải cho ra cùng một kết luận, nếu không thì tuỳ lúc đồng bộ mà máy đổi màu. */
@@ -12445,6 +12490,7 @@ function bdCell_(raw, it){
   return { kind:'ok', n, cyc, remain };
 }
 function bdChip_(st){
+  if (st.kind === 'bad')  return `<span class="b br" title="Ô “Số giờ máy chạy” của dòng này đang là văn bản, không phải số — mọi cột theo dõi của máy tính ra lỗi. Bấm “Dọn ô số sai định dạng” ở tab Bộ đếm giờ &amp; reset.">⚠ ODO sai định dạng</span>`;
   if (st.kind === 'skip') return `<span class="b bmu" title="Máy này khai KHÔNG có hạng mục đó — ô &quot;Thời điểm…&quot; ở Sheet 2 đang là X">không áp dụng</span>`;
   if (st.kind === 'nocycle') return `<span class="b bmu" title="Hạng mục chưa điền Định mức giờ bảo dưỡng ở Sheet 3">đã chạy ${nfd_(st.n)} h · chưa có chu kỳ</span>`;
   if (st.kind === 'overdue') return `<span class="b br" title="Đã chạy ${nfd_(st.n)} h / chu kỳ ${nfmt_(st.cyc)} h">quá ${nfd_(Math.abs(st.remain))} h</span>`;
