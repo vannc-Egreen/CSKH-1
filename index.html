@@ -1369,6 +1369,7 @@ function applyPerm_(perm, pending){
 function applyQlvt_(d){
   Object.assign(Q, {
     loaded:true, perm:Q.perm, catalog:d.catalog, norms:d.norms,
+    minOv:d.minOv||{ headers:[], rows:[] },
     models:d.models||Q.models,
     normLinks:d.normLinks||{},
     stock:d.stock, sim:d.sim, alarmDict:d.alarmDict,
@@ -10611,6 +10612,7 @@ const QSEP = ' · ';
 const Q = {
   loaded:false, perm:{ viewPrice:false, editPrice:false, editNorm:false, role:'' },
   catalog:{ headers:[], rows:[] }, norms:{ headers:[], rows:[] },
+  minOv:{ headers:[], rows:[] },     // ô "Tối thiểu" sửa riêng ở Sheet 14 (server đọc từ ghi chú ✎ trên ô)
   /* Dòng máy đang thật sự có máy chạy (backend gửi kèm). Bảng sửa định mức phải bày cả
    * dòng máy CHƯA có hàng nào ở Sheet 11, nếu không thì máy mới lắp không có đường nào
    * để khai định mức cho nó. */
@@ -11147,7 +11149,7 @@ function viewStockOnHand_(){
       onclick="qOpenMachineSheet('${esc(String(r['Mã máy']||''))}','${esc(v.vt)}')"
       title="${esc(v.ten)} — bấm để mở phiếu của máy này" class="qtd">
       <b style="${short?'color:var(--red)':''}">${ton!=null?ton:0}</b>
-      ${min!=null?`<span style="font-size:9px;color:var(--mu)">/${min}</span>`:''}
+      ${qMinTag_(r['Mã máy'], v.vt, min)}
     </td>`;
   };
 
@@ -11181,6 +11183,8 @@ function viewStockOnHand_(){
               <div class="qtotm">
                 ${Q.perm.viewPrice?`${fmtVnd_(x.tien)} · `:''}${nint_(x.nMay)} máy có hàng
                 ${x.thieu?`<span style="color:var(--red)"> · ${nint_(x.thieu)} thiếu</span>`:''}
+                ${(() => { let n = 0; qMinOvMap_().forEach((o,k) => { if (k.split('|')[1] === x.v.vt) n++; });
+                   return n ? `<span style="color:var(--bl)" title="Số máy có tồn tối thiểu riêng / không áp dụng"> · ${n} ngoại lệ</span>` : ''; })()}
               </div>
             </div>`).join('') || '<div class="empty">Chưa có loại vật tư nào ở Sheet 10.</div>'}
         </div>
@@ -11722,6 +11726,210 @@ function qNormLockHint_(v){
     : `Lấy tự động từ hạng mục “${l.ma}” ở “${l.nguon}”. Sửa ở đó thì mọi dòng máy đổi theo.`;
 }
 
+/* ============================================================================
+ *  ⚙ TỒN TỐI THIỂU RIÊNG THEO MÁY  — backend stockMinSet (QLVT.gs) · ghi thẳng ô Sheet 14
+ * ----------------------------------------------------------------------------
+ *  Định mức Sheet 11 đặt theo DÒNG MÁY. Ngoại lệ cho từng cặp máy × vật tư:
+ *    · theo dòng máy (mặc định — ô là công thức điền đại trà từ Sheet 11)
+ *    · riêng  : tồn tối thiểu riêng cho máy này (0 = giữ theo dõi nhưng không đòi bù)
+ *    · không  : máy này không giữ vật tư này — không tối thiểu, không cảnh báo thiếu /
+ *               cấp gấp / nhớt không đủ chạy. Tồn thực tế (nếu còn) vẫn hiện bình thường.
+ *  Một modal cho hai lối vào: theo VẬT TƯ (hàng = các máy) và theo MÁY (hàng = các vật tư).
+ * ========================================================================== */
+function qMinOvMap_(){
+  const src = (Q.minOv && Q.minOv.rows) || [];
+  if (Q._minOvSrc === src && Q._minOvMap) return Q._minOvMap;
+  const m = new Map();
+  src.forEach(r => {
+    const c = String(r['Mã máy']||'').trim().toUpperCase(), vt = String(r['Mã VT']||'').trim().toUpperCase();
+    if (!c || !vt) return;
+    const ap = !/^(không|khong|no|0|false)$/i.test(String(r['Áp dụng']??'').trim());
+    const min = numOrNull_(r['Tồn tối thiểu riêng']);
+    if (ap && min == null) return;                 // cùng quy tắc readMinOverrides_ phía server
+    m.set(c+'|'+vt, { apDung:ap, min: ap ? min : null, lyDo:String(r['Lý do']||''), nguoi:String(r['Người đặt']||''), at:String(r['Đặt lúc']||'') });
+  });
+  Q._minOvSrc = src; Q._minOvMap = m;
+  return m;
+}
+function qMinOvOf_(code, vt){ return qMinOvMap_().get(String(code||'').trim().toUpperCase()+'|'+String(vt||'').trim().toUpperCase()) || null; }
+/** Tồn tối thiểu THEO DÒNG MÁY (Sheet 11) — để so với ngoại lệ. null = dòng máy không đặt. */
+function qNormMin_(model, ten){
+  const r = (Q.norms.rows||[]).find(x => String(x['Dòng máy']||'').trim().toUpperCase() === String(model||'').trim().toUpperCase());
+  return r ? numOrNull_(r[ten + QSEP + 'Tồn tối thiểu']) : null;
+}
+/** Phần "/tối thiểu" trong ô tồn: ghi rõ khi là ngoại lệ để không ai tưởng định mức bị lỗi. */
+function qMinTag_(code, vt, min){
+  const ov = qMinOvOf_(code, vt);
+  if (ov && !ov.apDung) return `<span style="font-size:9px;color:var(--mu)" title="Máy này KHÔNG áp dụng tồn tối thiểu vật tư này (sửa riêng ở Sheet 14)${ov.lyDo?' — '+esc(ov.lyDo):''}">/⊘</span>`;
+  if (ov) return `<span style="font-size:9px;color:var(--bl)" title="Tồn tối thiểu RIÊNG máy này (sửa riêng ở Sheet 14, không theo dòng máy)${ov.lyDo?' — '+esc(ov.lyDo):''}">/${min!=null?min:ov.min}*</span>`;
+  return min!=null ? `<span style="font-size:9px;color:var(--mu)">/${min}</span>` : '';
+}
+
+let _mo = null;      // { by:'vt'|'code', key, rows:[{code, vt, ten, model, ton, dong, cur}] }
+
+function qMinOvOpen(by, key){
+  if (!Q.perm.editNorm){ toast('Cần quyền “Sửa định mức” để đặt tồn tối thiểu riêng theo máy','err'); return; }
+  const items = qItems_(false);
+  const stock = Q.stock.rows || [];
+  let rows = [];
+  if (by === 'vt'){
+    const v = items.find(x => x.vt === String(key).toUpperCase()); if (!v){ toast('Không thấy vật tư','err'); return; }
+    rows = stock.map(r => {
+      const code = String(r['Mã máy']||'').trim(), model = String(r['Dòng máy']||'').trim();
+      return { code, vt:v.vt, ten:v.ten, dvt:v.dvt, model, chay:qDangChay_(r), trai:String(r['Trại']||''),
+               ton:num2_(qv_(r, v.ten, 'Tồn')), dong:qNormMin_(model, v.ten), cur:qMinOvOf_(code, v.vt) };
+    });
+  } else {
+    const r = stock.find(x => String(x['Mã máy']||'').trim().toUpperCase() === String(key).toUpperCase());
+    if (!r){ toast('Không thấy máy '+key+' ở bảng tồn kho','err'); return; }
+    const code = String(r['Mã máy']||'').trim(), model = String(r['Dòng máy']||'').trim();
+    rows = items.map(v => ({ code, vt:v.vt, ten:v.ten, dvt:v.dvt, model, chay:qDangChay_(r), trai:String(r['Trại']||''),
+      ton:num2_(qv_(r, v.ten, 'Tồn')), dong:qNormMin_(model, v.ten), cur:qMinOvOf_(code, v.vt) }));
+  }
+  _mo = { by, key:String(key).toUpperCase(), rows, q:'', onlyDong:true };
+  openOv(qMinOvHtml_());
+}
+
+function qMinOvHtml_(){
+  const M = _mo; if (!M) return '';
+  const byVt = M.by === 'vt';
+  const head = byVt ? M.rows[0] : M.rows[0];
+  const q = (M.q||'').toLowerCase();
+  const vis = M.rows.map((r,i) => ({ r, i })).filter(({r}) => {
+    /* Mặc định chỉ hiện dòng CÓ định mức dòng máy hoặc ĐANG có ngoại lệ — dòng máy không đặt
+     * tồn tối thiểu thì không có cảnh báo nào để tắt. */
+    if (M.onlyDong && r.dong == null && !r.cur) return false;
+    if (!q) return true;
+    return `${r.code} ${r.model} ${r.trai} ${r.ten}`.toLowerCase().includes(q);
+  });
+  const nOv = M.rows.filter(r => r.cur).length;
+  const selOf = r => !r.cur ? 'theoDong' : (r.cur.apDung ? 'rieng' : 'khong');
+  const row = ({r,i}) => {
+    const thieu = r.ton != null && (r.cur ? (r.cur.apDung && r.ton < r.cur.min) : (r.dong != null && r.ton < r.dong));
+    return `<tr data-i="${i}" style="${r.cur?'background:#f0f9ff':''}">
+      <td style="text-align:center"><input type="checkbox" class="moSel" value="${i}"></td>
+      <td>${byVt ? `<span class="mm">${esc(r.code)}</span>${r.chay?'':' <span class="b bmu">⏸ dừng</span>'}<div style="font-size:10px;color:var(--mu)">${esc(r.trai)}</div>`
+                 : `<b style="font-size:12px">${esc(r.ten)}</b> <span style="font-size:10px;color:var(--mu)">${esc(r.dvt||'')}</span>`}</td>
+      ${byVt?`<td style="font-size:11px">${esc(r.model||'—')}</td>`:''}
+      <td style="text-align:right;font-family:var(--mono);${thieu?'color:var(--red);font-weight:700':''}">${r.ton!=null?r.ton:0}</td>
+      <td style="text-align:right;font-family:var(--mono);color:var(--mu)">${r.dong!=null?r.dong:'—'}</td>
+      <td style="white-space:nowrap">
+        <select class="sel" id="mo_m_${i}" style="font-size:11px;padding:3px 6px;width:auto" onchange="qMinOvMode_(${i})">
+          <option value="theoDong" ${selOf(r)==='theoDong'?'selected':''}>Theo dòng máy</option>
+          <option value="rieng" ${selOf(r)==='rieng'?'selected':''}>Tối thiểu riêng</option>
+          <option value="khong" ${selOf(r)==='khong'?'selected':''}>Không áp dụng</option>
+        </select>
+        <input class="inp" id="mo_v_${i}" type="number" step="any" min="0" value="${r.cur&&r.cur.apDung?esc(r.cur.min):''}"
+          style="width:70px;text-align:right;padding:3px 6px;font-size:12px;${selOf(r)==='rieng'?'':'display:none'}" placeholder="0">
+        ${r.cur&&r.cur.lyDo?`<div style="font-size:9px;color:var(--mu)" title="${esc(r.cur.nguoi)} · ${esc(r.cur.at)}">${esc(r.cur.lyDo)}</div>`:''}
+      </td></tr>`;
+  };
+  return `
+    <div class="mh"><div>
+      <h2>⚙ Tồn tối thiểu riêng · ${byVt ? esc(head ? head.ten : M.key) : `<span class="mm">${esc(M.key)}</span>`}</h2>
+      <p>Định mức tồn tối thiểu đặt theo <b>dòng máy</b> (Sheet 11). Ở đây đặt <b>ngoại lệ cho từng ${byVt?'máy':'vật tư của máy này'}</b>:
+        <b>Tối thiểu riêng</b> (0 = vẫn theo dõi tồn nhưng không đòi bù) hoặc <b>Không áp dụng</b> (máy không giữ vật tư này — không cảnh báo thiếu,
+        không cảnh báo cấp gấp khi tới hạn bảo dưỡng). Tồn thực tế không bị đụng. Ghi <b>thẳng vào ô “… · Tối thiểu” của máy ở Sheet 14</b> (ô có ghi chú ✎) — giá trị sửa riêng luôn thắng định mức điền đại trà, sửa Sheet 11 sau này không đè lên. Vết ở Sheet 15.</p>
+    </div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div class="msg" style="margin-bottom:8px;flex-wrap:wrap;gap:6px">
+        <input class="si" id="moFind" style="flex:1;min-width:160px" placeholder="🔍 Lọc ${byVt?'mã máy, dòng máy, trại':'tên vật tư'}…" value="${esc(M.q||'')}" oninput="qMinOvSearch(this.value)">
+        <button class="fchip ${M.onlyDong?'on':''}" onclick="_mo.onlyDong=!_mo.onlyDong;qMinOvRedraw_()" title="Ẩn dòng mà dòng máy không đặt tồn tối thiểu (không có cảnh báo nào để tắt)">
+          ${M.onlyDong?'✓ ':''}Chỉ dòng có định mức</button>
+        <span class="b bmu">${nOv} ngoại lệ đang đặt</span>
+      </div>
+      <div class="msg" style="margin-bottom:8px;gap:6px;flex-wrap:wrap;font-size:11px">
+        Áp cho các dòng đã tích:
+        <button class="btn bg-gr sm" onclick="qMinOvBulk_('khong')">⊘ Không áp dụng</button>
+        <input class="inp" id="moBulkN" type="number" step="any" min="0" placeholder="số" style="width:60px;padding:3px 6px;font-size:12px">
+        <button class="btn bg-gr sm" onclick="qMinOvBulk_('rieng')">= Tối thiểu riêng</button>
+        <button class="btn bg-gr sm" onclick="qMinOvBulk_('theoDong')">↺ Về theo dòng máy</button>
+        <span style="color:var(--mu)">(chỉ điền vào form — chưa ghi gì)</span>
+      </div>
+      <div class="tw" style="max-height:46vh"><table>
+        <thead><tr>
+          <th style="text-align:center"><input type="checkbox" onchange="document.querySelectorAll('.moSel').forEach(x=>x.checked=this.checked)"></th>
+          <th>${byVt?'Máy':'Vật tư'}</th>${byVt?'<th>Dòng máy</th>':''}
+          <th style="text-align:right">Tồn</th>
+          <th style="text-align:right" title="Tồn tối thiểu đặt cho dòng máy ở Sheet 11">Định mức<br>dòng máy</th>
+          <th>Áp dụng cho ${byVt?'máy này':'máy này'}</th>
+        </tr></thead>
+        <tbody>${vis.map(row).join('') || `<tr><td colspan="9"><div class="empty">Không có dòng nào${M.onlyDong?' có định mức tồn tối thiểu — bỏ chip “Chỉ dòng có định mức” để xem hết':''}.</div></td></tr>`}</tbody>
+      </table></div>
+      <div class="iw" style="margin-top:10px"><div class="il">Lý do</div>
+        <input class="inp" id="moWhy" placeholder="VD: Trại gần kho Bắc Ninh, không gửi bugi tại trại · Máy dùng đánh lửa loại khác"></div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
+      <button class="btn bg-g" onclick="qMinOvSave()">💾 Lưu ngoại lệ</button>
+    </div>`;
+}
+/* Vẽ lại modal mà KHÔNG mất số đã gõ: đọc các ô đang hiện vào _mo trước. */
+function qMinOvPull_(){
+  if (!_mo) return;
+  _mo.rows.forEach((r,i) => {
+    const m = $('mo_m_'+i), v = $('mo_v_'+i);
+    if (m){ r._mode = m.value; r._val = v ? v.value : ''; }
+  });
+}
+function qMinOvRedraw_(){
+  qMinOvPull_();
+  const el = $('mdl'); if (!el) return;
+  const act = document.activeElement, pos = (act && act.id === 'moFind') ? act.selectionStart : null;
+  el.innerHTML = qMinOvHtml_();
+  _mo.rows.forEach((r,i) => {
+    if (r._mode === undefined) return;
+    const m = $('mo_m_'+i), v = $('mo_v_'+i);
+    if (m){ m.value = r._mode; if (v){ v.value = r._val; v.style.display = r._mode === 'rieng' ? '' : 'none'; } }
+  });
+  if (pos !== null){ const n = $('moFind'); if (n){ n.focus(); try { n.setSelectionRange(pos,pos); } catch(e){} } }
+}
+function qMinOvSearch(v){ _mo.q = v; qMinOvRedraw_(); }
+function qMinOvMode_(i){
+  const m = $('mo_m_'+i), v = $('mo_v_'+i); if (!m || !v) return;
+  v.style.display = m.value === 'rieng' ? '' : 'none';
+  if (m.value === 'rieng' && v.value === '') { v.value = '0'; v.focus(); v.select && v.select(); }
+}
+function qMinOvBulk_(mode){
+  const ids = Array.prototype.slice.call(document.querySelectorAll('.moSel:checked')).map(x => Number(x.value));
+  if (!ids.length){ toast('Tích chọn các dòng cần áp trước','err'); return; }
+  const n = String(($('moBulkN')||{}).value||'').trim();
+  if (mode === 'rieng' && (n === '' || isNaN(Number(n)) || Number(n) < 0)){ toast('Điền số tối thiểu (≥ 0) vào ô cạnh nút','err'); return; }
+  ids.forEach(i => { const m = $('mo_m_'+i), v = $('mo_v_'+i); if (!m) return;
+    m.value = mode; if (v){ v.style.display = mode === 'rieng' ? '' : 'none'; if (mode === 'rieng') v.value = n; } });
+  toast(`Đã điền cho ${ids.length} dòng — bấm Lưu để ghi`, 'ok');
+}
+async function qMinOvSave(){
+  if (!_mo) return;
+  qMinOvPull_();
+  const items = [], loi = [];
+  _mo.rows.forEach(r => {
+    if (r._mode === undefined) return;               // dòng đang bị lọc ẩn và chưa từng hiện → không đổi
+    const cur = !r.cur ? 'theoDong' : (r.cur.apDung ? 'rieng' : 'khong');
+    if (r._mode === 'rieng'){
+      const n = numOrNull_(r._val);
+      if (n == null || n < 0){ loi.push(`${r.code} · ${r.ten}`); return; }
+      if (cur === 'rieng' && n === r.cur.min) return;
+      items.push({ maCode:r.code, vt:r.vt, mode:'rieng', min:n });
+    } else if (r._mode !== cur){
+      items.push({ maCode:r.code, vt:r.vt, mode:r._mode });
+    }
+  });
+  if (loi.length){ toast('Chưa điền số tối thiểu riêng: ' + loi.slice(0,3).join(', ') + (loi.length>3?'…':''), 'err'); return; }
+  if (!items.length){ toast('Không có thay đổi','info'); return; }
+  const nKhong = items.filter(x => x.mode === 'khong').length;
+  if (nKhong && !confirm(`${nKhong} cặp máy × vật tư sẽ KHÔNG còn cảnh báo thiếu / cấp gấp. Tiếp tục?`)) return;
+  setStatus(true,'Đang lưu ngoại lệ…');
+  try {
+    const d = await apiPost({ action:'stockMinSet', payload:{ items, lyDo:String(($('moWhy')||{}).value||'').trim() }, user:(S.user&&S.user.name)||'' });
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Lỗi');
+    closeOv();
+    await loadQlvt();
+    renderPage('stock');
+    toast(`✓ Đã lưu ${d.changed} ngoại lệ · tồn tối thiểu & cảnh báo thiếu đã tính lại`, 'ok');
+  } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
+}
+
 function qOpenNorm(vt){
   const v = qItems_(false).find(x => x.vt === String(vt).trim().toUpperCase());
   if (!v){ toast('Không tìm thấy vật tư này ở Sheet 10','err'); return; }
@@ -11758,7 +11966,9 @@ function qNormHtml_(){
     <div class="mh"><div>
       <h2>${esc(v.ten)} <span style="font-weight:400;opacity:.75">· ${esc(v.dvt||'')}</span></h2>
       <p>Đơn giá &amp; định mức theo <b>dòng máy</b> — ghi thẳng vào Sheet “11. Định mức theo dòng máy”.
-         Mọi lần sửa đều lưu vết ở Sheet 15 (loại phiếu <b>Điều chỉnh định mức</b>, không đụng tồn kho).</p>
+         Mọi lần sửa đều lưu vết ở Sheet 15 (loại phiếu <b>Điều chỉnh định mức</b>, không đụng tồn kho).
+         ${Q.perm.editNorm?`<br><button class="btn bg-b sm" style="margin-top:6px" onclick="qMinOvOpen('vt','${esc(v.vt)}')"
+           title="Tắt hoặc đặt riêng tồn tối thiểu cho từng máy trong dòng máy">⚙ Tồn tối thiểu riêng theo từng máy</button>`:''}</p>
     </div><button class="mcl" onclick="closeOv()">✕</button></div>
 
     <div class="mb">
@@ -12073,7 +12283,7 @@ function qmbHtml_(){
       </td>
       <td style="text-align:right;font-family:var(--mono);${thieu?'background:#fef2f2':''}">
         <b style="${thieu?'color:var(--red)':''}">${v.ton!=null?v.ton:0}</b>
-        ${v.min!=null?`<span style="font-size:9px;color:var(--mu)">/${v.min}</span>`:''}
+        ${qMinTag_(C.code, v.vt, v.min)}
       </td>
       <td style="text-align:right">${inp('nhap','+')}</td>
       <td style="text-align:right">${inp('dung','−')}</td>
@@ -12125,6 +12335,8 @@ function qmbHtml_(){
         <button class="fchip" id="mbOnlyShort" onclick="qmbToggleShort()">Chỉ vật tư đang thiếu</button>
         <button class="btn bg-b sm" onclick="qmbFillMin()" title="Điền cột Nhập = tối thiểu − tồn cho mọi dòng đang thiếu">↧ Bù về tối thiểu</button>
         <button class="btn bg-gr sm" onclick="qmbClear()">↺ Xoá số đã gõ</button>
+        ${Q.perm.editNorm?`<button class="btn bg-gr sm" onclick="qMinOvOpen('code','${esc(C.code)}')"
+          title="Tắt hoặc đặt riêng tồn tối thiểu của từng vật tư cho máy này">⚙ Tối thiểu riêng máy này</button>`:''}
       </div>
 
       <div class="tw" style="max-height:42vh"><table class="qmat">
