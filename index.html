@@ -14893,6 +14893,8 @@ function viewBdHistory(){
 
 
 
+
+
 /* ############################################################################
  *  BÁO CÁO TỔNG HỢP — 3 nội dung riêng, mỗi nội dung một tờ Word đủ 5W1H
  * ############################################################################
@@ -14932,6 +14934,13 @@ const RP = {
   cpThang: '',               // tháng đang xem của báo cáo chi phí
   cpDangTai: false,
   at: '',
+  /* BỘ LỌC BÁO CÁO ① — nhân sự cấp vật tư lọc theo CỤM rồi đặt một đơn cho cả cụm:
+   * một chuyến xe đi Miền Bắc, một đơn cho DBC tổng, một đợt cho tỉnh Phú Thọ.
+   * Đa chọn trong cùng một hàng, giống mọi bộ lọc khác của hệ thống.
+   *
+   * Bộ lọc này ăn vào rpVatTu_(), tức là NGUỒN CHUNG của cả bảng trên màn hình lẫn tờ
+   * Word — nên file xuất ra luôn đúng bằng thứ đang nhìn thấy, không cần nhớ đồng bộ. */
+  f: { khu:new Set(), tinh:new Set(), loai:new Set(), donVi:new Set(), q:'' },
 };
 
 /* Ngưỡng — để một chỗ, sửa là đổi cả web lẫn Word. */
@@ -14981,11 +14990,20 @@ function rpMay_(code){
   if (!r){
     try { r = (S.master.rows||[]).find(x => String(x._byLetter.B||'').trim().toUpperCase() === c) || null; } catch(e){}
   }
-  if (!r) return { code:c, donVi:'', trai:'', khu:'', vanHanh:'', sdt:'', loaiHinh:'', site:'' };
+  if (!r) return { code:c, donVi:'', trai:'', khu:'', tinh:'', vanHanh:'', sdt:'', loaiHinh:'', site:'' };
   const L = r._byLetter || {};
-  const donVi = String(L[COL.DONVI]||'').trim(), trai = String(L[COL.TRAI]||'').trim();
+  /* Đơn vị đi qua canonUnit_ như mọi trang khác: Sheet 1 gõ tay nên "DBC tổng" và
+   * "DBC Tổng" là hai chuỗi khác nhau, để nguyên thì bộ lọc mọc ra hai chip cho cùng
+   * một đơn vị và chọn chip nào cũng thiếu một nửa số máy. */
+  const donVi = (function(){ try { return canonUnit_(L[COL.DONVI]); }
+                             catch(e){ return String(L[COL.DONVI]||'').trim(); } })();
+  const trai = String(L[COL.TRAI]||'').trim();
   return {
     code: c, donVi: donVi, trai: trai,
+    /* Tỉnh lấy nguyên văn cột G Sheet 1 — đó là hệ 63 tỉnh thành mà bảng này đang
+     * thống kê. KHÔNG viết cứng danh sách tỉnh vào code: tỉnh nào có máy thì chip mọc
+     * ra, tỉnh nào hết máy thì chip tự mất. */
+    tinh: String(L[COL.TINH]||'').trim(),
     khu: (function(){ try { return regionOf(r); } catch(e){ return String(L[COL.KHU]||''); } })(),
     vanHanh: String(L[COL.VH]||'').trim(), sdt: String(L[COL.SDT]||'').trim(),
     /* Nhãn ĐÃ CHUẨN HOÁ, giống mọi trang khác: phụ lục ghi "HTKD" trong khi trang
@@ -15194,6 +15212,31 @@ function wXuat_(tenFile, tieuDe, phuDe, than){
  *  hạn 300 h mà trại không có lọc nào là việc của cả chuỗi cung ứng — phải đi mua
  *  trước rồi mới cử người. Hai việc đó không được xếp cùng một hàng.
  * ========================================================================== */
+/**
+ * Một dòng có lọt qua bộ lọc không.
+ * @param boQua  tên hàng lọc cần BỎ QUA — dùng khi đếm số cho chip của chính hàng đó.
+ *
+ * Hàng lọc rỗng = KHÔNG lọc (hiện tất cả), chứ không phải "không khớp gì". Đây là quy
+ * ước của mọi bộ lọc trong hệ thống này; làm khác đi thì mở trang lên là bảng trống.
+ */
+function rpQua_(r, F, boQua){
+  if (boQua !== 'khu'   && F.khu.size   && !F.khu.has(r.khu))        return false;
+  if (boQua !== 'tinh'  && F.tinh.size  && !F.tinh.has(r.tinh))      return false;
+  if (boQua !== 'loai'  && F.loai.size  && !F.loai.has(r.loaiHinh))  return false;
+  if (boQua !== 'donVi' && F.donVi.size && !F.donVi.has(r.donVi))    return false;
+  if (F.q){
+    /* Gõ "NS250" là ra cả cụm máy cùng dòng — đó là cách nhân sự cấp vật tư hay lọc.
+     * Bỏ dấu để gõ "phu tho" cũng ra "Phú Thọ". */
+    const hay = rpKhongDau_([r.code, r.site, r.tinh, r.khu, r.hangMuc, r.donVi].join(' '));
+    if (hay.indexOf(rpKhongDau_(F.q)) < 0) return false;
+  }
+  return true;
+}
+function rpKhongDau_(s){
+  return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/đ/gi,'d').toLowerCase().trim();
+}
+
 function rpVatTu_(){
   /* KHÔNG viết `window.Q && …` ở đây.
    * Q khai bằng `const` ở tầng ngoài cùng của thẻ <script>. Khác với `var`, một `const`
@@ -15204,7 +15247,7 @@ function rpVatTu_(){
    * xong, còn dữ liệu đã tải hay chưa thì các nhánh `|| []` phía dưới lo. */
   const maint = ((Q.alerts && Q.alerts.maintenance) || []);
   const stockAl = ((Q.alerts && Q.alerts.stock) || []);
-  const rows = [];
+  const rowsAll = [];
 
   maint.forEach(a => {
     const code = String(a.maCode||'').trim().toUpperCase();
@@ -15228,12 +15271,16 @@ function rpVatTu_(){
                + Math.min(vuotPct, 900)
                + (thieu > 0 ? 300 : 0);
 
-    rows.push({
+    rowsAll.push({
       code, nhom, hangMuc: String(a.field||''), vt: String(a.vt||''), dvt: String(a.dvt||''),
       cycle, used: Number(a.used)||0, remain, qua, vuotPct,
       need, have, thieu,
       duVatTu: (need == null) ? null : (have >= need),
       khu: a.region || m.khu, site: a.site || m.site,
+      /* Tỉnh và đơn vị lấy từ Sheet 1 (rpMay_), không lấy từ gói cảnh báo: gói cảnh báo
+       * chỉ gửi 'site' đã ghép sẵn "đơn vị · trại", tách ngược ra bằng chuỗi thì trại nào
+       * có dấu · trong tên là hỏng. */
+      tinh: m.tinh, donVi: m.donVi,
       vanHanh: a.operator || m.vanHanh, sdt: a.phone || m.sdt,
       loaiHinh: m.loaiHinh,
       hienTrang: String(a.message||''),
@@ -15248,20 +15295,50 @@ function rpVatTu_(){
     if (!code || rpBoQua_(code)) return;
     const m = rpMay_(code);
     const need = Number(a.need)||0, have = Number(a.have)||0;
-    rows.push({
+    rowsAll.push({
       code, nhom:'tonthieu', hangMuc: String(a.field||''), vt:String(a.vt||''), dvt:String(a.dvt||''),
       cycle:0, used:0, remain:(a.remain==null?null:Number(a.remain)), qua:0,
       vuotPct: need>0 ? Math.round((need-have)/need*100) : 0,
       need, have, thieu: Math.max(0, Math.round((need-have)*100)/100),
       duVatTu: have >= need,
       khu: a.region || m.khu, site: a.site || m.site,
+      tinh: m.tinh, donVi: m.donVi,
       vanHanh: a.operator || m.vanHanh, sdt: a.phone || m.sdt, loaiHinh: m.loaiHinh,
       hienTrang: String(a.message||''),
       diem: (a.severity==='high'?600:300) + (need>0 ? Math.round((need-have)/need*100) : 0),
     });
   });
 
-  rows.sort((a,b) => b.diem - a.diem || a.code.localeCompare(b.code,'vi'));
+  rowsAll.sort((a,b) => b.diem - a.diem || a.code.localeCompare(b.code,'vi'));
+
+  /* ---- BỘ LỌC ------------------------------------------------------------
+   * Lọc ở ĐÂY, tại nguồn, chứ không lọc ở chỗ vẽ bảng. rpVatTu_() là nguồn chung của
+   * bảng trên màn hình, các ô KPI, bảng đề xuất cấp vật tư VÀ tờ Word. Lọc tại nguồn thì
+   * bốn thứ đó không thể nói khác nhau; lọc ở chỗ vẽ thì sớm muộn sẽ có cái quên lọc —
+   * và cái quên đó là tờ Word, thứ được gửi đi cho người khác đọc. */
+  const F = RP.f;
+  const rows = rowsAll.filter(r => rpQua_(r, F));
+
+  /* ĐẾM CHO CHIP: mỗi hàng lọc đếm trên tập đã áp dụng MỌI hàng lọc KHÁC (trừ chính nó).
+   * Đếm trên toàn bộ thì số trên chip không đổi khi bấm lọc, đếm trên tập đã lọc hết thì
+   * mọi chip chưa chọn đều về 0 — cả hai kiểu đều làm con số vô dụng. */
+  const dem = (khoa, lay) => {
+    const m = new Map();
+    rowsAll.forEach(r => {
+      if (!rpQua_(r, F, khoa)) return;
+      const v = lay(r); if (!v) return;
+      m.set(v, (m.get(v) || 0) + 1);
+    });
+    return [...m.entries()].map(([ten,n]) => ({ ten, n }))
+      .sort((a,b) => b.n - a.n || a.ten.localeCompare(b.ten,'vi'));
+  };
+  const facet = {
+    khu:   dem('khu',   r => r.khu),
+    tinh:  dem('tinh',  r => r.tinh),
+    loai:  dem('loai',  r => r.loaiHinh),
+    donVi: dem('donVi', r => r.donVi),
+  };
+  const soLoc = F.khu.size + F.tinh.size + F.loai.size + F.donVi.size + (F.q ? 1 : 0);
 
   /* ĐỀ XUẤT CẤP VẬT TƯ — gom theo LOẠI VẬT TƯ toàn hệ thống. Đây là thứ bộ phận mua
    * hàng cần: không phải "máy nào thiếu gì" mà "phải mua bao nhiêu cái, cho những trại
@@ -15336,6 +15413,11 @@ function rpVatTu_(){
     tonthieu: rows.filter(r => r.nhom === 'tonthieu'),
     thieuVT: rows.filter(r => r.thieu > 0),
     capVatTu, theoMay,
+    /* Số liệu của BỘ LỌC — để màn hình và tờ Word đều nói được "đang xem cụm nào". */
+    facet, soLoc,
+    tongMuc: rowsAll.length,
+    tongMay: new Set(rowsAll.map(r => r.code)).size,
+    moTaLoc: rpMoTaLoc_(),
     /* Máy gộp theo nhóm nặng nhất — dùng cho phần danh sách xếp theo mức nghiêm trọng. */
     mayTheoNhom: {
       keodai:   theoMay.filter(g => g.nhom === 'keodai'),
@@ -15357,12 +15439,30 @@ function rpVatTu_(){
   };
 }
 
+/** Mô tả bộ lọc đang bật thành một câu — in lên đầu tờ Word và lên màn hình.
+ *  Tờ báo cáo đã lọc mà không ghi lọc gì thì người nhận đọc một danh sách thiếu mà
+ *  tưởng là đủ — nguy hiểm hơn hẳn so với không có bộ lọc. */
+function rpMoTaLoc_(){
+  const F = RP.f, p = [];
+  const g = (nhan, set) => { if (set.size) p.push(nhan + ': ' + [...set].join(', ')); };
+  g('Khu vực', F.khu); g('Tỉnh', F.tinh); g('Loại hình', F.loai); g('Đơn vị', F.donVi);
+  if (F.q) p.push('Từ khoá: "' + F.q + '"');
+  return p.join(' · ');
+}
+
 const RP_NHOM = {
   keodai:   { ten:'Quá hạn kéo dài', mau:'#7f1d1d', mo:'Đã vượt hơn '+RP_CFG.KEO_DAI_PCT+'% chu kỳ' },
   quahan:   { ten:'Quá hạn',         mau:'#b91c1c', mo:'Đã qua mốc thay' },
   sapden:   { ten:'Sắp đến hạn',     mau:'#b45309', mo:'Đã vào vùng cảnh báo trước' },
   tonthieu: { ten:'Thiếu tồn tối thiểu', mau:'#0f766e', mo:'Chưa tới hạn nhưng trại không đủ hàng' },
 };
+
+/** Chuỗi tiếng Việt → mẩu tên file an toàn (bỏ dấu, gạch nối). */
+function rpSlug_(s){
+  return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/đ/gi,'d').toLowerCase()
+    .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40);
+}
 
 /* ============================================================================
  *  BÁO CÁO 2 · HIỆU QUẢ VẬN HÀNH + PHÂN TÍCH + TỔNG KẾT THÁNG
@@ -15690,13 +15790,133 @@ function rpBadge_(){
 /* ---------------------------------------------------------------------------
  *  TAB 1 · KHO VẬT TƯ & BẢO DƯỠNG
  * ------------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------------
+ *  BỘ LỌC BÁO CÁO ① — lọc theo CỤM để đặt một đơn cho cả cụm
+ * ------------------------------------------------------------------------- */
+function rpLoc(khoa, gt){
+  if (khoa === 'q'){ RP.f.q = gt; }
+  else { const s = RP.f[khoa]; if (!s) return; if (s.has(gt)) s.delete(gt); else s.add(gt); }
+  renderPage('report');
+}
+function rpXoaLoc(khoa){
+  if (khoa) { if (khoa === 'q') RP.f.q = ''; else RP.f[khoa].clear(); }
+  else { RP.f.khu.clear(); RP.f.tinh.clear(); RP.f.loai.clear(); RP.f.donVi.clear(); RP.f.q = ''; }
+  renderPage('report');
+}
+
+/** Một hàng chip đơn giản — dùng cho những chiều chỉ có vài giá trị. */
+function rpHangLoc_(nhan, khoa, ds){
+  if (!ds || !ds.length) return '';
+  const set = RP.f[khoa];
+  const chip = (on, ten, n) => '<button class="fchip '+(on?'on':'')+'" '
+    + 'onclick="rpLoc(\''+khoa+'\',\''+String(ten).replace(/'/g,"\\'")+'\')">'
+    + rpE_(ten) + (n != null ? ' <span style="opacity:.65">'+n+'</span>' : '') + '</button>';
+  return '<div class="fbar"><span class="mslbl">'+rpE_(nhan)+'</span>'
+    + '<button class="fchip '+(set.size?'':'on')+'" onclick="rpXoaLoc(\''+khoa+'\')">Tất cả</button>'
+    + ds.map(x => chip(set.has(x.ten), x.ten, x.n)).join('')
+    + '</div>';
+}
+
+/* ---------------------------------------------------------------------------
+ *  HÀNG LỌC TỈNH THÀNH — GÕ TÊN, CÓ GỢI Ý, CHỌN ĐƯỢC NHIỀU TỈNH
+ * ----------------------------------------------------------------------------
+ *  Không bày sẵn chip cho mọi tỉnh. Hệ 63 tỉnh thành mà rải hết ra thanh lọc thì nó
+ *  chiếm nửa màn hình và đẩy chính cái bảng cần đọc xuống dưới — trong khi mỗi lần
+ *  dùng người ta chỉ chọn một hai tỉnh. Gõ tên nhanh hơn dò mắt qua vài chục chip.
+ *
+ *  Gợi ý dựng bằng <datalist>: đúng cách mà ô "Kỹ thuật viên" của phiếu vật tư đang
+ *  làm. Trình duyệt tự lo phần lọc theo chữ đang gõ, tự lo bàn phím và màn hình cảm
+ *  ứng — một hộp gợi ý tự viết sẽ phải làm lại toàn bộ những thứ đó và làm kém hơn.
+ *
+ *  Tỉnh ĐÃ CHỌN hiện thành chip có dấu ✕ ngay trên ô gõ, và biến mất khỏi danh sách
+ *  gợi ý — không ai cần gợi ý một thứ mình vừa chọn xong.
+ * ------------------------------------------------------------------------- */
+function rpHangTinh_(ds){
+  if (!ds || !ds.length) return '';
+  const set = RP.f.tinh;
+  const conLai = ds.filter(x => !set.has(x.ten));
+  const daChon = [...set];
+
+  return '<div class="fbar" style="align-items:flex-start">'
+    + '<span class="mslbl" style="margin-top:6px">Tỉnh thành</span>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;flex:1">'
+    +   (daChon.length
+          ? daChon.map(t => '<button class="fchip on" title="Bấm để bỏ tỉnh này"'
+              + ' onclick="rpLoc(\'tinh\',\''+String(t).replace(/'/g,"\\'")+'\')">'
+              + rpE_(t) + ' ✕</button>').join('')
+          : '<span class="fchip on">Tất cả</span>')
+    +   '<input class="si" id="rpTinhInput" list="rpTinhDS" autocomplete="off"'
+    +     ' style="max-width:230px" placeholder="Gõ tên tỉnh rồi Enter…"'
+    +     ' onchange="rpThemTinh(this.value)"'
+    +     ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();rpThemTinh(this.value);}">'
+    +   '<datalist id="rpTinhDS">'
+    +     conLai.map(x => '<option value="'+rpE_(x.ten)+'">'+x.n+' hạng mục</option>').join('')
+    +   '</datalist>'
+    +   (daChon.length ? '<button class="fchip" onclick="rpXoaLoc(\'tinh\')">✕ bỏ hết tỉnh</button>' : '')
+    + '</div></div>';
+}
+
+/**
+ * Thêm một tỉnh từ ô gõ.
+ * Khớp KHÔNG DẤU và không phân biệt hoa thường, nên gõ "phu tho" cũng ra "Phú Thọ".
+ * Gõ dở mà chỉ còn đúng một tỉnh khớp thì lấy luôn tỉnh đó — người dùng gõ "quang ni"
+ * rồi Enter là xong, không phải gõ đủ dấu.
+ */
+function rpThemTinh(val){
+  const s = rpKhongDau_(val);
+  const el = document.getElementById('rpTinhInput');
+  if (!s){ if (el) el.value = ''; return; }
+
+  let ds = [];
+  try { ds = (rpVatTu_().facet.tinh || []).map(x => x.ten); } catch(e){ ds = []; }
+  const chuaChon = ds.filter(t => !RP.f.tinh.has(t));
+
+  let hit = chuaChon.find(t => rpKhongDau_(t) === s);
+  if (!hit){
+    const gan = chuaChon.filter(t => rpKhongDau_(t).indexOf(s) >= 0);
+    if (gan.length === 1) hit = gan[0];
+    else if (gan.length > 1){
+      /* Nhiều tỉnh cùng khớp: KHÔNG tự đoán. Đoán sai thì người dùng lọc ra một tỉnh
+       * khác mà không nhận ra, và tờ Word gửi đi mang đúng cái nhầm đó. */
+      if (el) el.value = '';
+      toast('"' + val + '" khớp ' + gan.length + ' tỉnh: ' + gan.slice(0,5).join(', ')
+            + (gan.length>5?'…':'') + ' — gõ rõ hơn', 'info');
+      return;
+    }
+  }
+  if (!hit){
+    if (el) el.value = '';
+    toast(RP.f.tinh.has(val.trim()) ? 'Đã chọn tỉnh này rồi'
+          : 'Không có tỉnh nào tên "' + val + '" trong danh sách máy', 'info');
+    return;
+  }
+  if (el) el.value = '';
+  RP.f.tinh.add(hit);
+  renderPage('report');
+  /* Trả con trỏ về ô gõ để chọn tiếp tỉnh thứ hai mà không phải bấm chuột lại.
+   * renderPage tự khôi phục con trỏ cho ô ĐANG focus, nhưng ở đây trang được vẽ lại
+   * SAU khi ô đã bị thay mới, nên phải gọi tay. */
+  setTimeout(() => { const n = document.getElementById('rpTinhInput'); if (n) n.focus(); }, 0);
+}
+
 function rpViewVatTu_(){
   const d = rpVatTu_();
-  if (!d.rows.length)
-    return '<div class="empty">Không có hạng mục nào quá hạn, sắp đến hạn hay thiếu tồn — '
-         + 'hoặc dữ liệu vật tư chưa tải xong (mở trang Kho vật tư một lần rồi quay lại).</div>';
+  /* Thanh lọc phải dựng TRƯỚC khi kiểm tra rỗng: lọc quá tay thành 0 dòng mà thanh lọc
+   * cũng biến mất thì không còn cách nào bỏ lọc ra — người dùng tưởng mất dữ liệu. */
+  const thanhLoc = rpThanhLoc_(d);
 
-  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+  if (!d.rows.length)
+    return thanhLoc + '<div class="empty">'
+      + (d.soLoc
+          ? 'Không có hạng mục nào khớp bộ lọc đang chọn (toàn hệ thống đang có '
+            + d.tongMuc + ' hạng mục trên ' + d.tongMay + ' tổ máy).'
+            + '<div style="margin-top:8px"><button class="btn bg-gr sm" onclick="rpXoaLoc()">↺ Bỏ hết bộ lọc</button></div>'
+          : 'Không có hạng mục nào quá hạn, sắp đến hạn hay thiếu tồn — '
+            + 'hoặc dữ liệu vật tư chưa tải xong (mở trang Kho vật tư một lần rồi quay lại).')
+      + '</div>';
+
+  let h = thanhLoc;
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
     + rpKpi_('Quá hạn kéo dài', d.keodai.length, RP_NHOM.keodai.mau, '>'+RP_CFG.KEO_DAI_PCT+'% chu kỳ')
     + rpKpi_('Quá hạn', d.quahan.length, RP_NHOM.quahan.mau, 'đã qua mốc thay')
     + rpKpi_('Sắp đến hạn', d.sapden.length, RP_NHOM.sapden.mau, 'trong vùng cảnh báo')
@@ -15774,6 +15994,37 @@ function rpViewVatTu_(){
   return h;
 }
 
+/** Thanh lọc đầy đủ của báo cáo ①. */
+function rpThanhLoc_(d){
+  const F = RP.f;
+  let h = '<div class="card" style="margin-bottom:10px"><div class="cb" style="padding:10px 12px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">'
+    + '<b style="font-size:12px">Lọc theo cụm</b>'
+    + '<span style="font-size:11px;color:var(--mu)">Chọn nhiều mục trong cùng một hàng — bấm lại để bỏ. '
+    +   '<b>File Word xuất ra đúng bằng phần đang lọc.</b></span></div>';
+
+  h += '<div class="msg" style="margin-bottom:6px">'
+    /* id CỐ ĐỊNH: renderPage khôi phục con trỏ theo id; không có id thì nó phải dò theo
+     * vị trí trong cây DOM, và mỗi lần số trên chip đổi là dò trượt — gõ được một chữ
+     * là mất con trỏ. */
+    + '<input class="si" id="rpTimInput" autocomplete="off" style="flex:1"'
+    +   ' placeholder="🔍 Mã máy · trại · tỉnh · hạng mục — gõ &quot;NS250&quot; để lấy cả dòng máy"'
+    +   ' value="'+rpE_(F.q)+'" oninput="rpLoc(\'q\',this.value)">'
+    + (d.soLoc ? '<button class="btn bg-gr sm" onclick="rpXoaLoc()">↺ Bỏ hết bộ lọc</button>' : '')
+    + '</div>';
+
+  h += rpHangLoc_('Khu vực',   'khu',   d.facet.khu);
+  h += rpHangTinh_(d.facet.tinh);
+  h += rpHangLoc_('Loại hình', 'loai',  d.facet.loai);
+  h += rpHangLoc_('Đơn vị',    'donVi', d.facet.donVi);
+
+  if (d.soLoc)
+    h += '<div style="font-size:11px;color:var(--amb);margin-top:6px">'
+      + '⧗ Đang lọc: <b>'+rpE_(d.moTaLoc)+'</b> — hiện <b>'+d.rows.length+'/'+d.tongMuc+'</b> hạng mục '
+      + 'trên <b>'+d.soMay+'/'+d.tongMay+'</b> tổ máy.</div>';
+  return h + '</div></div>';
+}
+
 /** Liệt kê hạng mục của một máy, cắt bớt sau n mục đầu (đã xếp nặng trước). */
 function rpMucHtml_(muc, n){
   const head = muc.slice(0, n).map(r => rpE_(r.hangMuc)
@@ -15821,6 +16072,20 @@ function rpXuatVatTu(){
   const gapNhat = d.keodai[0] || d.quahan[0] || d.rows[0];
 
   let b = '';
+  /* PHẠM VI ĐỨNG TRƯỚC MỌI THỨ KHÁC.
+   * Tờ báo cáo đã lọc mà không ghi lọc gì thì người nhận đọc một danh sách thiếu và
+   * tưởng đó là toàn hệ thống — sai lầm nguy hiểm hơn hẳn việc không có bộ lọc, vì nó
+   * dẫn tới kết luận "khu vực này ổn" cho một khu vực chưa hề được xem tới. */
+  if (d.soLoc){
+    b += wP_('<b>PHẠM VI BÁO CÁO:</b> ' + rpE_(d.moTaLoc)
+      + '. Tờ này chỉ gồm <b>' + d.rows.length + '/' + d.tongMuc + '</b> hạng mục trên <b>'
+      + d.soMay + '/' + d.tongMay + '</b> tổ máy của toàn hệ thống.',
+      'border:1px solid #b45309;background:#fdf6e7;padding:6pt 8pt');
+  } else {
+    b += wP_('<b>PHẠM VI BÁO CÁO:</b> toàn hệ thống — ' + d.tongMuc + ' hạng mục trên '
+      + d.tongMay + ' tổ máy, không áp bộ lọc nào.',
+      'border:1px solid #0d6e3f;background:#eaf5ef;padding:6pt 8pt');
+  }
   b += wH_(1, 'I. Tóm tắt điều hành (5W1H)');
   b += w5W1H_({
     what: rpE_(d.rows.length + ' hạng mục cần xử lý trên ' + d.soMay + ' tổ máy: '
@@ -15833,7 +16098,8 @@ function rpXuatVatTu(){
         ? 'Nút thắt chính là vật tư: ' + d.thieuVT.length + '/' + d.rows.length + ' mục không thể xử lý ngay '
           + 'vì trại thiếu hàng, cần cấp ' + d.capVatTu.length + ' loại vật tư (xem Mục II).'
         : 'Vật tư tại trại đang đủ cho toàn bộ danh sách — nút thắt nằm ở nhân lực và lịch đi trại, không ở kho.'),
-    where: rpE_('Tập trung ở khu vực ' + dauKhu.t + ' (' + dauKhu.v + ' mục). '
+    where: rpE_((d.soLoc ? 'Phạm vi lọc — ' + d.moTaLoc + '. ' : 'Toàn hệ thống. ')
+        + 'Tập trung ở khu vực ' + dauKhu.t + ' (' + dauKhu.v + ' mục). '
         + (gapNhat ? 'Cần xử lý trước: ' + gapNhat.code + ' — «' + gapNhat.hangMuc + '»'
             + (gapNhat.qua ? ' đã quá ' + rpN_(gapNhat.qua) + ' h (' + gapNhat.vuotPct + '% chu kỳ)' : '')
             + (gapNhat.site ? ' tại ' + gapNhat.site : '') + '.' : '')),
@@ -15960,8 +16226,14 @@ function rpXuatVatTu(){
           rpE_(r.site||'—')],
     })), { sz:'9.5pt' });
 
-  wXuat_('BaoCao-VatTu-BaoDuong', 'BÁO CÁO KHO VẬT TƯ & THEO DÕI BẢO DƯỠNG',
-    'Đối chiếu định mức thay thế với tồn kho thực tế tại trại · số liệu lúc ' + RP.at, b);
+  /* Tên file mang theo cụm đang lọc: nhân sự cấp vật tư xuất nhiều tờ cho nhiều cụm
+   * trong cùng một buổi, trùng tên hết thì mở ra mới biết tờ nào của ai. */
+  const hau = d.soLoc
+    ? '-' + rpSlug_([...RP.f.khu, ...RP.f.tinh, ...RP.f.loai, ...RP.f.donVi].join('-') || 'daloc')
+    : '';
+  wXuat_('BaoCao-VatTu-BaoDuong' + hau, 'BÁO CÁO KHO VẬT TƯ & THEO DÕI BẢO DƯỠNG',
+    (d.soLoc ? d.moTaLoc + ' · ' : '')
+    + 'Đối chiếu định mức thay thế với tồn kho thực tế tại trại · số liệu lúc ' + RP.at, b);
 }
 
 /* ---------------------------------------------------------------------------
