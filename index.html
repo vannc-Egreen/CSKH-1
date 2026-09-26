@@ -423,6 +423,9 @@ body.ro .rochip{display:inline-flex}
       <div class="nitem" data-page="monthly" onclick="nav('monthly')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 15h2M14 15h2"/></svg>Tổng kết hiệu quả tháng<span class="nbadge rd" id="nb-monthly">0</span>
       </div>
+      <div class="nitem" data-page="report" onclick="nav('report')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>Báo cáo tổng hợp<span class="nbadge rd" id="nb-report">0</span>
+      </div>
 
       <div class="nsec">Vận hành</div>
       <div class="nitem" data-page="tracking" onclick="nav('tracking')">
@@ -476,6 +479,7 @@ body.ro .rochip{display:inline-flex}
       <div id="pg-alerts" class="page"></div>
       <div id="pg-analysis" class="page"></div>
       <div id="pg-monthly" class="page"></div>
+      <div id="pg-report" class="page"></div>
       <div id="pg-tracking" class="page"></div>
       <div id="pg-filter" class="page"></div>
       <div id="pg-efficiency" class="page"></div>
@@ -1020,7 +1024,12 @@ const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','bdTransfers','mater
                         * sẽ bị chặn ở một bên và đi lọt ở bên kia. */
                        'diagMonthly','zaloList','zaloPreview','zaloStatus',
                        /* GIONHOT.gs — gói mốc bộ đếm giờ + phân tích hao nhớt: chỉ đọc rồi tính. */
-                       'gnData'];
+                       'gnData',
+                       /* KIỂM KÊ (QLVT.gs mục 12) — xem trước chênh lệch, đọc sổ, dựng cảnh
+                        * báo, soát lại. Tất cả chỉ đọc rồi tính. Thiếu 4 tên này thì mỗi lần
+                        * ai đó bấm "Xem trước" là web hiện lớp chặn và báo "đã ghi" cho một
+                        * việc không ghi gì cả. */
+                       'kkPreview','kkLog','kkAlerts','kkRecheck'];
 /* Action chạy nền, có thanh trạng thái riêng → cũng không hiện lớp chặn. */
 const POST_BACKGROUND = ['smartgenRun','smartgenAutoSync'];
 
@@ -1377,7 +1386,13 @@ function applyQlvt_(d){
     moveAudit:d.moveAudit||{ headers:[], rows:[], total:0 },
     alerts:d.alerts||Q.alerts, cfg:d.cfg||{},
     anomalyOk:d.anomalyOk||{ keys:[] },
+    /* KIỂM KÊ · sổ Sheet 35 đã đi kèm gói bootstrap rồi — giữ lại để nút "Sổ kiểm kê"
+     * mở ra là có ngay, không phải một lượt gọi server nữa cho dữ liệu vừa nhận xong. */
+    kiemKe:d.kiemKe||Q.kiemKe,
   });
+  /* Nạp lại sổ kiểm kê theo đúng nhịp tải của trang Kho vật tư: mỗi lần ghi phiếu đều
+   * gọi loadQlvt, nên bản trong tay luôn là bản mới nhất mà không phải nhớ xoá cache. */
+  try { if (d.kiemKe && d.kiemKe.log) KK.log = d.kiemKe.log; } catch(e){}
   /* Bản nháp danh mục chỉ được dựng lại khi KHÔNG có sửa đổi treo — xem chú thích ở Q.catDraft. */
   if (!Q.catDirty){ Q.catDraft = null; Q.catBaseVt = null; }
   try { refreshAlerts(); } catch(e){}
@@ -1870,7 +1885,7 @@ function nav(page){
  *      tải xong mà họ đã bấm sang trang khác thì dựng lại là giật màn hình.
  * ========================================================================== */
 const PAGE_SOURCE = {
-  dash:'both', alerts:'both', analysis:'core', monthly:'core',
+  dash:'both', alerts:'both', analysis:'core', monthly:'core', report:'both',
   tracking:'core', filter:'core', efficiency:'core', master:'core', spec:'core',
   stock:'qlvt', matcost:'qlvt', sim:'qlvt', vtcat:'qlvt',
   users:'none',
@@ -2031,6 +2046,7 @@ function _renderPageInner_(p, el){
     case 'alerts':   el.innerHTML = viewAlerts(); break;
     case 'analysis': el.innerHTML = viewAnalysis(); afterAnalysis(); break;
     case 'monthly':  el.innerHTML = viewMonthly();  afterMonthly();  break;
+    case 'report':   el.innerHTML = viewReport();   afterReport();   break;
     case 'tracking': el.innerHTML = viewTracking(); break;
     case 'filter':   el.innerHTML = viewFilter(); break;
     case 'efficiency': el.innerHTML = viewEfficiency(); afterEfficiency(); break;
@@ -10623,6 +10639,7 @@ const Q = {
   stock:{ headers:[], rows:[] },
   sim:{ headers:[], rows:[] }, alarmDict:{ headers:[], rows:[] }, contacts:{ headers:[], rows:[] },
   anomalyOk:{ keys:[] },          // khoá các điểm dữ liệu đã xác nhận đúng — Sheet 24
+  kiemKe:null,                    // { log, alerts, cfg, loaiBu } — Sheet 35, QLVT.gs mục 12
 
   /* Bản nháp danh mục vật tư đang sửa trên trang "Danh mục vật tư".
    * catDirty = true thì lần tự-tải-lại nền KHÔNG được dựng lại bản nháp — nếu không,
@@ -10677,6 +10694,11 @@ function qLoai_(v){
   const s = String(v==null?'':v).trim().toLowerCase().replace(/[–—]/g,'-');
   if (!s) return '';
   if (/định\s*mức|dinh\s*muc/.test(s)) return 'Điều chỉnh định mức';
+  /* PHẢI xét TRƯỚC nhánh "Kiểm kê": chuỗi "bù kiểm kê" CHỨA chữ "kiểm kê", đặt sau là
+   * phiếu bù bị web xếp vào nhóm Kiểm kê — bảng tổng trên web sẽ không khớp bảng chi
+   * phí do server tính, mà cả hai đều trông bình thường. Bản server (normLoaiPhieu_
+   * trong QLVT.gs) có đúng nhánh này ở đúng vị trí này. */
+  if (/b[ùu]\s*ki[ểe]m\s*k[êe]|bu\s*kiem\s*ke/.test(s)) return 'Bù kiểm kê';
   if (/kiểm\s*kê|kiem\s*ke/.test(s))   return 'Kiểm kê';
   if (/^nh[ậa]p/.test(s))              return 'Nhập';
   if (/xu[ấa]t/.test(s))
@@ -11019,9 +11041,17 @@ function viewStock(){
       ${t('ton','📦 Tồn kho','Mỗi máy 1 dòng · tồn/tối thiểu từng loại vật tư')}
       ${t('so','📒 Nhật ký nhập xuất','Sổ cái Sheet 15 · mọi phiếu Nhập/Xuất/Kiểm kê kèm 5W1H')}
       ${t('vet','🕘 Lịch sử sửa/xoá','Sheet 34 · ai sửa/xoá phiếu nào, lúc nào, vì sao · khôi phục phiếu xoá nhầm')}
+      <!-- Sổ kiểm kê mở thành hộp thoại chứ không thành tab thứ tư: nó đọc Sheet 35 bằng
+           một lượt gọi server riêng, biến nó thành tab nghĩa là mỗi lần vào trang Kho vật
+           tư đều phải chờ lượt gọi đó, kể cả khi người dùng chỉ muốn xem tồn. -->
+      <button class="fchip" onclick="kkMoSo()"
+        title="Sheet 35 · mọi lần đếm kho thực tế và phần chênh lệch đã phân bổ vào chi phí">⚖ Sổ kiểm kê</button>
     </div>`;
   if (tab === 'vet') return tabs + viewStockAudit_();
-  return tabs + (tab === 'so' ? viewStockLog_() : viewStockOnHand_());
+  /* Chênh lệch kiểm kê chưa xử lý hiện ngay trên tab Tồn kho — đúng chỗ người dùng đang
+   * nhìn con số tồn, vì đó là con số mà chênh lệch giải thích. */
+  const kkCard = (tab === 'ton') ? (function(){ try { return kkTheCanhBao_(); } catch(e){ return ''; } })() : '';
+  return tabs + kkCard + (tab === 'so' ? viewStockLog_() : viewStockOnHand_());
 }
 
 /** Tổng toàn hệ thống theo từng loại vật tư — đọc thẳng bảng tồn, không tính lại. */
@@ -12183,6 +12213,8 @@ async function qSubmitMove(){
   if (!d || !d.ok){ toast((d&&d.error)||'Lỗi ghi phiếu','err'); return; }
   closeOv(); await loadQlvt(); renderPage('stock');
   toast('Đã ghi phiếu ' + payload.loai,'ok');
+  /* Phiếu lẻ cũng đi qua đúng đường đối chiếu như phiếu gộp — xem chú thích ở qmbSend_. */
+  try { kkHienKetQua_(d.kiemKe, payload.maCode); } catch(e){}
 }
 
 /* ============================================================================
@@ -12363,6 +12395,19 @@ function qmbHtml_(){
         <br><b style="color:var(--amb)">Xuất dùng và Mang đi có thể cùng nằm trong một tờ phiếu</b> —
         điền vào cột tương ứng cho từng vật tư, không phải tách làm hai phiếu.
         <div id="mbSum" style="margin-top:6px;font-size:12px;color:var(--tx)"></div>
+      </div>
+
+      <!-- KIỂM KÊ · xem trước chênh lệch (QLVT.gs mục 12).
+           Nút này KHÔNG ghi gì — nó chỉ hỏi server "nếu lưu số này thì lệch bao nhiêu,
+           tiêu hao thực tế trong kỳ là bao nhiêu, phân bổ bao nhiêu đ/kWh". Đặt ngay
+           cạnh bảng vì lúc còn đứng ở trại mới là lúc đếm lại được; về tới văn phòng
+           mới biết mình gõ nhầm thì phải xoá phiếu, ghi lại, và sổ mang thêm một vết. -->
+      <div style="margin-top:8px">
+        <button class="btn bg-b sm" onclick="kkXemTruoc()"
+          title="Đối chiếu số đếm với tồn trên sổ — có truy Smartgen/LIXiSE để lấy kWh những ngày Sheet 5 đã xoá">
+          ⚖ Xem trước chênh lệch kiểm kê</button>
+        <span style="font-size:11px;color:var(--mu);margin-left:6px">Chỉ đọc — chưa ghi gì vào sổ.</span>
+        <div id="mbKK"></div>
       </div>
     </div>
 
@@ -12577,6 +12622,11 @@ async function qmbSend_(payload, chapNhanAm){
   await loadQlvt();
   renderPage('stock');
   toast(`✓ Đã ghi ${d.lines} dòng vào Sheet 15 cho máy ${payload.maCode}`, 'ok');
+  /* KIỂM KÊ · server gửi kèm gói đối chiếu khi phiếu có dòng kiểm kê. Hiện NGAY thành
+   * bảng thay vì để nó nằm im trong response: chênh lệch tồn kho là thứ chỉ giải thích
+   * được lúc còn nhớ vừa đếm cái gì, và cũng chỉ lúc đó sửa lại mới dễ.
+   * Gọi sau loadQlvt/renderPage để bảng tồn phía sau đã là số mới. */
+  try { kkHienKetQua_(d.kiemKe, payload.maCode); } catch(e){}
 }
 
 /** Chọn máy rồi mở phiếu gộp — dùng cho nút "+ Lập phiếu" khi chưa biết máy nào. */
@@ -14722,6 +14772,2037 @@ function viewBdHistory(){
         <th>Người làm</th><th>Nguồn</th></tr></thead>
       <tbody>${body}</tbody>
     </table></div></div>`;
+}
+
+
+
+
+
+/* ############################################################################
+ *  BÁO CÁO TỔNG HỢP — 3 nội dung riêng, mỗi nội dung một tờ Word đủ 5W1H
+ * ############################################################################
+ *  1 · KHO VẬT TƯ + THEO DÕI BẢO DƯỠNG
+ *      Quá hạn kéo dài / quá hạn / sắp đến hạn, đối chiếu định mức thay thế với tồn
+ *      kho THỰC TẾ tại trại, xếp theo mức độ nghiêm trọng, kèm đề xuất cấp vật tư.
+ *
+ *  2 · HIỆU QUẢ VẬN HÀNH + PHÂN TÍCH + TỔNG KẾT THÁNG
+ *      Máy không hiệu quả / kém hiệu quả, thông số giữa các ngày không đều, so sánh
+ *      giữa các tháng, nhận xét tổng ở cuối. Thân báo cáo dùng BIỂU ĐỒ, phụ lục dùng
+ *      BẢNG DỮ LIỆU.
+ *
+ *  3 · CHI PHÍ VẬT TƯ
+ *      Máy nào tồn số lượng / giá trị cao hơn trung bình, máy nào đ/kWh cao hơn trung
+ *      bình, máy nào tháng này cao hơn tháng trước. Xếp từ cao xuống thấp và CHỈ RÕ
+ *      khoản nào đẩy chỉ số lên.
+ *
+ *  ---------------------------------------------------------------------------
+ *  VÌ SAO BÁO CÁO DỰNG Ở TRÌNH DUYỆT, KHÔNG DỰNG LẠI Ở SERVER
+ *  ---------------------------------------------------------------------------
+ *  Tờ báo cáo phải nói đúng những gì đang hiện trên màn hình — không hơn, không kém.
+ *  Dựng lại ở server nghĩa là có ĐƯỜNG THỨ HAI đi tới cùng một danh sách, mà phần lớn
+ *  phép đánh giá ở đây (chuỗi ngày kém hiệu quả, độ đều giữa các ngày, lệch công tơ)
+ *  chỉ tồn tại ở phía web. Chép logic sang server thì hai bản sẽ lệch nhau vào ngày ai
+ *  đó sửa một bên — đúng cái bẫy "hai đường đi tới một con số" mà hệ thống này đã phải
+ *  dẹp nhiều lần. Ở đây bảng trên màn hình và tờ Word là MỘT nguồn.
+ *
+ *  BIỂU ĐỒ TRONG WORD vẽ bằng BẢNG HTML có ô tô màu, không dùng ảnh: ảnh nhúng base64
+ *  có bản Word không chịu hiện, và khi đó người nhận mở ra thấy một ô vuông trống giữa
+ *  báo cáo mà không hiểu vì sao. Bảng tô màu thì mọi bản Word từ 2007 tới nay đều vẽ
+ *  giống hệt nhau, in ra giấy cũng đúng.
+ * ######################################################################### */
+
+const RP = {
+  tab: 'vt',                 // vt | hq | cp
+  cp: null,                  // gói chi phí (materialCost) đã tải
+  cpThang: '',               // tháng đang xem của báo cáo chi phí
+  cpDangTai: false,
+  at: '',
+};
+
+/* Ngưỡng — để một chỗ, sửa là đổi cả web lẫn Word. */
+const RP_CFG = {
+  /* Quá hạn vượt quá ngần này % chu kỳ thì gọi là QUÁ HẠN KÉO DÀI: không còn là
+   * "chưa kịp làm" mà là đã bỏ qua trọn một nhịp bảo dưỡng. */
+  KEO_DAI_PCT: 50,
+  /* Độ đều giữa các ngày: hệ số biến thiên (độ lệch chuẩn ÷ trung bình) vượt ngần này
+   * % thì coi là chạy phập phù. 25% là mức mà nhìn biểu đồ đã thấy răng cưa rõ. */
+  DEU_CV_PCT: 25,
+  /* Tồn kho / giá trị tồn cao hơn trung bình cùng dòng máy quá ngần này % → nêu tên. */
+  TON_CAO_PCT: 30,
+  /* đ/kWh tháng này so tháng trước tăng quá ngần này % → nêu tên. */
+  MOM_PCT: 20,
+  TOP_N: 15,
+};
+
+function rpNow_(){
+  const d = new Date(), p = n => ('0'+n).slice(-2);
+  return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+function rpN_(v, d){
+  const n = Number(v);
+  if (!isFinite(n)) return '—';
+  return n.toLocaleString('vi-VN', { minimumFractionDigits: d||0, maximumFractionDigits: d===undefined?2:d });
+}
+function rpPct_(v){ const n=Number(v); return isFinite(n) ? (n>0?'+':'')+Math.round(n)+'%' : '—'; }
+function rpE_(s){ return esc(s); }
+
+/* Máy "chưa lắp đặt" không bao giờ vào báo cáo — chưa có trại, chưa chạy, mọi cảnh báo
+ * cho nó đều là tiếng ồn. Cùng định nghĩa với isChuaLap_ đã có sẵn. */
+function rpBoQua_(code){
+  try { return isChuaLap_(code); } catch(e){ return false; }
+}
+/** Thông tin trại/khu vực/người vận hành của 1 máy — dùng chung cho cả 3 báo cáo. */
+function rpMay_(code){
+  const c = String(code||'').trim().toUpperCase();
+  let r = null;
+  try { r = qMachineOf_(c); } catch(e){}
+  if (!r){
+    try { r = (S.master.rows||[]).find(x => String(x._byLetter.B||'').trim().toUpperCase() === c) || null; } catch(e){}
+  }
+  if (!r) return { code:c, donVi:'', trai:'', khu:'', vanHanh:'', sdt:'', loaiHinh:'', site:'' };
+  const L = r._byLetter || {};
+  const donVi = String(L[COL.DONVI]||'').trim(), trai = String(L[COL.TRAI]||'').trim();
+  return {
+    code: c, donVi: donVi, trai: trai,
+    khu: (function(){ try { return regionOf(r); } catch(e){ return String(L[COL.KHU]||''); } })(),
+    vanHanh: String(L[COL.VH]||'').trim(), sdt: String(L[COL.SDT]||'').trim(),
+    loaiHinh: String(L[COL.LOAI]||'').trim(),
+    site: [donVi, trai].filter(Boolean).join(' · '),
+  };
+}
+
+/* ============================================================================
+ *  BỘ DỰNG FILE WORD — dùng chung cho cả 3 báo cáo
+ * ----------------------------------------------------------------------------
+ *  Xuất .doc (HTML có khai báo Office): Word / LibreOffice / Google Docs mở được ngay,
+ *  giữ đúng Times New Roman 13, bảng, màu, khổ A4.
+ * ========================================================================== */
+const W = { F: '"Times New Roman",Times,serif', SZ: '13.0pt', B: '1px solid #666' };
+
+function wH_(n, t){
+  return '<p style="font-family:'+W.F+';font-size:'+(n===1?'14.0pt':'13.0pt')
+    + ';font-weight:bold;margin:14pt 0 6pt 0'+(n===1?';text-transform:uppercase':'')+'">'+rpE_(t)+'</p>';
+}
+function wP_(t, style){
+  return '<p style="font-family:'+W.F+';font-size:'+W.SZ+';margin:0 0 6pt 0;text-align:justify;'
+    + (style||'')+'">'+t+'</p>';
+}
+function wTB_(cols, rows, opt){
+  const o = opt || {};
+  let s = '<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;width:100%;'
+        + 'font-family:'+W.F+';font-size:'+(o.sz||'11.5pt')+'">';
+  s += '<thead><tr>' + cols.map(c =>
+        '<th '+(c.w?'width="'+c.w+'" ':'')+'bgcolor="#0d6e3f" style="color:#ffffff;font-weight:bold;'
+        + 'text-align:'+(c.a||'left')+';border:'+W.B+'">'+rpE_(c.t)+'</th>').join('') + '</tr></thead><tbody>';
+  rows.forEach((r,i) => {
+    const bg = r._bg || (i % 2 ? '#f5f7f6' : '#ffffff');
+    s += '<tr>' + r.c.map((v,j) =>
+      '<td bgcolor="'+bg+'" style="border:'+W.B+';text-align:'+(cols[j].a||'left')
+      + ';vertical-align:top">'+v+'</td>').join('') + '</tr>';
+  });
+  return s + '</tbody></table>';
+}
+/**
+ * Biểu đồ cột ngang bằng bảng tô màu — hiện đúng trên mọi bản Word, in giấy cũng đúng.
+ *
+ * THANH VẼ BẰNG CHIỀU RỘNG TÍNH THEO ĐIỂM ẢNH, KHÔNG THEO PHẦN TRĂM.
+ * Bản đầu dựng thanh bằng một bảng lồng rộng 100% với hai ô width="N%" — nhìn mã thì
+ * đúng, nhưng mở ra thì thanh dài ngắn lộn xộn: bảng lồng không có chiều rộng thật để
+ * lấy phần trăm của nó, nên mỗi bộ dựng trang lại đoán một kiểu và cột 100% có khi
+ * ngắn hơn cột 96%. Một biểu đồ vẽ sai tỉ lệ còn tệ hơn không có biểu đồ, vì người đọc
+ * tin vào hình trước khi đọc số. Chiều rộng theo điểm ảnh thì không còn gì để đoán.
+ */
+const W_BAR_O = 30;                   // số ô tạo nên một thanh đầy (độ phân giải ~3,3%)
+const W_BAR_PX = 10;                  // bề ngang mỗi ô → thanh đầy dài 300px, vừa khổ A4
+function wChart_(tieuDe, data, mauMac){
+  if (!data || !data.length) return '';
+  const max = Math.max(1, ...data.map(d => Math.abs(Number(d.v)||0)));
+  const tong = data.reduce((s,d) => s + Math.abs(Number(d.v)||0), 0) || 1;
+
+  /* MỘT BẢNG PHẲNG, MỌI DÒNG CÙNG SỐ CỘT — không có bảng lồng.
+   * Thanh được ghép từ W_BAR_O ô BẰNG NHAU, tô màu W_BAR_O × tỉ lệ ô đầu. Mọi dòng vì
+   * thế có đúng cùng một bộ cột cùng bề ngang, nên không còn gì để bộ dựng trang phải
+   * đoán. Cách cũ — một bảng lồng rộng 100% chia hai ô theo phần trăm — nhìn mã thì gọn
+   * hơn nhưng mở ra mỗi nơi một kiểu: bảng lồng không có bề ngang thật để lấy phần trăm
+   * của nó, nên có bản dựng cho thanh 100% ngắn hơn thanh 96%, lại có bản đẩy nhãn rơi
+   * xuống một dòng riêng. Biểu đồ vẽ sai tỉ lệ nguy hiểm hơn không có biểu đồ, vì người
+   * đọc tin vào hình trước khi đọc số. */
+  let s = '<p style="font-family:'+W.F+';font-size:'+W.SZ+';font-weight:bold;margin:10pt 0 4pt 0">'+rpE_(tieuDe)+'</p>';
+  s += '<table width="'+(150 + W_BAR_O*W_BAR_PX + 95)+'" cellspacing="0" cellpadding="0" border="0" '
+     + 'style="border-collapse:collapse;font-family:'+W.F+';font-size:11.5pt">';
+  data.forEach(d => {
+    const v = Number(d.v) || 0;
+    /* Tối thiểu 1 ô: giá trị 0 vẫn phải thấy một vạch, nếu không dòng đó trông như lỗi
+     * hiển thị chứ không như "bằng không". */
+    const n = Math.min(W_BAR_O, Math.max(1, Math.round(Math.abs(v) / max * W_BAR_O)));
+    const share = Math.round(Math.abs(v)/tong*100);
+    const mau = d.mau || mauMac || '#0d6e3f';
+    /* Nhãn mặc định mang dấu của CHÍNH giá trị — đừng dán sẵn dấu "+" ở nơi gọi: một
+     * biểu đồ "tăng mạnh nhất" lỡ nhận giá trị âm sẽ in ra "+-7.000". */
+    const nhan = d.nhan || ((v > 0 ? '+' : '') + rpN_(v) + ' (' + share + '%)');
+    /* Viền trắng trên/dưới mỗi ô làm KHE HỞ giữa các thanh: không có nó thì mấy thanh
+     * dài bằng nhau dính thành một khối màu và không còn đọc được là mấy dòng. Viền hai
+     * bên đặt về 0 để 30 ô liền màu nhìn thành MỘT thanh liền, không kẻ sọc. */
+    const oCss = 'height:13pt;line-height:13pt;font-size:1pt;border:0;'
+               + 'border-top:2px solid #ffffff;border-bottom:2px solid #ffffff';
+    let o = '';
+    for (let i = 0; i < W_BAR_O; i++)
+      o += '<td width="'+W_BAR_PX+'" bgcolor="'+(i < n ? mau : '#eef1f0')+'" style="'+oCss+'">&nbsp;</td>';
+    s += '<tr><td width="150" style="padding-right:6pt;border:0">'+rpE_(d.t)+'</td>' + o
+       + '<td width="95" style="text-align:right;font-weight:bold;padding-left:6pt;border:0">'+rpE_(nhan)+'</td></tr>';
+  });
+  return s + '</table>';
+}
+/**
+ * Bộ đánh số biểu đồ cho MỘT tờ báo cáo.
+ * Đánh số cứng ('Biểu đồ 3 — …') tại chỗ gọi thì hỏng ngay khi một biểu đồ bị bỏ qua vì
+ * không có dữ liệu: tờ báo cáo in ra 1, 2, rồi nhảy sang 4, và người đọc đi tìm biểu đồ 3
+ * không có thật. Đếm dần thì số luôn liền mạch dù nhánh nào không chạy.
+ */
+function wDem_(){
+  let n = 0;
+  return t => 'Biểu đồ ' + (++n) + ' — ' + t;
+}
+function wNX_(t){
+  return '<p style="font-family:'+W.F+';font-size:11.5pt;margin:4pt 0 10pt 0;text-align:justify;'
+    + 'border-left:3px solid #0d6e3f;padding-left:8pt"><i><b>Nhận xét:</b> '+t+'</i></p>';
+}
+/** Bảng 5W1H — mọi báo cáo đều mở đầu bằng khối này. */
+function w5W1H_(o){
+  return wTB_([{t:'Câu hỏi', w:'18%'},{t:'Trả lời', w:'82%'}],
+    [['WHAT — Việc gì', o.what],['WHY — Vì sao', o.why],['WHERE — Ở đâu', o.where],
+     ['WHEN — Khi nào', o.when],['WHO — Ai làm', o.who],['HOW — Làm thế nào', o.how]]
+      .map(r => ({ c:['<b>'+rpE_(r[0])+'</b>', r[1]] })), { sz:'12.5pt' });
+}
+
+/**
+ * Gói một thân báo cáo thành file .doc rồi tải về.
+ * @param tenFile  không kèm đuôi
+ * @param tieuDe   in giữa trang, chữ hoa
+ * @param phuDe    dòng nhỏ dưới tiêu đề
+ * @param than     chuỗi HTML
+ */
+function wXuat_(tenFile, tieuDe, phuDe, than){
+  const now = new Date();
+  const nguoi = (S.user && (S.user.name || S.user.login)) || '—';
+  let b = '';
+  b += '<p style="font-family:'+W.F+';font-size:12.0pt;margin:0;text-align:center">CÔNG TY CP CÔNG NGHỆ EGREEN</p>';
+  b += '<p style="font-family:'+W.F+';font-size:12.0pt;margin:0 0 12pt 0;text-align:center">Khối sản xuất — Máy phát điện biogas</p>';
+  b += '<p style="font-family:'+W.F+';font-size:16.0pt;font-weight:bold;margin:0;text-align:center">'+rpE_(tieuDe)+'</p>';
+  b += '<p style="font-family:'+W.F+';font-size:12.0pt;margin:2pt 0 12pt 0;text-align:center"><i>'+rpE_(phuDe)+'</i></p>';
+  b += than;
+  b += '<p style="font-family:'+W.F+';font-size:'+W.SZ+';margin:18pt 0 0 0;text-align:right">'
+     + '……, ngày '+now.getDate()+' tháng '+(now.getMonth()+1)+' năm '+now.getFullYear()+'</p>';
+  b += '<table cellspacing="0" cellpadding="0" style="width:100%;font-family:'+W.F+';font-size:'+W.SZ+';margin-top:6pt">'
+     + '<tr><td width="50%" style="text-align:center"><b>NGƯỜI LẬP BÁO CÁO</b><br><i>(Ký, ghi rõ họ tên)</i>'
+     + '<br><br><br><br>'+rpE_(nguoi)+'</td>'
+     + '<td width="50%" style="text-align:center"><b>PHỤ TRÁCH ĐƠN VỊ</b><br><i>(Ký, ghi rõ họ tên)</i>'
+     + '<br><br><br><br></td></tr></table>';
+  b += '<p style="font-family:'+W.F+';font-size:10.0pt;margin-top:14pt;color:#666;text-align:center">'
+     + 'Báo cáo do hệ thống eGreen tự sinh từ dữ liệu tại thời điểm '+rpE_(RP.at)
+     + '. Mọi con số đều truy ngược được về Google Sheet nguồn.</p>';
+
+  const html =
+    '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
+  + 'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head>'
+  + '<meta http-equiv="Content-Type" content="text/html; charset=utf-8"><title>'+rpE_(tieuDe)+'</title>'
+  + '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom>'
+  + '<w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->'
+  + '<style>@page WordSection1 { size:21.0cm 29.7cm; margin:2.0cm 1.5cm 2.0cm 2.0cm; }'
+  + 'div.WordSection1 { page:WordSection1; } body,p,td,th,div,li,span { font-family:'+W.F+'; font-size:'+W.SZ+'; }'
+  + 'table { border-collapse:collapse; }</style></head><body><div class="WordSection1">'+b+'</div></body></html>';
+
+  const p = n => ('0'+n).slice(-2);
+  const ten = tenFile + '-' + now.getFullYear()+p(now.getMonth()+1)+p(now.getDate())
+            + '-' + p(now.getHours())+p(now.getMinutes()) + '.doc';
+  try {
+    const blob = new Blob(['﻿' + html], { type:'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = ten;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 4000);
+    toast('✓ Đã xuất ' + ten, 'ok');
+  } catch(e){ toast('Không tạo được file: ' + e.message, 'err'); }
+}
+
+/* ============================================================================
+ *  BÁO CÁO 1 · KHO VẬT TƯ + THEO DÕI BẢO DƯỠNG
+ * ----------------------------------------------------------------------------
+ *  Nguồn: Q.alerts.maintenance (server tính từ Sheet 2 + Sheet 3 — cùng nguồn với ô
+ *  màu trên Google Sheet) đối chiếu với Q.stock (tồn thực tế tại trại).
+ *
+ *  PHÂN BA NHÓM theo mức vượt chu kỳ, không theo cảm tính:
+ *    · QUÁ HẠN KÉO DÀI — đã quá hơn RP_CFG.KEO_DAI_PCT % chu kỳ. Không còn là "chưa
+ *      kịp làm" mà là đã bỏ qua trọn một nhịp bảo dưỡng.
+ *    · QUÁ HẠN        — đã qua mốc nhưng chưa tới mức trên.
+ *    · SẮP ĐẾN HẠN    — chưa qua mốc, đã vào vùng cảnh báo trước.
+ *
+ *  MỨC ĐỘ NGHIÊM TRỌNG cộng thêm một vế mà bảng bảo dưỡng thuần không có: TRẠI CÓ ĐỦ
+ *  VẬT TƯ KHÔNG. Một máy quá hạn 300 h mà trại còn đủ lọc là việc của kỹ thuật; quá
+ *  hạn 300 h mà trại không có lọc nào là việc của cả chuỗi cung ứng — phải đi mua
+ *  trước rồi mới cử người. Hai việc đó không được xếp cùng một hàng.
+ * ========================================================================== */
+function rpVatTu_(){
+  const maint = ((window.Q && Q.alerts && Q.alerts.maintenance) || []);
+  const stockAl = ((window.Q && Q.alerts && Q.alerts.stock) || []);
+  const rows = [];
+
+  maint.forEach(a => {
+    const code = String(a.maCode||'').trim().toUpperCase();
+    if (!code || rpBoQua_(code)) return;
+    const cycle = Number(a.cycle) || 0;
+    const remain = (a.remain === null || a.remain === undefined) ? null : Number(a.remain);
+    const qua = (remain != null && remain < 0) ? Math.abs(remain) : 0;
+    const vuotPct = cycle > 0 ? Math.round(qua / cycle * 100) : (qua > 0 ? 100 : 0);
+    const nhom = qua > 0
+      ? (vuotPct >= RP_CFG.KEO_DAI_PCT ? 'keodai' : 'quahan')
+      : 'sapden';
+    const need = (a.need === null || a.need === undefined) ? null : Number(a.need);
+    const have = Number(a.have) || 0;
+    const thieu = (need != null) ? Math.max(0, Math.round((need - have) * 100) / 100) : null;
+    const m = rpMay_(code);
+
+    /* ĐIỂM NGHIÊM TRỌNG — chỉ để SẮP XẾP, không in ra báo cáo (một con số tự nghĩ ra
+     * mà in lên báo cáo thì người đọc sẽ hỏi nó ở đâu ra, và không ai trả lời được).
+     * Ba vế, mỗi vế một tầng: nhóm quá hạn → mức vượt → có thiếu vật tư hay không. */
+    const diem = (nhom==='keodai'?2000:(nhom==='quahan'?1000:200))
+               + Math.min(vuotPct, 900)
+               + (thieu > 0 ? 300 : 0);
+
+    rows.push({
+      code, nhom, hangMuc: String(a.field||''), vt: String(a.vt||''), dvt: String(a.dvt||''),
+      cycle, used: Number(a.used)||0, remain, qua, vuotPct,
+      need, have, thieu,
+      duVatTu: (need == null) ? null : (have >= need),
+      khu: a.region || m.khu, site: a.site || m.site,
+      vanHanh: a.operator || m.vanHanh, sdt: a.phone || m.sdt,
+      loaiHinh: m.loaiHinh,
+      hienTrang: String(a.message||''),
+      diem,
+    });
+  });
+
+  /* Thiếu tồn tối thiểu tuy CHƯA tới hạn thay — vẫn phải cấp, vì cấp hàng mất vài ngày
+   * và tới lúc hỏng mới đi mua là máy nằm chờ. Gộp vào cùng báo cáo nhưng nhóm riêng. */
+  stockAl.filter(a => a.type === 'stock-low' || a.type === 'oil-short').forEach(a => {
+    const code = String(a.maCode||'').trim().toUpperCase();
+    if (!code || rpBoQua_(code)) return;
+    const m = rpMay_(code);
+    const need = Number(a.need)||0, have = Number(a.have)||0;
+    rows.push({
+      code, nhom:'tonthieu', hangMuc: String(a.field||''), vt:String(a.vt||''), dvt:String(a.dvt||''),
+      cycle:0, used:0, remain:(a.remain==null?null:Number(a.remain)), qua:0,
+      vuotPct: need>0 ? Math.round((need-have)/need*100) : 0,
+      need, have, thieu: Math.max(0, Math.round((need-have)*100)/100),
+      duVatTu: have >= need,
+      khu: a.region || m.khu, site: a.site || m.site,
+      vanHanh: a.operator || m.vanHanh, sdt: a.phone || m.sdt, loaiHinh: m.loaiHinh,
+      hienTrang: String(a.message||''),
+      diem: (a.severity==='high'?600:300) + (need>0 ? Math.round((need-have)/need*100) : 0),
+    });
+  });
+
+  rows.sort((a,b) => b.diem - a.diem || a.code.localeCompare(b.code,'vi'));
+
+  /* ĐỀ XUẤT CẤP VẬT TƯ — gom theo LOẠI VẬT TƯ toàn hệ thống. Đây là thứ bộ phận mua
+   * hàng cần: không phải "máy nào thiếu gì" mà "phải mua bao nhiêu cái, cho những trại
+   * nào". Danh sách theo máy đã nằm ở phần trên rồi. */
+  /* TÊN TRONG BẢNG NÀY PHẢI LÀ TÊN VẬT TƯ, KHÔNG PHẢI TÊN HẠNG MỤC BẢO DƯỠNG.
+   * Cảnh báo bảo dưỡng mang tên việc — "Thay lọc nhớt"; thứ bộ phận mua hàng đặt mua
+   * là "Lọc nhớt". Để nguyên tên hạng mục thì bảng đề xuất đọc thành một danh sách
+   * công việc, và người đi mua phải tự dịch ngược từng dòng. Tra tên thật từ danh mục
+   * vật tư (Sheet 10) theo mã VT; không tra được thì mới lùi về tên hạng mục. */
+  const tenVT = new Map(), dvtVT = new Map();
+  try {
+    (qItems_(false) || []).forEach(v => {
+      if (!v.vt) return;
+      tenVT.set(v.vt, v.ten);
+      if (v.dvt) dvtVT.set(v.vt, v.dvt);
+    });
+  } catch(e){ /* chưa tải danh mục → lùi về tên hạng mục, bảng vẫn ra */ }
+
+  const capMap = new Map();
+  rows.forEach(r => {
+    if (!r.thieu || r.thieu <= 0) return;
+    const k = r.vt || r.hangMuc;
+    if (!capMap.has(k)) capMap.set(k, {
+      vt: k,
+      ten: (r.vt && tenVT.get(r.vt)) || r.hangMuc || k,
+      dvt: r.dvt || (r.vt && dvtVT.get(r.vt)) || '',
+      /* Một loại vật tư có thể phục vụ nhiều hạng mục khác nhau. Ghi lại để bảng nói
+       * được "mua Lọc nhớt — cho việc Thay lọc nhớt, Bảo dưỡng 2000h". */
+      hangMuc: [], tong:0, may:[], gap:0,
+    });
+    const g = capMap.get(k);
+    g.tong = Math.round((g.tong + r.thieu) * 100) / 100;
+    g.may.push({ code:r.code, site:r.site, thieu:r.thieu, nhom:r.nhom });
+    if (r.hangMuc && g.hangMuc.indexOf(r.hangMuc) < 0) g.hangMuc.push(r.hangMuc);
+    if (r.nhom === 'keodai' || r.nhom === 'quahan') g.gap++;
+    if (!g.dvt && r.dvt) g.dvt = r.dvt;
+  });
+  const capVatTu = [...capMap.values()].sort((a,b) => b.gap - a.gap || b.tong - a.tong);
+
+  return {
+    rows,
+    keodai: rows.filter(r => r.nhom === 'keodai'),
+    quahan: rows.filter(r => r.nhom === 'quahan'),
+    sapden: rows.filter(r => r.nhom === 'sapden'),
+    tonthieu: rows.filter(r => r.nhom === 'tonthieu'),
+    thieuVT: rows.filter(r => r.thieu > 0),
+    capVatTu,
+    soMay: new Set(rows.map(r => r.code)).size,
+  };
+}
+
+const RP_NHOM = {
+  keodai:   { ten:'Quá hạn kéo dài', mau:'#7f1d1d', mo:'Đã vượt hơn '+RP_CFG.KEO_DAI_PCT+'% chu kỳ' },
+  quahan:   { ten:'Quá hạn',         mau:'#b91c1c', mo:'Đã qua mốc thay' },
+  sapden:   { ten:'Sắp đến hạn',     mau:'#b45309', mo:'Đã vào vùng cảnh báo trước' },
+  tonthieu: { ten:'Thiếu tồn tối thiểu', mau:'#0f766e', mo:'Chưa tới hạn nhưng trại không đủ hàng' },
+};
+
+/* ============================================================================
+ *  BÁO CÁO 2 · HIỆU QUẢ VẬN HÀNH + PHÂN TÍCH + TỔNG KẾT THÁNG
+ * ----------------------------------------------------------------------------
+ *  Bốn câu hỏi, bốn nguồn — không trộn:
+ *    a) Máy nào KHÔNG hiệu quả / KÉM hiệu quả hôm nay  → computeEfficiencyAll_
+ *    b) Máy nào chạy KHÔNG ĐỀU giữa các ngày            → độ lệch chuẩn trên dãy ngày
+ *    c) Tháng này so THÁNG TRƯỚC ra sao                 → buildMonthlyModel_
+ *    d) Cả tháng đạt bao nhiêu % thiết kế               → computeMonthlyReport
+ *
+ *  ĐỘ ĐỀU đo bằng HỆ SỐ BIẾN THIÊN (độ lệch chuẩn ÷ trung bình), không đo bằng
+ *  max − min. Lý do: hiệu số tuyệt đối phạt oan máy công suất lớn — một máy 300 kVA
+ *  dao động 200 kWh quanh mức 6.000 kWh là bình thường, còn máy 100 kVA dao động
+ *  200 kWh quanh mức 800 kWh là chạy phập phù. Chia cho trung bình thì hai máy so
+ *  được với nhau, và ngưỡng 25% có cùng một nghĩa cho mọi cỡ máy.
+ *
+ *  NGÀY KHÔNG CÓ SỐ bị BỎ QUA, không tính là 0: một ngày chưa đồng bộ mà tính thành
+ *  0 kWh sẽ kéo độ lệch chuẩn vọt lên và biến mọi máy thành "chạy không đều".
+ * ========================================================================== */
+function rpHieuQua_(){
+  let eff = [];
+  try { eff = computeEfficiencyAll_(S.master.rows) || []; } catch(e){ eff = []; }
+  eff = eff.filter(x => x && x.code && !rpBoQua_(x.code));
+
+  const may = eff.map(x => {
+    const m = rpMay_(x.code);
+    /* Dãy ngày dùng để đo độ đều: lấy khối ĐIỆN PHÁT theo ngày (powerArr) vì đó là
+     * sản lượng — thứ khách hàng trả tiền. Giờ chạy đo song song để giải thích. */
+    const kw = (x.powerArr || []).filter(v => v != null && isFinite(v) && v > 0);
+    const hr = (x.hoursArr || []).filter(v => v != null && isFinite(v) && v > 0);
+    const cv = arr => {
+      if (arr.length < 4) return null;                 // dưới 4 ngày thì chưa nói lên gì
+      const tb = arr.reduce((a,b)=>a+b,0) / arr.length;
+      if (!(tb > 0)) return null;
+      const va = arr.reduce((a,b)=>a+(b-tb)*(b-tb),0) / arr.length;
+      return Math.round(Math.sqrt(va) / tb * 1000) / 10;   // %
+    };
+    const cvKw = cv(kw), cvHr = cv(hr);
+    const khongDeu = (cvKw != null && cvKw > RP_CFG.DEU_CV_PCT);
+
+    /* Ngày tệ nhất trong cửa sổ — để báo cáo chỉ đích danh chứ không nói chung chung. */
+    let teNhat = null;
+    (x.dayEvals || []).forEach(d => {
+      const p = (d.pctKw != null) ? d.pctKw : d.pctHr;
+      if (p == null) return;
+      if (!teNhat || p < teNhat.pct) teNhat = { day:d.day, pct:p };
+    });
+
+    return {
+      code: x.code, khu: m.khu, site: m.site, vanHanh: m.vanHanh, loaiHinh: m.loaiHinh,
+      designKw: x.designKw, designHr: x.designHr,
+      actualKw: x.actualKw, actualHr: x.actualHr,
+      pctKw: x.pctKw, pctHr: x.pctHr, evalDay: x.evalDay,
+      trangThai: x.effStatus, streak: x.streak || 0, needCheck: !!x.needCheck,
+      soNgayKw: kw.length, tbKw: kw.length ? Math.round(kw.reduce((a,b)=>a+b,0)/kw.length*100)/100 : null,
+      cvKw, cvHr, khongDeu, teNhat,
+      dayEvals: x.dayEvals || [],
+    };
+  });
+
+  const khong = may.filter(x => x.trangThai === 'ineffective');
+  const kem   = may.filter(x => x.trangThai === 'bad');
+  const keoDai = may.filter(x => x.needCheck).sort((a,b) => b.streak - a.streak);
+  const phapPhu = may.filter(x => x.khongDeu).sort((a,b) => (b.cvKw||0) - (a.cvKw||0));
+
+  /* ---- So sánh giữa các tháng ---- */
+  let thang = { months:[], machines:[], totals:[], flagged:[] };
+  try {
+    const mm = buildMonthlyModel_();
+    thang.months = mm.months || [];
+    thang.machines = (mm.machines || []).filter(x => x && !rpBoQua_(x.code));
+    /* Tổng theo tháng — tự cộng từ machines để không phụ thuộc hàm nội bộ nào khác. */
+    thang.totals = thang.months.map(mo => {
+      let power = 0, hours = 0, n = 0;
+      thang.machines.forEach(x => {
+        const d = x.byMonth && x.byMonth[mo.label];
+        if (!d) return;
+        if (d.power != null){ power += d.power; n++; }
+        if (d.hours != null) hours += d.hours;
+      });
+      return { label:mo.label, power:Math.round(power*100)/100, hours:Math.round(hours*100)/100,
+               n:n, hasData:n > 0 };
+    });
+    const co = thang.totals.filter(t => t.hasData);
+    if (co.length >= 2){
+      const tb = co.reduce((a,t)=>a+t.power,0) / co.length;
+      thang.mean = Math.round(tb*100)/100;
+      /* Tháng lệch khỏi đường trung bình → truy ngay máy nào đẩy lên / kéo xuống. */
+      thang.totals.forEach((t,i) => {
+        if (!t.hasData || !(tb > 0)) return;
+        t.devPct = Math.round((t.power - tb)/tb*1000)/10;
+        let prev = null;
+        for (let j=i-1;j>=0;j--){ if (thang.totals[j].hasData){ prev = thang.totals[j]; break; } }
+        t.prevLabel = prev ? prev.label : null;
+        if (!prev) return;
+        const deltas = thang.machines.map(x => {
+          const cur = (x.byMonth[t.label]||{}).power, prv = (x.byMonth[prev.label]||{}).power;
+          if (cur == null || prv == null) return null;
+          return { code:x.code, cur, prev:prv, delta:Math.round((cur-prv)*100)/100,
+                   deltaPct: prv>0 ? Math.round((cur-prv)/prv*1000)/10 : null };
+        }).filter(Boolean).sort((a,b)=>b.delta-a.delta);
+        /* LỌC THEO DẤU TRƯỚC KHI CẮT NGỌN. Cắt slice(0,5) và slice(-5) trên cùng một
+         * danh sách chỉ đúng khi đội máy đông: với 4 máy thì hai lát cắt ra CÙNG một
+         * tập, và biểu đồ "tăng mạnh nhất" sẽ liệt kê cả những máy đang giảm. Máy đứng
+         * yên (delta = 0) không thuộc bên nào — nó không giải thích gì cho mức lệch. */
+        t.top    = deltas.filter(x => x.delta > 0).slice(0, 5);
+        t.bottom = deltas.filter(x => x.delta < 0).slice(-5).reverse();
+      });
+    }
+  } catch(e){ /* thiếu Sheet 9 thì phần so tháng để trống, ba phần kia vẫn ra */ }
+
+  /* ---- Tổng kết tháng (% đạt thiết kế) ---- */
+  let tongKet = null;
+  try { tongKet = computeMonthlyReport(S.master.rows); } catch(e){ tongKet = null; }
+
+  return { may, khong, kem, keoDai, phapPhu, thang, tongKet,
+           soMay: may.length,
+           tbPctKw: (function(){
+             const a = may.map(x=>x.pctKw).filter(v=>v!=null);
+             return a.length ? Math.round(a.reduce((s,v)=>s+v,0)/a.length) : null;
+           })() };
+}
+
+/* ============================================================================
+ *  BÁO CÁO 3 · CHI PHÍ VẬT TƯ
+ * ----------------------------------------------------------------------------
+ *  Bốn câu hỏi, và với MỖI câu phải chỉ được ra KHOẢN NÀO đẩy chỉ số lên — một bảng
+ *  xếp hạng mà không nói vì sao thì người đọc chỉ biết máy nào tệ, không biết làm gì.
+ *
+ *    a) Máy nào TỒN SỐ LƯỢNG cao hơn trung bình cùng dòng máy   → Q.stock
+ *    b) Máy nào GIÁ TRỊ TỒN cao hơn trung bình cùng dòng máy     → Q.stock
+ *    c) Máy nào đ/kWh cao hơn trung bình cùng dòng máy           → materialCost (server)
+ *    d) Máy nào THÁNG NÀY cao hơn THÁNG TRƯỚC                    → materialCost.momPct
+ *
+ *  So với TRUNG BÌNH CÙNG DÒNG MÁY, không phải trung bình toàn hệ thống: NS300KVA
+ *  đương nhiên tốn hơn NS100KVA, xếp chung một bảng thì bảng đó chỉ nói lại thứ tự
+ *  công suất chứ không nói gì về vận hành.
+ * ========================================================================== */
+function rpChiPhi_(){
+  const cp = RP.cp;                       // gói materialCost đã tải (có thể chưa có)
+  /* QSEP — CÙNG hằng số mà trang Kho vật tư dùng để ghép tên cột "«Tên VT» · Tồn".
+   * Gõ lại ' · ' ở đây thì ngày nào đó ai đó đổi QSEP là bảng này im lặng ra rỗng. */
+  const sep = QSEP;
+  const stockRows = ((window.Q && Q.stock && Q.stock.rows) || []);
+  const cat = (function(){
+    try { return qItems_(false) || []; } catch(e){ return []; }
+  })();
+
+  /* ---- (a)(b) Tồn kho: số lượng và giá trị, so trung bình cùng dòng máy ---- */
+  const ton = [];
+  stockRows.forEach(r => {
+    const code = String(r['Mã máy']||'').trim().toUpperCase();
+    if (!code || rpBoQua_(code)) return;
+    /* Máy dừng / thu hồi: tồn ở đó là TÀI SẢN CHỜ THU, không phải chi phí vận hành —
+     * xếp chung vào bảng "tồn cao hơn trung bình" thì tháng nào cũng có mấy máy đã dừng
+     * đứng đầu bảng, và người đọc học được cách bỏ qua cả bảng. Dùng đúng hàm mà trang
+     * Kho vật tư dùng (qDangChay_) để hai trang không đếm ra hai tập máy khác nhau. */
+    if (!qDangChay_(r)) return;
+    const m = rpMay_(code);
+    const model = code.replace(/\d+$/,'');
+    let sl = 0; const theoVt = [];
+    cat.forEach(v => {
+      const q = Number(r[v.ten + sep + 'Tồn']);
+      if (!isFinite(q) || q <= 0) return;
+      sl += q;
+      const gt = Number(r[v.ten + sep + 'Giá trị (đ)']) || 0;
+      theoVt.push({ ten:v.ten, dvt:v.dvt, sl:q, gt:gt });
+    });
+    theoVt.sort((a,b) => b.gt - a.gt);
+    ton.push({
+      code, model, khu:m.khu, site:m.site, loaiHinh:m.loaiHinh,
+      sl: Math.round(sl*100)/100,
+      giaTri: Number(r['Tổng giá trị tồn (đ)']) || 0,
+      thieu: Number(r['Số vật tư thiếu']) || 0,
+      theoVt,
+    });
+  });
+  /* Trung bình theo dòng máy cho cả hai chỉ số. */
+  const tbModel = new Map();
+  ton.forEach(t => {
+    const a = tbModel.get(t.model) || { sl:0, gt:0, n:0 };
+    a.sl += t.sl; a.gt += t.giaTri; a.n++;
+    tbModel.set(t.model, a);
+  });
+  tbModel.forEach(a => { a.tbSl = a.n ? a.sl/a.n : 0; a.tbGt = a.n ? a.gt/a.n : 0; });
+  ton.forEach(t => {
+    const a = tbModel.get(t.model) || {};
+    t.tbSl = a.tbSl != null ? Math.round(a.tbSl*100)/100 : null;
+    t.tbGt = a.tbGt != null ? Math.round(a.tbGt) : null;
+    t.devSl = (a.tbSl > 0) ? Math.round((t.sl - a.tbSl)/a.tbSl*1000)/10 : null;
+    t.devGt = (a.tbGt > 0) ? Math.round((t.giaTri - a.tbGt)/a.tbGt*1000)/10 : null;
+    /* Khoản nào đẩy giá trị tồn lên: vật tư đắt nhất đang nằm trong kho máy này. */
+    t.viSao = t.theoVt.slice(0,3).map(v => v.ten+' '+rpN_(v.sl)+' '+(v.dvt||'')+
+      (v.gt ? ' ('+rpN_(v.gt,0)+' đ)' : '')).join(' · ');
+  });
+  const tonCaoSl = ton.filter(t => t.devSl != null && t.devSl > RP_CFG.TON_CAO_PCT)
+                      .sort((a,b) => b.devSl - a.devSl);
+  const tonCaoGt = ton.filter(t => t.devGt != null && t.devGt > RP_CFG.TON_CAO_PCT)
+                      .sort((a,b) => b.devGt - a.devGt);
+
+  /* ---- (c)(d) đ/kWh: so trung bình dòng máy và so tháng trước ---- */
+  let kwhCao = [], momCao = [], cpRows = [];
+  if (cp && cp.ok){
+    cpRows = (cp.rows || []).filter(r => r && r.code && !rpBoQua_(r.code));
+    kwhCao = cpRows.filter(r => r.devPct != null && r.devPct > (cp.deviationPct || 30))
+                   .sort((a,b) => b.devPct - a.devPct);
+    momCao = cpRows.filter(r => r.momPct != null && r.momPct > RP_CFG.MOM_PCT)
+                   .sort((a,b) => b.momPct - a.momPct);
+    /* KHOẢN NÀO ĐẨY CHỈ SỐ LÊN — server đã gửi kèm items (từng vật tư: SL, tiền, số
+     * phiếu, phần bù kiểm kê). Lấy 3 khoản tốn nhất và nói rõ phần nào là bù kiểm kê:
+     * bù kiểm kê nghĩa là "phát hiện thêm khi đếm kho", khác hẳn tiêu hao thường ngày
+     * và cách xử lý cũng khác. */
+    cpRows.forEach(r => {
+      const it = (r.items || []).slice(0, 3);
+      r.viSao = it.map(v => v.ten + ' ' + rpN_(v.tien, 0) + ' đ'
+        + (v.bu ? ' (trong đó bù kiểm kê ' + rpN_(v.bu,0) + ' đ)' : '')).join(' · ');
+      r.coBu = (r.costBu || 0) !== 0;
+    });
+  }
+
+  return { cp, thang: RP.cpThang, ton, tonCaoSl, tonCaoGt, kwhCao, momCao, cpRows,
+           tbModel: [...tbModel.entries()].map(([k,v]) => ({ model:k, n:v.n,
+             tbSl:Math.round(v.tbSl*100)/100, tbGt:Math.round(v.tbGt) })) };
+}
+
+/** Tháng mặc định của báo cáo chi phí: tháng hiện tại, dạng MM/yyyy. */
+function rpThangMacDinh_(){
+  const d = new Date();
+  return ('0'+(d.getMonth()+1)).slice(-2) + '/' + d.getFullYear();
+}
+
+/** Tải gói chi phí từ server (action materialCost — chỉ đọc). */
+async function rpTaiChiPhi(thang){
+  const ml = thang || RP.cpThang || rpThangMacDinh_();
+  if (RP.cpDangTai) return;
+  RP.cpDangTai = true;
+  RP.cpThang = ml;
+  try { renderPage('report'); } catch(e){}
+  try {
+    const d = await apiPost({ action:'materialCost', monthLabel: ml,
+                              user:(S.user&&S.user.name)||'' });
+    RP.cp = (d && d.ok) ? d : { ok:false, error:(d&&d.error)||'Không đọc được chi phí' };
+  } catch(e){
+    RP.cp = { ok:false, error:e.message };
+  } finally {
+    RP.cpDangTai = false;
+    if (document.querySelector('.page.on') && document.querySelector('.page.on').id === 'pg-report')
+      renderPage('report');
+  }
+}
+
+/* ============================================================================
+ *  GIAO DIỆN TRANG BÁO CÁO
+ * ========================================================================== */
+function rpTab(t){ RP.tab = t; renderPage('report'); }
+
+function rpKpi_(nhan, so, mau, ghi){
+  return '<div class="card" style="flex:1;min-width:132px;border-left:3px solid '+mau+'">'
+    + '<div class="cb" style="padding:9px 12px">'
+    + '<div style="font-size:11px;color:var(--mu)">'+rpE_(nhan)+'</div>'
+    + '<div style="font-size:23px;font-weight:700;font-family:var(--mono);color:'+mau+'">'+so+'</div>'
+    + (ghi ? '<div style="font-size:10px;color:var(--mu)">'+rpE_(ghi)+'</div>' : '')
+    + '</div></div>';
+}
+/** Thanh ngang thuần CSS — nhẹ hơn Chart.js cho những biểu đồ so sánh đơn giản,
+ *  và hiện giống hệt cái sẽ in ra Word nên xem trên web là biết tờ giấy trông thế nào. */
+function rpBar_(data, mauMac){
+  if (!data || !data.length) return '<div class="empty">Không có số liệu.</div>';
+  const max = Math.max(1, ...data.map(d => Math.abs(d.v)));
+  return '<div style="display:flex;flex-direction:column;gap:4px">' + data.map(d => {
+    const pct = Math.max(2, Math.round(Math.abs(d.v)/max*100));
+    return '<div style="display:flex;align-items:center;gap:8px;font-size:12px">'
+      + '<div style="width:31%;text-align:right;color:var(--mu)">'+rpE_(d.t)+'</div>'
+      + '<div style="flex:1;background:var(--bg2,#eef1f0);border-radius:3px;overflow:hidden;height:16px">'
+      +   '<div style="width:'+pct+'%;height:100%;background:'+(d.mau||mauMac||'var(--g)')+'"></div></div>'
+      + '<div style="width:22%;font-family:var(--mono);font-weight:600">'+rpE_(d.nhan || rpN_(d.v))+'</div>'
+      + '</div>';
+  }).join('') + '</div>';
+}
+
+function viewReport(){
+  RP.at = rpNow_();
+  const tab = RP.tab;
+  const nut = (id, nhan) => '<button class="fchip '+(tab===id?'on':'')+'" onclick="rpTab(\''+id+'\')">'+nhan+'</button>';
+
+  let h = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px">'
+    + '<div><h2 style="margin:0">Báo cáo tổng hợp</h2>'
+    + '<div style="font-size:11px;color:var(--mu);margin-top:2px">Số liệu tại thời điểm <b>'+rpE_(RP.at)+'</b>'
+    + ' · mỗi báo cáo xuất riêng một file Word, đủ 5W1H, Times New Roman 13.</div></div>'
+    + '<button class="btn bg-gr" onclick="renderPage(\'report\')">↻ Cập nhật số liệu</button></div>';
+
+  h += '<div class="msf"><div class="msg">'
+    + nut('vt','① Kho vật tư &amp; Bảo dưỡng')
+    + nut('hq','② Hiệu quả vận hành')
+    + nut('cp','③ Chi phí vật tư')
+    + '</div></div>';
+
+  h += '<div style="margin-top:12px">';
+  if (tab === 'vt') h += rpViewVatTu_();
+  else if (tab === 'hq') h += rpViewHieuQua_();
+  else h += rpViewChiPhi_();
+  h += '</div>';
+  return h;
+}
+
+function afterReport(){
+  /* Báo cáo chi phí cần một lượt gọi server — chỉ gọi khi người dùng mở đúng tab đó,
+   * và chỉ gọi MỘT lần cho mỗi tháng. Gọi sẵn từ lúc mở trang là bắt mọi người chờ
+   * một con số mà phần lớn lần vào họ không xem tới. */
+  if (RP.tab === 'cp' && !RP.cp && !RP.cpDangTai) rpTaiChiPhi(RP.cpThang || rpThangMacDinh_());
+  try { rpBadge_(); } catch(e){}
+}
+
+/** Badge sidebar = số việc PHẢI XỬ LÝ NGAY: quá hạn kéo dài + quá hạn + thiếu vật tư. */
+function rpBadge_(){
+  const el = document.getElementById('nb-report');
+  if (!el) return;
+  let n = 0;
+  try { const d = rpVatTu_(); n = d.keodai.length + d.quahan.length + d.thieuVT.length; } catch(e){ n = 0; }
+  el.textContent = n;
+  el.style.display = n > 0 ? '' : 'none';
+}
+
+/* ---------------------------------------------------------------------------
+ *  TAB 1 · KHO VẬT TƯ & BẢO DƯỠNG
+ * ------------------------------------------------------------------------- */
+function rpViewVatTu_(){
+  const d = rpVatTu_();
+  if (!d.rows.length)
+    return '<div class="empty">Không có hạng mục nào quá hạn, sắp đến hạn hay thiếu tồn — '
+         + 'hoặc dữ liệu vật tư chưa tải xong (mở trang Kho vật tư một lần rồi quay lại).</div>';
+
+  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    + rpKpi_('Quá hạn kéo dài', d.keodai.length, RP_NHOM.keodai.mau, '>'+RP_CFG.KEO_DAI_PCT+'% chu kỳ')
+    + rpKpi_('Quá hạn', d.quahan.length, RP_NHOM.quahan.mau, 'đã qua mốc thay')
+    + rpKpi_('Sắp đến hạn', d.sapden.length, RP_NHOM.sapden.mau, 'trong vùng cảnh báo')
+    + rpKpi_('Thiếu vật tư', d.thieuVT.length, '#0f766e', d.capVatTu.length+' loại cần cấp')
+    + rpKpi_('Tổ máy liên quan', d.soMay, '#334155', '')
+    + '</div>';
+
+  h += '<button class="btn bg-b" onclick="rpXuatVatTu()">📄 Xuất báo cáo Word — Kho vật tư &amp; Bảo dưỡng</button>';
+
+  /* Đề xuất cấp vật tư đứng TRƯỚC danh sách máy: đây là việc mua hàng phải làm ngay,
+   * và nó gom toàn hệ thống nên đọc một bảng là đặt được đơn. */
+  if (d.capVatTu.length){
+    h += '<div class="card" style="margin-top:12px;border-left:3px solid #0f766e"><div class="cb" style="padding:10px 12px">'
+      + '<b style="font-size:12px">Đề xuất cấp vật tư — gom toàn hệ thống</b>'
+      + '<div class="tw" style="margin-top:6px;max-height:280px"><table><thead><tr>'
+      + '<th>Vật tư</th><th style="text-align:right">Tổng cần cấp</th><th style="text-align:right">Số máy</th>'
+      + '<th style="text-align:right">Trong đó GẤP</th><th>Máy cần cấp</th></tr></thead><tbody>'
+      + d.capVatTu.map(g => '<tr>'
+        + '<td><b>'+rpE_(g.ten)+'</b>'
+        +   ((g.hangMuc||[]).length ? '<br><span style="font-size:10px;color:var(--mu)">cho: '
+              + rpE_(g.hangMuc.join(', '))+'</span>' : '')+'</td>'
+        + '<td style="text-align:right;font-family:var(--mono);font-weight:600">'+rpN_(g.tong)+' '+rpE_(g.dvt||'')+'</td>'
+        + '<td style="text-align:right;font-family:var(--mono)">'+g.may.length+'</td>'
+        + '<td style="text-align:right;font-family:var(--mono);color:'+(g.gap?'var(--red)':'var(--mu)')+'">'+g.gap+'</td>'
+        + '<td style="font-size:11px">'+rpE_(g.may.slice(0,8).map(x=>x.code+' ('+rpN_(x.thieu)+')').join(', '))
+        +   (g.may.length>8 ? ' … +'+(g.may.length-8) : '')+'</td></tr>').join('')
+      + '</tbody></table></div></div></div>';
+  }
+
+  ['keodai','quahan','sapden','tonthieu'].forEach(k => {
+    const list = d[k]; if (!list.length) return;
+    const N = RP_NHOM[k];
+    h += '<div class="card" style="margin-top:12px;border-left:3px solid '+N.mau+'"><div class="cb" style="padding:10px 12px">'
+      + '<b style="font-size:12px;color:'+N.mau+'">'+rpE_(N.ten)+'</b> '
+      + '<span style="font-size:11px;color:var(--mu)">— '+rpE_(N.mo)+' · '+list.length+' mục</span>'
+      + '<div class="tw" style="margin-top:6px;max-height:340px"><table><thead><tr>'
+      + '<th>Mã máy</th><th>Trang trại · Khu vực</th><th>Hạng mục</th>'
+      + '<th style="text-align:right">Đã chạy / Chu kỳ</th><th style="text-align:right">Vượt</th>'
+      + '<th style="text-align:right">Tồn / Cần</th><th>Đề xuất</th></tr></thead><tbody>'
+      + list.slice(0, 60).map(r => '<tr>'
+        + '<td><span class="mm">'+rpE_(r.code)+'</span></td>'
+        + '<td style="font-size:11px">'+rpE_(r.site||'—')+(r.khu?'<br><span style="color:var(--mu)">'+rpE_(r.khu)+'</span>':'')+'</td>'
+        + '<td>'+rpE_(r.hangMuc)+'</td>'
+        + '<td style="text-align:right;font-family:var(--mono)">'
+        +   (r.cycle ? rpN_(r.used)+' / '+rpN_(r.cycle)+' h' : '—')+'</td>'
+        + '<td style="text-align:right;font-family:var(--mono);font-weight:600;color:'+N.mau+'">'
+        +   (r.qua ? rpN_(r.qua)+' h ('+r.vuotPct+'%)' : (r.remain!=null ? 'còn '+rpN_(r.remain)+' h' : '—'))+'</td>'
+        + '<td style="text-align:right"><span class="b '+(r.thieu>0?'br':'')+'">'
+        +   rpN_(r.have)+' / '+(r.need!=null?rpN_(r.need):'—')+'</span></td>'
+        + '<td style="font-size:11px">'+rpE_(rpDeXuat_(r))+'</td>'
+        + '</tr>').join('')
+      + '</tbody></table></div>'
+      + (list.length>60 ? '<div style="font-size:11px;color:var(--mu);margin-top:4px">… và '+(list.length-60)+' mục nữa — xem đầy đủ trong file Word.</div>' : '')
+      + '</div></div>';
+  });
+  return h;
+}
+
+/** Câu "phải làm gì" cho một dòng — dùng chung cho web và Word. */
+function rpDeXuat_(r){
+  if (r.nhom === 'tonthieu')
+    return 'Cấp bổ sung ' + rpN_(r.thieu) + ' ' + (r.dvt||'') + ' cho đủ tồn tối thiểu';
+  const lam = (r.nhom === 'sapden' ? 'Lên lịch làm «' : 'Làm ngay «') + r.hangMuc + '»';
+  if (r.thieu > 0)
+    return lam + ' — TRẠI THIẾU ' + rpN_(r.thieu) + ' ' + (r.dvt||'') + ', phải cấp trước khi cử người';
+  if (r.need == null)
+    return lam + ' (hạng mục không gắn vật tư — không cần cấp hàng)';
+  return lam + ' — trại đã đủ vật tư (' + rpN_(r.have) + '/' + rpN_(r.need) + ')';
+}
+
+function rpXuatVatTu(){
+  const d = rpVatTu_();
+  if (!d.rows.length){ toast('Không có mục nào để xuất','err'); return; }
+  const BD = wDem_();               // đánh số biểu đồ liền mạch — xem wDem_
+  const khuDem = {}; d.rows.forEach(r => { const k=r.khu||'—'; khuDem[k]=(khuDem[k]||0)+1; });
+  const khuArr = Object.keys(khuDem).map(k=>({t:k,v:khuDem[k]})).sort((a,b)=>b.v-a.v);
+  const dauKhu = khuArr[0] || {t:'—',v:0};
+  const gapNhat = d.keodai[0] || d.quahan[0] || d.rows[0];
+
+  let b = '';
+  b += wH_(1, 'I. Tóm tắt điều hành (5W1H)');
+  b += w5W1H_({
+    what: rpE_(d.rows.length + ' hạng mục cần xử lý trên ' + d.soMay + ' tổ máy: '
+        + d.keodai.length + ' quá hạn kéo dài, ' + d.quahan.length + ' quá hạn, '
+        + d.sapden.length + ' sắp đến hạn, ' + d.tonthieu.length + ' thiếu tồn tối thiểu. '
+        + d.thieuVT.length + ' mục trong số đó TRẠI KHÔNG ĐỦ VẬT TƯ để làm.'),
+    why: rpE_(d.thieuVT.length
+        ? 'Nút thắt chính là vật tư: ' + d.thieuVT.length + '/' + d.rows.length + ' mục không thể xử lý ngay '
+          + 'vì trại thiếu hàng, cần cấp ' + d.capVatTu.length + ' loại vật tư (xem Mục II).'
+        : 'Vật tư tại trại đang đủ cho toàn bộ danh sách — nút thắt nằm ở nhân lực và lịch đi trại, không ở kho.'),
+    where: rpE_('Tập trung ở khu vực ' + dauKhu.t + ' (' + dauKhu.v + ' mục). '
+        + (gapNhat ? 'Cần xử lý trước: ' + gapNhat.code + ' — «' + gapNhat.hangMuc + '»'
+            + (gapNhat.qua ? ' đã quá ' + rpN_(gapNhat.qua) + ' h (' + gapNhat.vuotPct + '% chu kỳ)' : '')
+            + (gapNhat.site ? ' tại ' + gapNhat.site : '') + '.' : '')),
+    when: rpE_('Số liệu chụp lúc ' + RP.at + '. Nhóm "quá hạn kéo dài" phải xử lý trong tuần này; '
+        + 'nhóm "sắp đến hạn" lên lịch trong kỳ tới.'),
+    who: rpE_('Người lập: ' + ((S.user && (S.user.name||S.user.login)) || '—')
+        + '. Thực hiện: kỹ thuật viên phụ trách từng trại (cột Người vận hành ở Mục IV). '
+        + 'Cấp vật tư: bộ phận mua hàng theo bảng Mục II.'),
+    how: rpE_('Xử lý theo đúng thứ tự Mục III (xếp từ mức vượt chu kỳ cao xuống thấp). '
+        + 'Mục nào trại thiếu hàng thì cấp vật tư TRƯỚC rồi mới cử người — đi trại mà không có hàng là mất một chuyến. '
+        + 'Làm xong báo lại trên web để bộ đếm về 0 và tồn kho tự trừ.'),
+  });
+
+  b += wH_(1, 'II. Đề xuất cấp vật tư');
+  if (d.capVatTu.length){
+    b += wP_('Bảng gom theo LOẠI VẬT TƯ cho toàn hệ thống — đây là số cần đặt mua. '
+      + 'Cột <b>Trong đó GẤP</b> là số máy đã quá hạn, không thể chờ.');
+    b += wTB_([{t:'TT',w:'5%',a:'center'},{t:'Vật tư',w:'16%'},{t:'Dùng cho hạng mục',w:'15%'},
+               {t:'Tổng cần cấp',w:'12%',a:'right'},
+               {t:'Số máy',w:'7%',a:'right'},{t:'Trong đó GẤP',w:'9%',a:'right'},{t:'Máy cần cấp',w:'36%'}],
+      d.capVatTu.map((g,i) => ({
+        _bg: g.gap ? '#fdecec' : '#ffffff',
+        c: [String(i+1), '<b>'+rpE_(g.ten)+'</b>', rpE_((g.hangMuc||[]).join(', ')),
+            '<b>'+rpN_(g.tong)+' '+rpE_(g.dvt||'')+'</b>', String(g.may.length),
+            g.gap ? '<b>'+g.gap+'</b>' : '0',
+            rpE_(g.may.map(x => x.code+' ('+rpN_(x.thieu)+')').join(', '))],
+      })));
+    /* BIỂU ĐỒ ĐẾM SỐ TỔ MÁY ĐANG CHỜ, KHÔNG ĐẾM SỐ LƯỢNG HÀNG.
+     * Vẽ cột theo lượng cần cấp thì "16 lít nước làm mát" dài gấp tám lần "2 cái lọc
+     * nhớt" — hình nói rằng nước làm mát gấp hơn, trong khi chính lọc nhớt mới đang
+     * chặn một máy đã quá hạn. Lít và cái không so được với nhau; số tổ máy đang chờ
+     * thì so được, và đó cũng đúng là thứ quyết định mua cái nào trước. Lượng cần đặt
+     * vẫn nằm ở nhãn bên phải và ở bảng ngay trên. */
+    b += wChart_(BD('Số tổ máy đang chờ từng loại vật tư (đỏ = có máy đã quá hạn)'),
+      d.capVatTu.slice(0,10).map(g => ({ t:g.ten, v:g.may.length,
+        nhan: g.may.length + ' máy · ' + rpN_(g.tong) + ' ' + (g.dvt||''),
+        mau: g.gap ? '#b91c1c' : '#0f766e' })));
+    b += wNX_(rpE_('Có ' + d.capVatTu.filter(g=>g.gap).length + '/' + d.capVatTu.length
+      + ' loại vật tư đang chặn những máy ĐÃ quá hạn — những loại này đặt mua trước. '
+      + 'Các loại còn lại phục vụ nhóm sắp đến hạn, gộp chung một đơn để đỡ phí vận chuyển.'));
+  } else {
+    b += wP_('<b>Không cần cấp vật tư.</b> Toàn bộ hạng mục trong danh sách đều có đủ hàng tại trại.');
+  }
+
+  b += wH_(1, 'III. Danh sách theo mức độ nghiêm trọng');
+  const cot = [{t:'TT',w:'4%',a:'center'},{t:'Mã máy',w:'9%'},{t:'Trang trại · Khu vực',w:'17%'},
+               {t:'Hạng mục',w:'14%'},{t:'Đã chạy / Chu kỳ',w:'12%',a:'right'},
+               {t:'Vượt',w:'9%',a:'right'},{t:'Tồn / Cần',w:'9%',a:'right'},{t:'Đề xuất',w:'26%'}];
+  const hang = (r,i) => ({
+    _bg: r.nhom==='keodai' ? '#fbe3e3' : (r.nhom==='quahan' ? '#fdecec' : (r.nhom==='sapden' ? '#fdf6e7' : '#eef7f5')),
+    c: [String(i+1), '<b>'+rpE_(r.code)+'</b>',
+        rpE_(r.site||'—') + (r.khu ? '<br><i>'+rpE_(r.khu)+'</i>' : ''),
+        rpE_(r.hangMuc),
+        r.cycle ? rpN_(r.used)+' / '+rpN_(r.cycle)+' h' : '—',
+        r.qua ? '<b>'+rpN_(r.qua)+' h<br>('+r.vuotPct+'%)</b>' : (r.remain!=null?'còn '+rpN_(r.remain)+' h':'—'),
+        (r.thieu>0?'<b>':'')+rpN_(r.have)+' / '+(r.need!=null?rpN_(r.need):'—')+(r.thieu>0?'</b>':''),
+        rpE_(rpDeXuat_(r))],
+  });
+  ['keodai','quahan','sapden','tonthieu'].forEach(k => {
+    if (!d[k].length) return;
+    b += wH_(2, 'III.' + ({keodai:'1',quahan:'2',sapden:'3',tonthieu:'4'})[k] + '. '
+      + RP_NHOM[k].ten + ' — ' + d[k].length + ' mục (' + RP_NHOM[k].mo + ')');
+    b += wTB_(cot, d[k].map(hang));
+  });
+
+  b += wH_(1, 'IV. Phụ lục — chi tiết liên hệ theo tổ máy');
+  const theoMay = new Map();
+  d.rows.forEach(r => {
+    if (!theoMay.has(r.code)) theoMay.set(r.code, { code:r.code, site:r.site, khu:r.khu,
+      vanHanh:r.vanHanh, sdt:r.sdt, loaiHinh:r.loaiHinh, muc:[] });
+    theoMay.get(r.code).muc.push(r);
+  });
+  const mayArr = [...theoMay.values()].sort((a,b) => b.muc.length - a.muc.length);
+  b += wTB_([{t:'Mã máy',w:'10%'},{t:'Loại hình',w:'9%'},{t:'Trang trại',w:'20%'},{t:'Khu vực',w:'11%'},
+             {t:'Người vận hành',w:'15%'},{t:'SĐT',w:'11%'},{t:'Số mục',w:'6%',a:'right'},{t:'Gồm',w:'18%'}],
+    mayArr.map(m => ({ c:['<b>'+rpE_(m.code)+'</b>', rpE_(m.loaiHinh||'—'), rpE_(m.site||'—'),
+      rpE_(m.khu||'—'), rpE_(m.vanHanh||'—'), rpE_(m.sdt||'—'), String(m.muc.length),
+      rpE_(m.muc.map(x=>x.hangMuc).join(', '))] })));
+
+  wXuat_('BaoCao-VatTu-BaoDuong', 'BÁO CÁO KHO VẬT TƯ & THEO DÕI BẢO DƯỠNG',
+    'Đối chiếu định mức thay thế với tồn kho thực tế tại trại · số liệu lúc ' + RP.at, b);
+}
+
+/* ---------------------------------------------------------------------------
+ *  TAB 2 · HIỆU QUẢ VẬN HÀNH + PHÂN TÍCH + TỔNG KẾT THÁNG
+ * ------------------------------------------------------------------------- */
+function rpViewHieuQua_(){
+  const d = rpHieuQua_();
+  if (!d.soMay)
+    return '<div class="empty">Chưa có dữ liệu hiệu quả — mở trang Hiệu quả vận hành một lần rồi quay lại.</div>';
+
+  let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    + rpKpi_('Không hiệu quả', d.khong.length, '#7f1d1d', 'dưới mức nghiêm trọng')
+    + rpKpi_('Kém hiệu quả', d.kem.length, '#b45309', 'dưới ngưỡng đạt')
+    + rpKpi_('Kém kéo dài', d.keoDai.length, '#b91c1c', 'chuỗi ngày liên tiếp')
+    + rpKpi_('Chạy không đều', d.phapPhu.length, '#6d28d9', 'biến thiên >'+RP_CFG.DEU_CV_PCT+'%')
+    + rpKpi_('TB đạt thiết kế', (d.tbPctKw!=null?d.tbPctKw+'%':'—'), '#0d6e3f', d.soMay+' tổ máy')
+    + '</div>';
+
+  h += '<button class="btn bg-b" onclick="rpXuatHieuQua()">📄 Xuất báo cáo Word — Hiệu quả vận hành &amp; Tổng kết tháng</button>';
+
+  /* --- Máy không hiệu quả / kém hiệu quả --- */
+  const xau = d.khong.concat(d.kem).sort((a,b) => (a.pctKw ?? 999) - (b.pctKw ?? 999));
+  if (xau.length){
+    h += '<div class="card" style="margin-top:12px;border-left:3px solid #7f1d1d"><div class="cb" style="padding:10px 12px">'
+      + '<b style="font-size:12px;color:#7f1d1d">Máy không hiệu quả &amp; kém hiệu quả</b>'
+      + '<span style="font-size:11px;color:var(--mu)"> — '+xau.length+' máy, xếp từ thấp nhất lên</span>'
+      + '<div style="margin-top:8px">'
+      + rpBar_(xau.slice(0,12).map(x => ({
+          t: x.code, v: x.pctKw != null ? x.pctKw : (x.pctHr||0),
+          nhan: (x.pctKw!=null?Math.round(x.pctKw):'—')+'%',
+          mau: x.trangThai==='ineffective' ? '#7f1d1d' : '#b45309' })))
+      + '</div>'
+      + '<div class="tw" style="margin-top:8px;max-height:320px"><table><thead><tr>'
+      + '<th>Mã máy</th><th>Trang trại · Khu vực</th><th>Trạng thái</th>'
+      + '<th style="text-align:right">Điện phát ngày</th><th style="text-align:right">% Thiết kế</th>'
+      + '<th style="text-align:right">Giờ chạy</th><th style="text-align:right">Chuỗi ngày</th>'
+      + '<th>Ngày tệ nhất</th></tr></thead><tbody>'
+      + xau.slice(0,60).map(x => '<tr>'
+        + '<td><span class="mm">'+rpE_(x.code)+'</span></td>'
+        + '<td style="font-size:11px">'+rpE_(x.site||'—')+(x.khu?'<br><span style="color:var(--mu)">'+rpE_(x.khu)+'</span>':'')+'</td>'
+        + '<td><span class="b '+(x.trangThai==='ineffective'?'br':'ba')+'">'
+        +   (x.trangThai==='ineffective'?'Không hiệu quả':'Kém hiệu quả')+'</span></td>'
+        + '<td style="text-align:right;font-family:var(--mono)">'
+        +   rpN_(x.actualKw)+' / '+rpN_(x.designKw)+'</td>'
+        + '<td style="text-align:right;font-family:var(--mono);font-weight:600;color:'
+        +   (x.pctKw!=null&&x.pctKw<50?'var(--red)':'var(--or,#b45309)')+'">'
+        +   (x.pctKw!=null?Math.round(x.pctKw)+'%':'—')+'</td>'
+        + '<td style="text-align:right;font-family:var(--mono)">'+rpN_(x.actualHr)+' / '+rpN_(x.designHr)+' h</td>'
+        + '<td style="text-align:right;font-family:var(--mono)">'
+        +   (x.streak ? '<b'+(x.needCheck?' style="color:var(--red)"':'')+'>'+x.streak+' ngày</b>' : '—')+'</td>'
+        + '<td style="font-size:11px">'+(x.teNhat ? 'Ngày '+x.teNhat.day+' — '+Math.round(x.teNhat.pct)+'%' : '—')+'</td>'
+        + '</tr>').join('')
+      + '</tbody></table></div></div></div>';
+  }
+
+  /* --- Chạy không đều giữa các ngày --- */
+  if (d.phapPhu.length){
+    h += '<div class="card" style="margin-top:12px;border-left:3px solid #6d28d9"><div class="cb" style="padding:10px 12px">'
+      + '<b style="font-size:12px;color:#6d28d9">Thông số hoạt động giữa các ngày không đều</b>'
+      + '<span style="font-size:11px;color:var(--mu)"> — hệ số biến thiên điện phát vượt '
+      + RP_CFG.DEU_CV_PCT+'% · '+d.phapPhu.length+' máy</span>'
+      + '<div style="font-size:11px;color:var(--mu);margin-top:4px">Hệ số biến thiên = độ lệch chuẩn ÷ trung bình. '
+      + 'Chia cho trung bình nên máy 300 kVA và máy 100 kVA so được với nhau.</div>'
+      + '<div style="margin-top:8px">'
+      + rpBar_(d.phapPhu.slice(0,12).map(x => ({ t:x.code, v:x.cvKw, nhan:x.cvKw+'%' })), '#6d28d9')
+      + '</div>'
+      + '<div class="tw" style="margin-top:8px;max-height:280px"><table><thead><tr>'
+      + '<th>Mã máy</th><th>Trang trại</th><th style="text-align:right">Biến thiên điện</th>'
+      + '<th style="text-align:right">Biến thiên giờ</th><th style="text-align:right">TB điện/ngày</th>'
+      + '<th style="text-align:right">Số ngày có số</th><th>Ngày tệ nhất</th></tr></thead><tbody>'
+      + d.phapPhu.slice(0,40).map(x => '<tr>'
+        + '<td><span class="mm">'+rpE_(x.code)+'</span></td>'
+        + '<td style="font-size:11px">'+rpE_(x.site||'—')+'</td>'
+        + '<td style="text-align:right;font-family:var(--mono);font-weight:600;color:#6d28d9">'+x.cvKw+'%</td>'
+        + '<td style="text-align:right;font-family:var(--mono)">'+(x.cvHr!=null?x.cvHr+'%':'—')+'</td>'
+        + '<td style="text-align:right;font-family:var(--mono)">'+rpN_(x.tbKw)+' kWh</td>'
+        + '<td style="text-align:right;font-family:var(--mono)">'+x.soNgayKw+'</td>'
+        + '<td style="font-size:11px">'+(x.teNhat ? 'Ngày '+x.teNhat.day+' — '+Math.round(x.teNhat.pct)+'%' : '—')+'</td>'
+        + '</tr>').join('')
+      + '</tbody></table></div></div></div>';
+  }
+
+  /* --- So sánh giữa các tháng --- */
+  const T = d.thang, co = (T.totals||[]).filter(t => t.hasData);
+  if (co.length){
+    const cuoi = co[co.length-1];
+    h += '<div class="card" style="margin-top:12px;border-left:3px solid #0d6e3f"><div class="cb" style="padding:10px 12px">'
+      + '<b style="font-size:12px">So sánh giữa các tháng — tổng điện phát toàn hệ thống</b>'
+      + '<div style="margin-top:8px">'
+      + rpBar_(co.map(t => ({ t:t.label, v:t.power, nhan:rpN_(t.power,0)+' kWh',
+          mau: (t.devPct!=null && t.devPct < -MONTHLY_TREND_PCT) ? '#b91c1c'
+             : ((t.devPct!=null && t.devPct > MONTHLY_TREND_PCT) ? '#0d6e3f' : '#64748b') })))
+      + '</div>';
+    if (cuoi && cuoi.top && cuoi.top.length){
+      h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">'
+        + '<div style="flex:1;min-width:230px"><div style="font-size:11px;font-weight:600;color:#0d6e3f;margin-bottom:4px">'
+        +   'Tăng mạnh nhất — '+rpE_(cuoi.label)+' so '+rpE_(cuoi.prevLabel||'—')+'</div>'
+        + rpBar_(cuoi.top.map(x=>({t:x.code,v:x.delta,nhan:'+'+rpN_(x.delta,0)})), '#0d6e3f')+'</div>'
+        + '<div style="flex:1;min-width:230px"><div style="font-size:11px;font-weight:600;color:#b91c1c;margin-bottom:4px">'
+        +   'Giảm mạnh nhất</div>'
+        + rpBar_((cuoi.bottom||[]).map(x=>({t:x.code,v:x.delta,nhan:rpN_(x.delta,0)})), '#b91c1c')+'</div>'
+        + '</div>';
+    }
+    h += '</div></div>';
+  }
+
+  /* --- Tổng kết tháng --- */
+  const TK = d.tongKet;
+  if (TK && TK.rows && TK.rows.length){
+    const tb = a => { const v=a.filter(x=>x!=null); return v.length?Math.round(v.reduce((p,q)=>p+q,0)/v.length):null; };
+    const aKw = tb(TK.rows.map(r=>r.pctKwh)), aHr = tb(TK.rows.map(r=>r.pctHr));
+    const duoi = TK.rows.filter(r => (r.pctKwh!=null && r.pctKwh<90) || (r.pctHr!=null && r.pctHr<90));
+    h += '<div class="card" style="margin-top:12px;border-left:3px solid #334155"><div class="cb" style="padding:10px 12px">'
+      + '<b style="font-size:12px">Tổng kết tháng '+rpE_(TK.monthLabel)+'</b> '
+      + '<span class="b '+(TK.isComplete?'bg':'ba')+'">'
+      +   (TK.isComplete?'Tháng đã đủ ngày':'Đang tính đến ngày '+TK.daysWithDataMax+'/'+TK.daysInMonth)+'</span>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+      +   rpKpi_('Điện phát TB đạt', (aKw!=null?aKw+'%':'—'), '#0d6e3f', 'so với thiết kế cả tháng')
+      +   rpKpi_('Giờ chạy TB đạt', (aHr!=null?aHr+'%':'—'), '#0d6e3f', 'so với thiết kế cả tháng')
+      +   rpKpi_('Máy dưới 90% chỉ tiêu', duoi.length+'/'+TK.rows.length, duoi.length?'#b91c1c':'#0d6e3f', '')
+      + '</div></div></div>';
+  }
+
+  h += '<div class="card" style="margin-top:12px;border-left:3px solid #0d6e3f"><div class="cb" style="padding:10px 12px">'
+    + '<b style="font-size:12px">Nhận xét tổng</b>'
+    + '<div style="font-size:12px;line-height:1.65;margin-top:6px">' + rpNhanXetTong_(d) + '</div>'
+    + '</div></div>';
+  return h;
+}
+
+/* Nhận xét tổng — DỰNG TỪ CHÍNH CÁC CON SỐ Ở TRÊN, không phải một đoạn văn mẫu.
+ * Mỗi câu chỉ xuất hiện khi con số làm nó đúng, nên tháng nào êm thì đoạn này ngắn lại
+ * chứ không nói bừa cho đủ chữ. Dùng chung cho cả web và Word. */
+function rpNhanXetTong_(d){
+  const c = [];
+  const T = d.thang, co = (T.totals||[]).filter(t => t.hasData);
+  const nang = d.khong.length + d.kem.length;
+
+  c.push('Trên <b>'+d.soMay+'</b> tổ máy đang theo dõi, mức đạt thiết kế trung bình của ngày đánh giá là <b>'
+    + (d.tbPctKw!=null ? d.tbPctKw+'%' : '—') + '</b>. '
+    + (nang
+        ? '<b>'+nang+'</b> máy đang dưới ngưỡng ('+d.khong.length+' không hiệu quả, '+d.kem.length+' kém hiệu quả)'
+          + (d.keoDai.length ? ', trong đó <b>'+d.keoDai.length+'</b> máy đã kém liên tiếp nhiều ngày — số này không còn là dao động, phải xuống trại kiểm tra.' : '.')
+        : 'Không máy nào dưới ngưỡng ở ngày đánh giá.'));
+
+  if (d.keoDai.length){
+    const x = d.keoDai[0];
+    c.push('Nặng nhất là <b>'+rpE_(x.code)+'</b>'+(x.site?' ('+rpE_(x.site)+')':'')+' — kém <b>'+x.streak
+      + '</b> ngày liên tiếp, ngày gần nhất chỉ đạt '+(x.pctKw!=null?Math.round(x.pctKw)+'%':'—')+' thiết kế.');
+  }
+
+  if (d.phapPhu.length){
+    const x = d.phapPhu[0];
+    c.push('<b>'+d.phapPhu.length+'</b> máy chạy không đều giữa các ngày (biến thiên vượt '+RP_CFG.DEU_CV_PCT+'%), '
+      + 'cao nhất là <b>'+rpE_(x.code)+'</b> ở mức '+x.cvKw+'%. '
+      + 'Sản lượng nhấp nhô thường không đến từ máy mà đến từ <i>nguồn khí</i> hoặc <i>tải</i> — '
+      + 'xem lại lượng khí về và lịch đóng tải trước khi mở máy ra.');
+  } else {
+    c.push('Các máy chạy đều giữa các ngày — không máy nào vượt ngưỡng biến thiên '+RP_CFG.DEU_CV_PCT+'%.');
+  }
+
+  if (co.length >= 2){
+    const cuoi = co[co.length-1], truoc = co[co.length-2];
+    const dl = cuoi.power - truoc.power;
+    const pct = truoc.power > 0 ? Math.round(dl/truoc.power*1000)/10 : null;
+    c.push('Tổng điện phát tháng <b>'+rpE_(cuoi.label)+'</b> đạt <b>'+rpN_(cuoi.power,0)+' kWh</b>, '
+      + (pct==null ? 'chưa so được với tháng trước.'
+         : (dl >= 0 ? 'tăng ' : 'giảm ') + '<b>'+rpN_(Math.abs(dl),0)+' kWh ('+rpPct_(pct)+')</b> so với tháng '
+           + rpE_(truoc.label) + '. '
+           + ((cuoi.top && cuoi.top.length)
+              ? 'Kéo lên chủ yếu do ' + rpE_(cuoi.top.slice(0,3).map(x=>x.code).join(', '))
+                + (cuoi.bottom && cuoi.bottom.length
+                   ? '; kéo xuống là ' + rpE_(cuoi.bottom.slice(0,3).map(x=>x.code).join(', ')) + '.' : '.')
+              : '')));
+    if (cuoi.devPct != null && Math.abs(cuoi.devPct) > MONTHLY_TREND_PCT){
+      c.push('Tháng này lệch <b>'+rpPct_(cuoi.devPct)+'</b> khỏi mức trung bình của cả chuỗi tháng — '
+        + (cuoi.devPct > 0
+            ? 'mức tăng này cần được xác nhận bằng chỉ số công tơ trước khi ghi nhận, tránh trường hợp một ô nhập nhầm đẩy cả tháng lên.'
+            : 'mức hụt này đủ lớn để rà lại từng máy trong nhóm giảm ở trên.'));
+    }
+  }
+
+  const TK = d.tongKet;
+  if (TK && TK.rows && TK.rows.length){
+    const v = TK.rows.map(r=>r.pctKwh).filter(x=>x!=null);
+    const aKw = v.length ? Math.round(v.reduce((p,q)=>p+q,0)/v.length) : null;
+    const duoi = TK.rows.filter(r => (r.pctKwh!=null && r.pctKwh<90) || (r.pctHr!=null && r.pctHr<90)).length;
+    c.push('Tính cả tháng '+rpE_(TK.monthLabel)+' '
+      + (TK.isComplete ? '(đã đủ ngày)' : '(mới đến ngày '+TK.daysWithDataMax+'/'+TK.daysInMonth+', số còn tạm)')
+      + ', điện phát trung bình đạt <b>'+(aKw!=null?aKw+'%':'—')+'</b> thiết kế, '
+      + '<b>'+duoi+'/'+TK.rows.length+'</b> máy dưới 90% chỉ tiêu.');
+  }
+
+  c.push('<b>Việc cần làm:</b> '
+    + (d.keoDai.length ? 'xuống trại '+rpE_(d.keoDai.slice(0,3).map(x=>x.code).join(', '))+' trong tuần này; ' : '')
+    + (d.phapPhu.length ? 'rà nguồn khí và lịch tải ở '+rpE_(d.phapPhu.slice(0,3).map(x=>x.code).join(', '))+'; ' : '')
+    + 'đối chiếu chỉ số công tơ của các máy lệch trước khi chốt số tháng.');
+
+  return c.map(s => '<p style="margin:0 0 6px 0">' + s + '</p>').join('');
+}
+
+/* Bảng chi tiết theo ngày của một máy — dùng ở phụ lục Word. Cột là NGÀY, hàng là
+ * điện phát / giờ chạy / % đạt, để nhìn ngang một hàng là thấy ngay chỗ tụt. */
+function rpBangNgay_(x){
+  const de = (x.dayEvals||[]);
+  if (!de.length) return '';
+  const cols = [{t:'Chỉ tiêu', w:'16%'}].concat(de.map(dv => ({ t:'N'+dv.day, a:'right' })));
+  const hang = (ten, f) => ({ c: ['<b>'+rpE_(ten)+'</b>'].concat(de.map(f)) });
+  return wTB_(cols, [
+    hang('Điện phát (kWh)', dv => dv.valKw!=null ? rpN_(dv.valKw,0) : '—'),
+    hang('% thiết kế',      dv => dv.pctKw!=null
+      ? (dv.pctKw < 50 ? '<b>'+Math.round(dv.pctKw)+'%</b>' : Math.round(dv.pctKw)+'%') : '—'),
+    hang('Giờ chạy (h)',    dv => dv.valHr!=null ? rpN_(dv.valHr,1) : '—'),
+    hang('So ngày trước',   dv => dv.dKw!=null ? rpPct_(Math.round(dv.dKw)) : '—'),
+  ], { sz:'10.0pt' });
+}
+
+function rpXuatHieuQua(){
+  const d = rpHieuQua_();
+  if (!d.soMay){ toast('Chưa có dữ liệu hiệu quả để xuất','err'); return; }
+  const BD = wDem_();               // đánh số biểu đồ liền mạch — xem wDem_
+  const T = d.thang, co = (T.totals||[]).filter(t => t.hasData);
+  const cuoi = co.length ? co[co.length-1] : null;
+  const truoc = co.length >= 2 ? co[co.length-2] : null;
+  const nang = d.khong.concat(d.kem).sort((a,b) => (a.pctKw ?? 999) - (b.pctKw ?? 999));
+  const nangNhat = d.keoDai[0] || nang[0] || null;
+
+  /* Khu vực nào tập trung nhiều máy có vấn đề — để câu WHERE nói được một địa chỉ
+   * thay vì "rải rác toàn hệ thống". */
+  const khuDem = {};
+  nang.concat(d.phapPhu).forEach(x => { const k = x.khu||'—'; khuDem[k] = (khuDem[k]||0)+1; });
+  const khuArr = Object.keys(khuDem).map(k => ({t:k, v:khuDem[k]})).sort((a,b)=>b.v-a.v);
+  const dauKhu = khuArr[0] || null;
+
+  let b = '';
+  b += wH_(1, 'I. Tóm tắt điều hành (5W1H)');
+  b += w5W1H_({
+    what: rpE_('Đánh giá hiệu quả vận hành ' + d.soMay + ' tổ máy: ' + d.khong.length + ' máy không hiệu quả, '
+        + d.kem.length + ' máy kém hiệu quả, ' + d.keoDai.length + ' máy kém kéo dài nhiều ngày liên tiếp, '
+        + d.phapPhu.length + ' máy chạy không đều giữa các ngày. Mức đạt thiết kế trung bình '
+        + (d.tbPctKw!=null ? d.tbPctKw + '%' : '—') + '.'),
+    why: rpE_((d.khong.length + d.kem.length)
+        ? 'Sản lượng hụt so với thiết kế làm giảm doanh thu theo kWh và kéo dài thời gian hoàn vốn của tổ máy. '
+          + (d.keoDai.length ? d.keoDai.length + ' máy đã kém liên tiếp nhiều ngày — không còn là dao động ngẫu nhiên mà là một hỏng hóc đang tồn tại.' : '')
+        : 'Toàn bộ tổ máy đạt ngưỡng ở ngày đánh giá — báo cáo này ghi nhận trạng thái tốt và theo dõi xu hướng giữa các tháng.'),
+    where: rpE_((dauKhu ? 'Tập trung ở khu vực ' + dauKhu.t + ' (' + dauKhu.v + ' máy có vấn đề). ' : '')
+        + (nangNhat ? 'Nặng nhất: ' + nangNhat.code + (nangNhat.site ? ' tại ' + nangNhat.site : '')
+            + (nangNhat.streak ? ' — kém ' + nangNhat.streak + ' ngày liên tiếp' : '')
+            + (nangNhat.pctKw != null ? ', ngày gần nhất đạt ' + Math.round(nangNhat.pctKw) + '% thiết kế' : '') + '.' : '')),
+    when: rpE_('Số liệu chụp lúc ' + RP.at + '. Đánh giá theo ngày lấy cửa sổ ' + EVAL_WINDOW_DAYS
+        + ' ngày gần nhất, ngày chốt là hôm qua (số hôm nay Smartgen chưa chốt xong). '
+        + (cuoi ? 'So sánh tháng lấy đến tháng ' + cuoi.label + '.' : '')),
+    who: rpE_('Người lập: ' + ((S.user && (S.user.name||S.user.login)) || '—')
+        + '. Thực hiện: kỹ thuật viên phụ trách từng trại; CSKH theo dõi và đôn đốc. '
+        + 'Phê duyệt phương án xử lý: phụ trách khối sản xuất.'),
+    how: rpE_('Xử lý theo thứ tự Mục III (thấp nhất lên trước). Máy kém kéo dài xuống trại kiểm tra trực tiếp. '
+        + 'Máy chạy không đều thì rà nguồn khí và lịch đóng tải trước, vì sản lượng nhấp nhô thường đến từ khí và tải '
+        + 'chứ không từ tổ máy. Số liệu tháng lệch nhiều phải đối chiếu chỉ số công tơ trước khi chốt.'),
+  });
+
+  /* ---- II. BỨC TRANH CHUNG (biểu đồ) ---- */
+  b += wH_(1, 'II. Bức tranh chung');
+  const dem = { ok:0, bad:0, ineffective:0 };
+  d.may.forEach(x => { dem[x.trangThai] = (dem[x.trangThai]||0) + 1; });
+  b += wChart_(BD('Phân bố tổ máy theo trạng thái ngày đánh giá'), [
+    { t:'Đạt',             v:dem.ok||0,           mau:'#0d6e3f' },
+    { t:'Kém hiệu quả',    v:dem.bad||0,          mau:'#b45309' },
+    { t:'Không hiệu quả',  v:dem.ineffective||0,  mau:'#7f1d1d' },
+  ]);
+  b += wNX_(rpE_((dem.bad||0)+(dem.ineffective||0)
+    ? ((dem.bad||0)+(dem.ineffective||0)) + '/' + d.soMay + ' tổ máy dưới ngưỡng ở ngày đánh giá, chiếm '
+      + Math.round(((dem.bad||0)+(dem.ineffective||0))/d.soMay*100) + '% đội máy. '
+      + (d.keoDai.length ? d.keoDai.length + ' máy trong số đó đã kém nhiều ngày liên tiếp — ưu tiên nhóm này trước.'
+                         : 'Chưa máy nào kém kéo dài, phần lớn là tụt một ngày và có thể tự phục hồi.')
+    : 'Toàn bộ ' + d.soMay + ' tổ máy đạt ngưỡng ở ngày đánh giá.'));
+
+  if (nang.length){
+    b += wChart_(BD(Math.min(nang.length, 12) + ' tổ máy đạt thấp nhất (% thiết kế, điện phát)'),
+      nang.slice(0,12).map(x => ({ t:x.code, v: x.pctKw!=null ? Math.round(x.pctKw) : 0,
+        nhan: (x.pctKw!=null?Math.round(x.pctKw):'—')+'%',
+        mau: x.trangThai==='ineffective' ? '#7f1d1d' : '#b45309' })));
+    b += wNX_(rpE_('Cột càng ngắn càng xa thiết kế. Nhóm màu sẫm là "không hiệu quả" — đã dưới mức nghiêm trọng, '
+      + 'phải xuống trại; nhóm màu cam là "kém hiệu quả" — theo dõi thêm một hai ngày, nếu không tự lên thì xếp cùng nhóm trên.'));
+  }
+
+  /* ---- III. MÁY KHÔNG HIỆU QUẢ / KÉM HIỆU QUẢ ---- */
+  b += wH_(1, 'III. Máy không hiệu quả và kém hiệu quả');
+  if (!nang.length){
+    b += wP_('<b>Không có máy nào dưới ngưỡng ở ngày đánh giá.</b>');
+  } else {
+    if (d.keoDai.length){
+      b += wH_(2, 'III.1. Kém kéo dài — phải xuống trại (' + d.keoDai.length + ' máy)');
+      b += wChart_(BD('Số ngày kém liên tiếp'),
+        d.keoDai.slice(0,12).map(x => ({ t:x.code, v:x.streak, nhan:x.streak+' ngày', mau:'#7f1d1d' })));
+      b += wNX_(rpE_('Chuỗi từ ' + STREAK_ALERT_DAYS + ' ngày trở lên nghĩa là máy đã kém qua nhiều ca trực khác nhau, '
+        + 'không phải một sự cố nhất thời. Máy đứng đầu biểu đồ này là máy phải đi đầu tiên.'));
+    }
+    b += wH_(2, 'III.2. Toàn bộ danh sách, xếp từ thấp nhất lên');
+    b += wTB_([{t:'TT',w:'4%',a:'center'},{t:'Mã máy',w:'10%'},{t:'Trang trại · Khu vực',w:'20%'},
+               {t:'Trạng thái',w:'12%'},{t:'Điện phát ngày',w:'13%',a:'right'},{t:'% Thiết kế',w:'9%',a:'right'},
+               {t:'Giờ chạy',w:'12%',a:'right'},{t:'Chuỗi',w:'8%',a:'right'},{t:'Ngày tệ nhất',w:'12%'}],
+      nang.map((x,i) => ({
+        _bg: x.trangThai==='ineffective' ? '#fbe3e3' : '#fdf6e7',
+        c: [String(i+1), '<b>'+rpE_(x.code)+'</b>',
+            rpE_(x.site||'—') + (x.khu ? '<br><i>'+rpE_(x.khu)+'</i>' : ''),
+            x.trangThai==='ineffective' ? '<b>Không hiệu quả</b>' : 'Kém hiệu quả',
+            rpN_(x.actualKw)+' / '+rpN_(x.designKw),
+            x.pctKw!=null ? '<b>'+Math.round(x.pctKw)+'%</b>' : '—',
+            rpN_(x.actualHr)+' / '+rpN_(x.designHr)+' h',
+            x.streak ? '<b>'+x.streak+'</b>' : '—',
+            x.teNhat ? ('N'+x.teNhat.day+' — '+Math.round(x.teNhat.pct)+'%') : '—'],
+      })));
+  }
+
+  /* ---- IV. CHẠY KHÔNG ĐỀU ---- */
+  b += wH_(1, 'IV. Thông số hoạt động giữa các ngày không đều');
+  b += wP_('Độ đều đo bằng <b>hệ số biến thiên</b> = độ lệch chuẩn ÷ trung bình của dãy điện phát theo ngày. '
+    + 'Chia cho trung bình nên máy công suất lớn và máy công suất nhỏ so được với nhau: một máy 300 kVA dao động '
+    + '200 kWh quanh mức 6.000 kWh là bình thường, còn máy 100 kVA dao động 200 kWh quanh mức 800 kWh là chạy phập phù. '
+    + 'Ngưỡng cảnh báo: <b>' + RP_CFG.DEU_CV_PCT + '%</b>. Ngày không có số liệu bị bỏ qua, không tính là 0.');
+  if (!d.phapPhu.length){
+    b += wP_('<b>Không máy nào vượt ngưỡng</b> — sản lượng giữa các ngày ổn định trên toàn đội máy.');
+  } else {
+    b += wChart_(BD('Hệ số biến thiên điện phát theo ngày'),
+      d.phapPhu.slice(0,12).map(x => ({ t:x.code, v:x.cvKw, nhan:x.cvKw+'%', mau:'#6d28d9' })));
+    b += wNX_(rpE_(d.phapPhu.length + ' máy chạy không đều, cao nhất ' + d.phapPhu[0].code + ' ở mức '
+      + d.phapPhu[0].cvKw + '%. Sản lượng nhấp nhô hiếm khi đến từ bản thân tổ máy — nguyên nhân thường gặp theo thứ tự: '
+      + 'lượng khí về hồ không đều, lịch đóng/cắt tải thay đổi, rồi mới đến sự cố thiết bị. '
+      + 'Rà hai nguyên nhân đầu trước khi mở máy ra kiểm tra.'));
+    b += wTB_([{t:'TT',w:'5%',a:'center'},{t:'Mã máy',w:'11%'},{t:'Trang trại',w:'24%'},
+               {t:'Biến thiên điện',w:'13%',a:'right'},{t:'Biến thiên giờ',w:'13%',a:'right'},
+               {t:'TB điện/ngày',w:'13%',a:'right'},{t:'Số ngày có số',w:'10%',a:'right'},{t:'Ngày tệ nhất',w:'11%'}],
+      d.phapPhu.map((x,i) => ({ _bg:'#f3eefc',
+        c:[String(i+1), '<b>'+rpE_(x.code)+'</b>', rpE_(x.site||'—'),
+           '<b>'+x.cvKw+'%</b>', x.cvHr!=null?x.cvHr+'%':'—', rpN_(x.tbKw,0)+' kWh',
+           String(x.soNgayKw), x.teNhat ? ('N'+x.teNhat.day+' — '+Math.round(x.teNhat.pct)+'%') : '—'] })));
+  }
+
+  /* ---- V. SO SÁNH GIỮA CÁC THÁNG ---- */
+  b += wH_(1, 'V. So sánh giữa các tháng');
+  if (co.length < 2){
+    b += wP_('Chưa đủ hai tháng có số liệu để so sánh (bảng Tổng kết hiệu quả tháng — Sheet 9).');
+  } else {
+    b += wChart_(BD('Tổng điện phát toàn hệ thống theo tháng (kWh)'),
+      co.map(t => ({ t:t.label, v:t.power, nhan:rpN_(t.power,0),
+        mau: (t.devPct!=null && t.devPct < -MONTHLY_TREND_PCT) ? '#b91c1c'
+           : ((t.devPct!=null && t.devPct > MONTHLY_TREND_PCT) ? '#0d6e3f' : '#64748b') })));
+    const dl = (cuoi && truoc) ? cuoi.power - truoc.power : null;
+    const pct = (truoc && truoc.power > 0 && dl != null) ? Math.round(dl/truoc.power*1000)/10 : null;
+    b += wNX_(rpE_('Tháng ' + cuoi.label + ' đạt ' + rpN_(cuoi.power,0) + ' kWh, '
+      + (pct==null ? 'chưa so được với tháng liền trước. '
+         : (dl>=0?'tăng ':'giảm ') + rpN_(Math.abs(dl),0) + ' kWh (' + rpPct_(pct) + ') so với tháng ' + truoc.label + '. ')
+      + (T.mean != null ? 'Mức trung bình của cả chuỗi tháng là ' + rpN_(T.mean,0) + ' kWh; '
+          + 'cột màu đỏ là tháng hụt quá ' + MONTHLY_TREND_PCT + '% so với mức đó, cột màu xanh là tháng vượt.' : '')));
+
+    if ((cuoi.top||[]).length || (cuoi.bottom||[]).length){
+      /* Dấu lấy từ chính giá trị, không dán sẵn: danh sách "tăng" đã được lọc chỉ còn số
+       * dương, nhưng dán cứng dấu "+" thì ngày nào bộ lọc hỏng là báo cáo in ra "+-7.000"
+       * — một con số vô nghĩa mà vẫn trông như thật. */
+      if ((cuoi.top||[]).length)
+        b += wChart_(BD('Máy tăng mạnh nhất, ' + cuoi.label + ' so ' + (cuoi.prevLabel||'—') + ' (kWh)'),
+          cuoi.top.map(x => ({ t:x.code, v:x.delta, nhan:'+'+rpN_(x.delta,0), mau:'#0d6e3f' })));
+      else
+        b += wP_('<i>Không máy nào tăng so với tháng ' + rpE_(cuoi.prevLabel||'trước') + '.</i>');
+      if ((cuoi.bottom||[]).length)
+        b += wChart_(BD('Máy giảm mạnh nhất (kWh)'),
+          cuoi.bottom.map(x => ({ t:x.code, v:Math.abs(x.delta), nhan:rpN_(x.delta,0), mau:'#b91c1c' })));
+      else
+        b += wP_('<i>Không máy nào giảm so với tháng ' + rpE_(cuoi.prevLabel||'trước') + '.</i>');
+      b += wNX_(rpE_('Hai biểu đồ này trả lời câu "tháng này lệch là do máy nào". '
+        + 'Nhóm giảm cần được đối chiếu với danh sách kém hiệu quả ở Mục III — nếu một máy có mặt ở cả hai nơi '
+        + 'thì nguyên nhân đã rõ và việc phải làm cũng đã rõ. Máy chỉ giảm ở đây mà vẫn đạt ở Mục III thì '
+        + 'thường là do trại giảm tải hoặc dừng máy có kế hoạch, không phải hỏng.'));
+    }
+  }
+
+  /* ---- VI. TỔNG KẾT THÁNG ---- */
+  b += wH_(1, 'VI. Tổng kết tháng');
+  const TK = d.tongKet;
+  if (!TK || !TK.rows || !TK.rows.length){
+    b += wP_('Chưa tính được tổng kết tháng — thiếu dữ liệu ngày ở Sheet 5.');
+  } else {
+    const v = TK.rows.map(r=>r.pctKwh).filter(x=>x!=null);
+    const aKw = v.length ? Math.round(v.reduce((p,q)=>p+q,0)/v.length) : null;
+    const vh = TK.rows.map(r=>r.pctHr).filter(x=>x!=null);
+    const aHr = vh.length ? Math.round(vh.reduce((p,q)=>p+q,0)/vh.length) : null;
+    const duoi = TK.rows.filter(r => (r.pctKwh!=null && r.pctKwh<90) || (r.pctHr!=null && r.pctHr<90))
+                        .sort((a,b) => (a.pctKwh ?? 999) - (b.pctKwh ?? 999));
+    b += wP_('Tháng <b>' + rpE_(TK.monthLabel) + '</b> — '
+      + (TK.isComplete ? 'đã đủ ' + TK.daysInMonth + ' ngày, số liệu chính thức.'
+         : 'mới có số đến ngày ' + TK.daysWithDataMax + '/' + TK.daysInMonth + ', các tỉ lệ dưới đây là tạm tính.'));
+    b += wChart_(BD('Mức đạt thiết kế cả tháng'), [
+      { t:'Điện phát', v:aKw||0, nhan:(aKw!=null?aKw+'%':'—'), mau:'#0d6e3f' },
+      { t:'Giờ chạy',  v:aHr||0, nhan:(aHr!=null?aHr+'%':'—'), mau:'#0f766e' },
+    ]);
+    if (duoi.length){
+      b += wChart_(BD(Math.min(duoi.length,12) + ' máy thấp nhất so chỉ tiêu tháng (% điện phát)'),
+        duoi.slice(0,12).map(r => ({ t:r.code, v:r.pctKwh||0, nhan:(r.pctKwh!=null?r.pctKwh+'%':'—'),
+          mau: (r.pctKwh!=null && r.pctKwh<70) ? '#7f1d1d' : '#b45309' })));
+    }
+    b += wNX_(rpE_('Cả tháng đạt ' + (aKw!=null?aKw+'%':'—') + ' thiết kế về điện phát và '
+      + (aHr!=null?aHr+'%':'—') + ' về giờ chạy, ' + duoi.length + '/' + TK.rows.length + ' máy dưới 90% chỉ tiêu. '
+      + ((aKw!=null && aHr!=null && aHr - aKw >= 10)
+          ? 'Giờ chạy đạt cao hơn hẳn điện phát — máy vẫn nổ đủ giờ nhưng phát ra ít: dấu hiệu của tải thấp hoặc khí yếu, không phải máy hỏng.'
+          : ((aKw!=null && aHr!=null && aKw - aHr >= 10)
+             ? 'Điện phát đạt cao hơn giờ chạy — máy chạy ít giờ nhưng đầy tải, dư địa nằm ở việc kéo dài thời gian chạy.'
+             : 'Hai chỉ tiêu đi cùng nhau — mức đạt phản ánh đúng thời lượng chạy thực tế.'))));
+  }
+
+  /* ---- VII. NHẬN XÉT TỔNG ---- */
+  b += wH_(1, 'VII. Nhận xét tổng và kiến nghị');
+  b += wP_(rpNhanXetTong_(d).replace(/<p style="margin:0 0 6px 0">/g, '').replace(/<\/p>/g, '<br><br>'));
+
+  /* ---- VIII. PHỤ LỤC — BẢNG DỮ LIỆU ---- */
+  b += wH_(1, 'VIII. Phụ lục — bảng dữ liệu');
+  b += wH_(2, 'Phụ lục A. Toàn bộ tổ máy — ngày đánh giá');
+  b += wTB_([{t:'TT',w:'4%',a:'center'},{t:'Mã máy',w:'10%'},{t:'Loại hình',w:'8%'},
+             {t:'Trang trại · Khu vực',w:'20%'},{t:'Điện TK',w:'8%',a:'right'},{t:'Điện TT',w:'8%',a:'right'},
+             {t:'%',w:'6%',a:'right'},{t:'Giờ TK',w:'7%',a:'right'},{t:'Giờ TT',w:'7%',a:'right'},
+             {t:'%',w:'6%',a:'right'},{t:'Biến thiên',w:'8%',a:'right'},{t:'Trạng thái',w:'8%'}],
+    d.may.slice().sort((a,b) => (a.pctKw ?? 999) - (b.pctKw ?? 999)).map((x,i) => ({
+      _bg: x.trangThai==='ineffective' ? '#fbe3e3' : (x.trangThai==='bad' ? '#fdf6e7' : (i%2?'#f5f7f6':'#ffffff')),
+      c: [String(i+1), '<b>'+rpE_(x.code)+'</b>', rpE_(x.loaiHinh||'—'),
+          rpE_(x.site||'—') + (x.khu ? '<br><i>'+rpE_(x.khu)+'</i>' : ''),
+          rpN_(x.designKw,0), rpN_(x.actualKw,0), x.pctKw!=null?Math.round(x.pctKw)+'%':'—',
+          rpN_(x.designHr,1), rpN_(x.actualHr,1), x.pctHr!=null?Math.round(x.pctHr)+'%':'—',
+          x.cvKw!=null ? (x.khongDeu?'<b>'+x.cvKw+'%</b>':x.cvKw+'%') : '—',
+          x.trangThai==='ineffective'?'Không HQ':(x.trangThai==='bad'?'Kém HQ':'Đạt')],
+    })), { sz:'10.0pt' });
+
+  /* Chi tiết theo ngày CHỈ cho những máy phải xuống trại. In cả 79 máy × 7 ngày là
+   * 20 trang mà không ai đọc; in đúng nhóm phải xử lý thì phụ lục này còn được mở ra. */
+  const chiTiet = d.keoDai.slice(0, 8);
+  if (chiTiet.length){
+    b += wH_(2, 'Phụ lục B. Diễn biến theo ngày — nhóm máy phải xuống trại');
+    chiTiet.forEach(x => {
+      const bang = rpBangNgay_(x);
+      if (!bang) return;
+      b += wP_('<b>' + rpE_(x.code) + '</b>' + (x.site ? ' — ' + rpE_(x.site) : '')
+        + ' · thiết kế ' + rpN_(x.designKw,0) + ' kWh/ngày, ' + rpN_(x.designHr,1) + ' h/ngày'
+        + ' · kém ' + x.streak + ' ngày liên tiếp', 'margin-top:8pt');
+      b += bang;
+    });
+  }
+
+  if (co.length){
+    b += wH_(2, 'Phụ lục C. Tổng hợp theo tháng');
+    b += wTB_([{t:'Tháng',w:'14%'},{t:'Tổng điện phát (kWh)',w:'20%',a:'right'},
+               {t:'Tổng giờ chạy (h)',w:'18%',a:'right'},{t:'Công suất phát TB (kW)',w:'18%',a:'right'},
+               {t:'Số máy có số',w:'12%',a:'right'},{t:'Lệch so TB chuỗi',w:'18%',a:'right'}],
+      co.map(t => ({
+        _bg: (t.devPct!=null && Math.abs(t.devPct) > MONTHLY_TREND_PCT)
+             ? (t.devPct > 0 ? '#eaf5ef' : '#fdecec') : '#ffffff',
+        c: ['<b>'+rpE_(t.label)+'</b>', rpN_(t.power,0), rpN_(t.hours,0),
+            t.hours > 0 ? rpN_(t.power/t.hours,2) : '—', String(t.n),
+            t.devPct!=null ? rpPct_(t.devPct) : '—'],
+      })));
+  }
+
+  wXuat_('BaoCao-HieuQuaVanHanh', 'BÁO CÁO HIỆU QUẢ VẬN HÀNH & TỔNG KẾT THÁNG',
+    'Phân tích hiệu quả, độ đều giữa các ngày và so sánh giữa các tháng · số liệu lúc ' + RP.at, b);
+}
+
+/* ---------------------------------------------------------------------------
+ *  TAB 3 · CHI PHÍ VẬT TƯ
+ * ------------------------------------------------------------------------- */
+/** Danh sách 12 tháng gần nhất cho ô chọn tháng. */
+function rpDsThang_(){
+  const out = [], d = new Date();
+  for (let i = 0; i < 12; i++){
+    const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    out.push(('0'+(x.getMonth()+1)).slice(-2) + '/' + x.getFullYear());
+  }
+  return out;
+}
+
+function rpViewChiPhi_(){
+  const thang = RP.cpThang || rpThangMacDinh_();
+  let h = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
+    + '<label style="font-size:12px;color:var(--mu)">Tháng</label>'
+    + '<select class="sel" style="width:auto" onchange="rpDoiThang(this.value)">'
+    +   rpDsThang_().map(m => '<option value="'+m+'"'+(m===thang?' selected':'')+'>'+m+'</option>').join('')
+    + '</select>';
+
+  if (RP.cpDangTai) return h + '</div><div class="empty">Đang tính chi phí tháng '+rpE_(thang)+'…</div>';
+  if (!RP.cp)       return h + '</div><div class="empty">Chưa tải dữ liệu chi phí.</div>';
+  if (!RP.cp.ok)    return h + '</div><div class="empty">Không đọc được chi phí: '+rpE_(RP.cp.error||'')+'</div>';
+
+  const d = rpChiPhi_();
+  const cp = d.cp;
+  h += '<button class="btn bg-b" onclick="rpXuatChiPhi()">📄 Xuất báo cáo Word — Chi phí vật tư</button></div>';
+
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    + rpKpi_('Tổng chi phí vật tư', rpN_(cp.totalCost,0)+' đ', '#0d6e3f', 'tháng '+rpE_(cp.monthLabel))
+    + rpKpi_('Tổng kWh', rpN_(cp.totalKwh,0), '#0f766e', '')
+    + rpKpi_('Chi phí bình quân', (cp.totalKwh>0 ? rpN_(cp.totalCost/cp.totalKwh,2)+' đ/kWh' : '—'), '#334155', '')
+    + rpKpi_('Tồn SL cao bất thường', d.tonCaoSl.length, '#b45309', '>'+RP_CFG.TON_CAO_PCT+'% TB dòng máy')
+    + rpKpi_('Tồn giá trị cao', d.tonCaoGt.length, '#b45309', '>'+RP_CFG.TON_CAO_PCT+'% TB dòng máy')
+    + rpKpi_('đ/kWh vượt TB', d.kwhCao.length, '#b91c1c', '>'+(cp.deviationPct||30)+'% TB dòng máy')
+    + rpKpi_('Cao hơn tháng trước', d.momCao.length, '#7f1d1d', cp.prevMonthLabel ? 'so '+rpE_(cp.prevMonthLabel) : 'chưa có tháng trước')
+    + '</div>';
+
+  /* --- (c) đ/kWh vượt trung bình — đặt lên đầu vì đây là chi phí THẬT đang chảy ra --- */
+  h += rpBangCP_('Chi phí vật tư trên mỗi kWh cao hơn trung bình dòng máy', '#b91c1c',
+    d.kwhCao, 'devPct', [
+      { t:'đ/kWh',        f:r => rpN_(r.costPerKwh,2), a:'right', b:true },
+      { t:'TB dòng máy',  f:r => rpN_(r.modelAvg,2),   a:'right' },
+      { t:'Vượt',         f:r => rpPct_(r.devPct),     a:'right', b:true },
+      { t:'Chi phí tháng',f:r => rpN_(r.cost,0)+' đ',  a:'right' },
+      { t:'kWh',          f:r => rpN_(r.kwh,0),        a:'right' },
+    ], 'Không máy nào vượt trung bình dòng máy quá '+(cp.deviationPct||30)+'%.');
+
+  /* --- (d) tháng này cao hơn tháng trước --- */
+  h += rpBangCP_('Tháng này tiêu hao cao hơn tháng trước'
+      + (cp.prevMonthLabel ? ' ('+cp.prevMonthLabel+')' : ''), '#7f1d1d',
+    d.momCao, 'momPct', [
+      { t:'đ/kWh tháng này',  f:r => rpN_(r.costPerKwh,2), a:'right', b:true },
+      { t:'đ/kWh tháng trước',f:r => rpN_(r.prevPerKwh,2), a:'right' },
+      { t:'Tăng',             f:r => rpPct_(r.momPct),     a:'right', b:true },
+      { t:'Chi phí tháng này',f:r => rpN_(r.cost,0)+' đ',  a:'right' },
+      { t:'Tháng trước',      f:r => rpN_(r.prevCost,0)+' đ', a:'right' },
+    ], cp.prevMonthLabel ? 'Không máy nào tăng quá '+RP_CFG.MOM_PCT+'% so tháng trước.'
+                         : 'Chưa có số liệu tháng trước để so sánh.');
+
+  /* --- (a)(b) tồn kho cao hơn trung bình --- */
+  h += rpBangTon_('Tồn kho SỐ LƯỢNG cao hơn trung bình dòng máy', '#b45309', d.tonCaoSl, 'sl');
+  h += rpBangTon_('Tồn kho GIÁ TRỊ cao hơn trung bình dòng máy', '#b45309', d.tonCaoGt, 'gt');
+  return h;
+}
+
+/** Bảng chi phí dùng chung cho hai nhóm (c) và (d) — cùng bố cục, chỉ khác cột giữa. */
+function rpBangCP_(tieuDe, mau, list, khoa, cot, rong){
+  let h = '<div class="card" style="margin-top:12px;border-left:3px solid '+mau+'"><div class="cb" style="padding:10px 12px">'
+    + '<b style="font-size:12px;color:'+mau+'">'+rpE_(tieuDe)+'</b>'
+    + '<span style="font-size:11px;color:var(--mu)"> — '+list.length+' máy, xếp từ cao xuống thấp</span>';
+  if (!list.length) return h + '<div class="empty" style="padding:12px 0">'+rpE_(rong)+'</div></div></div>';
+  h += '<div style="margin-top:8px">'
+    + rpBar_(list.slice(0,12).map(r => ({ t:r.code, v:Math.abs(r[khoa]), nhan:rpPct_(r[khoa]) })), mau)
+    + '</div>';
+  h += '<div class="tw" style="margin-top:8px;max-height:340px"><table><thead><tr>'
+    + '<th>Mã máy</th><th>Trang trại</th>'
+    + cot.map(c => '<th style="text-align:'+(c.a||'left')+'">'+rpE_(c.t)+'</th>').join('')
+    + '<th>Khoản nào đẩy chỉ số lên</th></tr></thead><tbody>'
+    + list.slice(0,50).map(r => '<tr>'
+      + '<td><span class="mm">'+rpE_(r.code)+'</span></td>'
+      + '<td style="font-size:11px">'+rpE_(r.site||'—')+'</td>'
+      + cot.map(c => '<td style="text-align:'+(c.a||'left')+';font-family:var(--mono)'
+          + (c.b?';font-weight:600;color:'+mau:'')+'">'+c.f(r)+'</td>').join('')
+      + '<td style="font-size:11px">'+rpE_(r.viSao||'—')
+      +   (r.coBu ? ' <span class="b ba">có bù kiểm kê</span>' : '')+'</td>'
+      + '</tr>').join('')
+    + '</tbody></table></div>';
+  if (list.length > 50)
+    h += '<div style="font-size:11px;color:var(--mu);margin-top:4px">… và '+(list.length-50)+' máy nữa — xem đầy đủ trong file Word.</div>';
+  return h + '</div></div>';
+}
+
+/** Bảng tồn kho — chung cho (a) số lượng và (b) giá trị. */
+function rpBangTon_(tieuDe, mau, list, kieu){
+  const laSl = kieu === 'sl';
+  let h = '<div class="card" style="margin-top:12px;border-left:3px solid '+mau+'"><div class="cb" style="padding:10px 12px">'
+    + '<b style="font-size:12px;color:'+mau+'">'+rpE_(tieuDe)+'</b>'
+    + '<span style="font-size:11px;color:var(--mu)"> — '+list.length+' máy</span>';
+  if (!list.length) return h + '<div class="empty" style="padding:12px 0">Không máy nào vượt trung bình dòng máy quá '
+    + RP_CFG.TON_CAO_PCT + '%.</div></div></div>';
+  const khoa = laSl ? 'devSl' : 'devGt';
+  h += '<div style="margin-top:8px">'
+    + rpBar_(list.slice(0,12).map(r => ({ t:r.code, v:Math.abs(r[khoa]), nhan:rpPct_(r[khoa]) })), mau)
+    + '</div>'
+    + '<div class="tw" style="margin-top:8px;max-height:300px"><table><thead><tr>'
+    + '<th>Mã máy</th><th>Dòng máy</th><th>Trang trại</th>'
+    + '<th style="text-align:right">'+(laSl?'Tồn (SL)':'Giá trị tồn (đ)')+'</th>'
+    + '<th style="text-align:right">TB dòng máy</th><th style="text-align:right">Vượt</th>'
+    + '<th>Khoản nào chiếm nhiều nhất</th></tr></thead><tbody>'
+    + list.slice(0,50).map(r => '<tr>'
+      + '<td><span class="mm">'+rpE_(r.code)+'</span></td>'
+      + '<td style="font-size:11px">'+rpE_(r.model)+'</td>'
+      + '<td style="font-size:11px">'+rpE_(r.site||'—')+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono);font-weight:600">'
+      +   (laSl ? rpN_(r.sl) : rpN_(r.giaTri,0))+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'+(laSl ? rpN_(r.tbSl) : rpN_(r.tbGt,0))+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono);font-weight:600;color:'+mau+'">'+rpPct_(r[khoa])+'</td>'
+      + '<td style="font-size:11px">'+rpE_(r.viSao||'—')+'</td>'
+      + '</tr>').join('')
+    + '</tbody></table></div>';
+  return h + '</div></div>';
+}
+
+function rpDoiThang(m){
+  RP.cp = null; RP.cpThang = m;
+  rpTaiChiPhi(m);
+}
+
+function rpXuatChiPhi(){
+  if (!RP.cp || !RP.cp.ok){ toast('Chưa có dữ liệu chi phí để xuất','err'); return; }
+  const d = rpChiPhi_(), cp = d.cp;
+  const BD = wDem_();               // đánh số biểu đồ liền mạch — xem wDem_
+  const tbChung = cp.totalKwh > 0 ? cp.totalCost / cp.totalKwh : null;
+  const dauKwh = d.kwhCao[0] || null, dauMom = d.momCao[0] || null;
+  const dauTon = d.tonCaoGt[0] || null;
+  const soBu = d.cpRows.filter(r => r.coBu).length;
+
+  let b = '';
+  b += wH_(1, 'I. Tóm tắt điều hành (5W1H)');
+  b += w5W1H_({
+    what: rpE_('Phân tích chi phí vật tư tháng ' + cp.monthLabel + ': tổng ' + rpN_(cp.totalCost,0) + ' đ cho '
+        + rpN_(cp.totalKwh,0) + ' kWh, bình quân ' + (tbChung!=null ? rpN_(tbChung,2) : '—') + ' đ/kWh. '
+        + d.kwhCao.length + ' máy có đ/kWh vượt trung bình dòng máy, ' + d.momCao.length + ' máy cao hơn tháng trước, '
+        + d.tonCaoSl.length + ' máy tồn số lượng cao bất thường, ' + d.tonCaoGt.length + ' máy tồn giá trị cao bất thường.'),
+    why: rpE_('Chi phí vật tư là khoản chi lớn nhất có thể điều chỉnh được trong vận hành máy phát biogas. '
+        + 'Một máy vượt trung bình dòng máy của chính nó nghĩa là có thứ khác thường — tiêu hao thật cao hơn, '
+        + 'hoặc phiếu xuất ghi nhầm máy, hoặc vật tư mang đi nơi khác mà ghi là sử dụng. '
+        + 'Cả ba khả năng đều phải kiểm tra, và bảng dưới đây chỉ đúng khoản cần mở ra xem.'),
+    where: rpE_((dauKwh ? 'Cao nhất về đ/kWh: ' + dauKwh.code + (dauKwh.site ? ' (' + dauKwh.site + ')' : '')
+            + ' — ' + rpN_(dauKwh.costPerKwh,2) + ' đ/kWh, vượt ' + rpPct_(dauKwh.devPct) + ' trung bình dòng '
+            + dauKwh.model + '. ' : '')
+        + (dauMom ? 'Tăng mạnh nhất so tháng trước: ' + dauMom.code + ' ' + rpPct_(dauMom.momPct) + '. ' : '')
+        + (dauTon ? 'Tồn giá trị cao nhất: ' + dauTon.code + ' — ' + rpN_(dauTon.giaTri,0) + ' đ, vượt '
+            + rpPct_(dauTon.devGt) + ' trung bình dòng máy.' : '')),
+    when: rpE_('Kỳ số liệu: tháng ' + cp.monthLabel
+        + (cp.prevMonthLabel ? ', so sánh với tháng ' + cp.prevMonthLabel : '')
+        + '. Số liệu chụp lúc ' + RP.at + '.'),
+    who: rpE_('Người lập: ' + ((S.user && (S.user.name||S.user.login)) || '—')
+        + '. Đối chiếu phiếu: CSKH phụ trách vật tư. Giải trình tiêu hao: kỹ thuật viên phụ trách trại. '
+        + 'Duyệt điều chỉnh định mức (nếu cần): phụ trách khối sản xuất.'),
+    how: rpE_('Đi từ trên xuống theo thứ tự trong từng bảng. Với mỗi máy, đọc cột '
+        + '«Khoản nào đẩy chỉ số lên» để biết mở phiếu nào ra xem — không phải rà cả sổ. '
+        + (soBu ? soBu + ' máy có phần chi phí đến từ BÙ KIỂM KÊ: đó là chênh lệch phát hiện khi đếm kho thực tế, '
+            + 'không phải phiếu xuất thường ngày, nên xử lý khác — xem lại định mức trừ tự động chứ không truy phiếu. ' : '')
+        + 'Máy nào vượt mà không giải thích được bằng khoản nào cụ thể thì kiểm tra lại việc ghi mã máy trên phiếu xuất.'),
+  });
+
+  /* ---- II. đ/kWh vượt trung bình ---- */
+  b += wH_(1, 'II. Máy có chi phí vật tư trên mỗi kWh cao hơn trung bình');
+  b += wP_('So với <b>trung bình cùng dòng máy</b>, không phải trung bình toàn hệ thống: một tổ máy 300 kVA '
+    + 'đương nhiên tốn hơn tổ 100 kVA, xếp chung một bảng thì bảng đó chỉ nói lại thứ tự công suất. '
+    + 'Ngưỡng nêu tên: vượt quá <b>' + (cp.deviationPct||30) + '%</b> trung bình dòng máy.');
+  if (!d.kwhCao.length){
+    b += wP_('<b>Không máy nào vượt ngưỡng.</b> Chi phí trên mỗi kWh của toàn đội máy nằm trong khoảng bình thường của từng dòng máy.');
+  } else {
+    b += wChart_(BD('Mức vượt trung bình dòng máy (%)'),
+      d.kwhCao.slice(0,12).map(r => ({ t:r.code, v:r.devPct, nhan:rpPct_(r.devPct), mau:'#b91c1c' })));
+    b += wTB_([{t:'TT',w:'4%',a:'center'},{t:'Mã máy',w:'9%'},{t:'Dòng',w:'8%'},{t:'Trang trại',w:'16%'},
+               {t:'đ/kWh',w:'8%',a:'right'},{t:'TB dòng',w:'8%',a:'right'},{t:'Vượt',w:'7%',a:'right'},
+               {t:'Chi phí (đ)',w:'11%',a:'right'},{t:'kWh',w:'8%',a:'right'},{t:'Khoản nào đẩy lên',w:'21%'}],
+      d.kwhCao.map((r,i) => ({ _bg: i < 3 ? '#fbe3e3' : '#fdecec',
+        c:[String(i+1), '<b>'+rpE_(r.code)+'</b>', rpE_(r.model), rpE_(r.site||'—'),
+           '<b>'+rpN_(r.costPerKwh,2)+'</b>', rpN_(r.modelAvg,2), '<b>'+rpPct_(r.devPct)+'</b>',
+           rpN_(r.cost,0), rpN_(r.kwh,0),
+           rpE_(r.viSao||'—') + (r.coBu ? ' <b>[có bù kiểm kê]</b>' : '')] })), { sz:'10.5pt' });
+    b += wNX_(rpE_(d.kwhCao.length + ' máy vượt ngưỡng, dẫn đầu là ' + d.kwhCao[0].code + ' ở '
+      + rpN_(d.kwhCao[0].costPerKwh,2) + ' đ/kWh (' + rpPct_(d.kwhCao[0].devPct) + ' so trung bình dòng '
+      + d.kwhCao[0].model + '). ' + (d.kwhCao[0].viSao ? 'Khoản đẩy lên: ' + d.kwhCao[0].viSao + '. ' : '')
+      + 'Cột cuối cùng là chỗ phải mở ra xem đầu tiên — nó đã chỉ đích danh vật tư và số tiền, '
+      + 'không cần rà lại sổ nhật ký nhập xuất.'));
+  }
+
+  /* ---- III. Cao hơn tháng trước ---- */
+  b += wH_(1, 'III. Máy tháng này tiêu hao cao hơn tháng trước');
+  if (!cp.prevMonthLabel){
+    b += wP_('Chưa có số liệu tháng liền trước để so sánh.');
+  } else if (!d.momCao.length){
+    b += wP_('<b>Không máy nào tăng quá ' + RP_CFG.MOM_PCT + '%</b> so với tháng ' + rpE_(cp.prevMonthLabel) + '.');
+  } else {
+    b += wChart_(BD('Mức tăng đ/kWh so tháng ' + cp.prevMonthLabel + ' (%)'),
+      d.momCao.slice(0,12).map(r => ({ t:r.code, v:r.momPct, nhan:rpPct_(r.momPct), mau:'#7f1d1d' })));
+    b += wTB_([{t:'TT',w:'4%',a:'center'},{t:'Mã máy',w:'9%'},{t:'Trang trại',w:'17%'},
+               {t:'đ/kWh tháng này',w:'11%',a:'right'},{t:'đ/kWh tháng trước',w:'11%',a:'right'},
+               {t:'Tăng',w:'7%',a:'right'},{t:'Chi phí tháng này',w:'11%',a:'right'},
+               {t:'Tháng trước',w:'10%',a:'right'},{t:'Khoản nào đẩy lên',w:'20%'}],
+      d.momCao.map((r,i) => ({ _bg: i < 3 ? '#fbe3e3' : '#fdecec',
+        c:[String(i+1), '<b>'+rpE_(r.code)+'</b>', rpE_(r.site||'—'),
+           '<b>'+rpN_(r.costPerKwh,2)+'</b>', rpN_(r.prevPerKwh,2), '<b>'+rpPct_(r.momPct)+'</b>',
+           rpN_(r.cost,0), rpN_(r.prevCost,0),
+           rpE_(r.viSao||'—') + (r.coBu ? ' <b>[có bù kiểm kê]</b>' : '')] })), { sz:'10.5pt' });
+    b += wNX_(rpE_('Tăng so tháng trước không đồng nghĩa với lãng phí: một lần thay lọc lớn rơi đúng vào tháng này '
+      + 'cũng đẩy đ/kWh lên, và tháng sau sẽ tự hạ. Cách phân biệt nằm ở cột cuối — nếu khoản đẩy lên là một vật tư '
+      + 'có chu kỳ dài (lọc, bugi) thì đó là chu kỳ; nếu là nhớt hoặc nước làm mát thì đó là tiêu hao thật và phải giải trình. '
+      + (soBu ? 'Riêng phần ghi «có bù kiểm kê» là chênh lệch phát hiện khi đếm kho — việc phải làm là xem lại định mức trừ tự động.' : '')));
+  }
+
+  /* ---- IV. Tồn kho cao hơn trung bình ---- */
+  b += wH_(1, 'IV. Máy tồn vật tư cao hơn trung bình dòng máy');
+  b += wP_('Tồn cao không phải lúc nào cũng xấu — trại xa thì trữ nhiều là đúng. Nhưng tồn cao <b>bất thường so với '
+    + 'các máy cùng dòng</b> thì là vốn nằm im, và thường đi kèm một trong hai chuyện: cấp dư từ những lần trước, '
+    + 'hoặc vật tư đã cấp mà chưa lắp. Ngưỡng nêu tên: vượt quá <b>' + RP_CFG.TON_CAO_PCT + '%</b> trung bình dòng máy. '
+    + 'Máy đã dừng hoặc thu hồi không nằm trong bảng này — tồn ở đó là tài sản chờ thu, không phải chi phí vận hành.');
+
+  [['IV.1. Tồn theo SỐ LƯỢNG', d.tonCaoSl, 'devSl', true],
+   ['IV.2. Tồn theo GIÁ TRỊ',  d.tonCaoGt, 'devGt', false]].forEach(([ten, list, khoa, laSl], idx) => {
+    b += wH_(2, ten + ' — ' + list.length + ' máy');
+    if (!list.length){ b += wP_('Không máy nào vượt ngưỡng.'); return; }
+    /* Hai biểu đồ trong mục này đo hai thứ khác nhau (số lượng tồn và giá trị tồn) —
+     * để chung một tiêu đề thì đọc rời khỏi mạch văn là không biết đang xem cái nào. */
+    b += wChart_(BD('Tồn ' + (laSl ? 'số lượng' : 'giá trị') + ' vượt trung bình dòng máy (%)'),
+      list.slice(0,12).map(r => ({ t:r.code, v:r[khoa], nhan:rpPct_(r[khoa]), mau:'#b45309' })));
+    b += wTB_([{t:'TT',w:'4%',a:'center'},{t:'Mã máy',w:'10%'},{t:'Dòng',w:'9%'},{t:'Trang trại',w:'20%'},
+               {t:(laSl?'Tồn (SL)':'Giá trị tồn (đ)'),w:'12%',a:'right'},
+               {t:'TB dòng máy',w:'11%',a:'right'},{t:'Vượt',w:'8%',a:'right'},
+               {t:'Khoản nào chiếm nhiều nhất',w:'26%'}],
+      list.map((r,i) => ({ _bg: i < 3 ? '#fdf0de' : '#fdf6e7',
+        c:[String(i+1), '<b>'+rpE_(r.code)+'</b>', rpE_(r.model), rpE_(r.site||'—'),
+           '<b>'+(laSl ? rpN_(r.sl) : rpN_(r.giaTri,0))+'</b>',
+           laSl ? rpN_(r.tbSl) : rpN_(r.tbGt,0), '<b>'+rpPct_(r[khoa])+'</b>',
+           rpE_(r.viSao||'—')] })), { sz:'10.5pt' });
+  });
+  if (d.tonCaoGt.length){
+    b += wNX_(rpE_('Dẫn đầu là ' + d.tonCaoGt[0].code + ' với ' + rpN_(d.tonCaoGt[0].giaTri,0) + ' đ nằm trong kho trại, '
+      + 'gấp ' + (d.tonCaoGt[0].tbGt > 0 ? Math.round(d.tonCaoGt[0].giaTri/d.tonCaoGt[0].tbGt*10)/10 : '—')
+      + ' lần mức trung bình của dòng ' + d.tonCaoGt[0].model + '. '
+      + 'Trước khi cấp thêm cho khu vực này, rà lại nhóm máy trong bảng — có thể điều chuyển nội bộ thay vì mua mới.'));
+  }
+
+  /* ---- V. Nhận xét tổng ---- */
+  b += wH_(1, 'V. Nhận xét tổng và kiến nghị');
+  const nx = [];
+  nx.push('Tháng <b>' + rpE_(cp.monthLabel) + '</b>, toàn hệ thống chi <b>' + rpN_(cp.totalCost,0)
+    + ' đ</b> vật tư cho <b>' + rpN_(cp.totalKwh,0) + ' kWh</b>, bình quân <b>'
+    + (tbChung!=null ? rpN_(tbChung,2) : '—') + ' đ/kWh</b>.');
+  if (d.kwhCao.length){
+    const tong = d.kwhCao.reduce((s,r) => s + (r.cost||0), 0);
+    nx.push('<b>' + d.kwhCao.length + '</b> máy có đ/kWh vượt trung bình dòng máy, cộng lại chiếm <b>'
+      + rpN_(tong,0) + ' đ</b> (' + (cp.totalCost>0 ? Math.round(tong/cp.totalCost*100) : 0)
+      + '% tổng chi phí tháng). Đây là phần có dư địa cắt giảm rõ nhất.');
+  } else {
+    nx.push('Không máy nào vượt trung bình dòng máy quá ngưỡng — chi phí trên kWh đang đồng đều giữa các máy cùng loại.');
+  }
+  if (d.momCao.length){
+    nx.push('<b>' + d.momCao.length + '</b> máy tăng so tháng ' + rpE_(cp.prevMonthLabel||'trước')
+      + ', dẫn đầu ' + rpE_(d.momCao[0].code) + ' ' + rpPct_(d.momCao[0].momPct)
+      + '. Cần tách rõ phần do chu kỳ thay thế rơi vào tháng này và phần do tiêu hao thật tăng — '
+      + 'cột «Khoản nào đẩy lên» ở Mục III đã chỉ sẵn.');
+  }
+  if (soBu){
+    nx.push('<b>' + soBu + '</b> máy có chi phí đến từ <b>bù kiểm kê</b> — chênh lệch giữa tồn đếm thực tế và tồn trên sổ. '
+      + 'Phần này không truy được bằng phiếu xuất vì nó không đến từ phiếu xuất nào; việc phải làm là '
+      + 'xem lại định mức trừ tự động theo giờ của những máy đó cho sát thực tế hơn.');
+  }
+  if (d.tonCaoGt.length){
+    const vonNam = d.tonCaoGt.reduce((s,r) => s + Math.max(0, r.giaTri - (r.tbGt||0)), 0);
+    nx.push('<b>' + d.tonCaoGt.length + '</b> máy tồn giá trị cao hơn trung bình dòng máy, phần vượt cộng lại khoảng <b>'
+      + rpN_(vonNam,0) + ' đ</b> vốn đang nằm tại trại. Rà điều chuyển nội bộ trước khi đặt đơn mua mới.');
+  }
+  nx.push('<b>Việc cần làm:</b> '
+    + (d.kwhCao.length ? 'yêu cầu giải trình tiêu hao cho ' + rpE_(d.kwhCao.slice(0,3).map(r=>r.code).join(', ')) + '; ' : '')
+    + (d.momCao.length ? 'đối chiếu phiếu xuất tháng này của ' + rpE_(d.momCao.slice(0,3).map(r=>r.code).join(', ')) + '; ' : '')
+    + (soBu ? 'hiệu chỉnh định mức trừ tự động cho nhóm máy có bù kiểm kê; ' : '')
+    + 'tạm dừng cấp thêm cho các trại đã tồn vượt trung bình.');
+  b += wP_(nx.join('<br><br>'));
+
+  /* ---- VI. Phụ lục ---- */
+  b += wH_(1, 'VI. Phụ lục — bảng dữ liệu');
+  b += wH_(2, 'Phụ lục A. Chi phí vật tư toàn bộ tổ máy, tháng ' + cp.monthLabel);
+  b += wTB_([{t:'TT',w:'4%',a:'center'},{t:'Mã máy',w:'10%'},{t:'Dòng',w:'8%'},{t:'Trang trại · Khu vực',w:'21%'},
+             {t:'Chi phí (đ)',w:'12%',a:'right'},{t:'kWh',w:'10%',a:'right'},{t:'đ/kWh',w:'9%',a:'right'},
+             {t:'TB dòng',w:'9%',a:'right'},{t:'Lệch',w:'8%',a:'right'},{t:'Đánh giá',w:'9%'}],
+    d.cpRows.map((r,i) => ({
+      _bg: r.flag === 'Vượt trung bình' ? '#fdecec'
+         : (r.flag === 'Thấp bất thường' ? '#eef7f5' : (i%2 ? '#f5f7f6' : '#ffffff')),
+      c: [String(i+1), '<b>'+rpE_(r.code)+'</b>', rpE_(r.model),
+          rpE_(r.site||'—') + (r.region ? '<br><i>'+rpE_(r.region)+'</i>' : ''),
+          rpN_(r.cost,0), rpN_(r.kwh,0), rpN_(r.costPerKwh,2), rpN_(r.modelAvg,2),
+          r.devPct!=null ? rpPct_(r.devPct) : '—', rpE_(r.flag||'—')],
+    })), { sz:'10.0pt' });
+
+  b += wH_(2, 'Phụ lục B. Trung bình đ/kWh theo dòng máy');
+  b += wTB_([{t:'Dòng máy',w:'30%'},{t:'Số máy có số liệu',w:'25%',a:'right'},
+             {t:'Trung bình đ/kWh',w:'25%',a:'right'},{t:'Số máy vượt ngưỡng',w:'20%',a:'right'}],
+    (cp.avgByModel||[]).map(m => ({ c:['<b>'+rpE_(m.model)+'</b>', String(m.n), rpN_(m.avgCostPerKwh,2),
+      String(d.kwhCao.filter(r => r.model === m.model).length)] })));
+
+  b += wH_(2, 'Phụ lục C. Tồn kho tại trại theo tổ máy');
+  b += wTB_([{t:'TT',w:'4%',a:'center'},{t:'Mã máy',w:'10%'},{t:'Dòng',w:'9%'},{t:'Trang trại',w:'22%'},
+             {t:'Tồn (SL)',w:'9%',a:'right'},{t:'TB dòng',w:'9%',a:'right'},
+             {t:'Giá trị tồn (đ)',w:'13%',a:'right'},{t:'TB dòng',w:'12%',a:'right'},
+             {t:'Thiếu',w:'6%',a:'right'},{t:'Lệch GT',w:'6%',a:'right'}],
+    d.ton.slice().sort((a,b2) => (b2.devGt ?? -999) - (a.devGt ?? -999)).map((r,i) => ({
+      _bg: (r.devGt!=null && r.devGt > RP_CFG.TON_CAO_PCT) ? '#fdf6e7' : (i%2 ? '#f5f7f6' : '#ffffff'),
+      c: [String(i+1), '<b>'+rpE_(r.code)+'</b>', rpE_(r.model), rpE_(r.site||'—'),
+          rpN_(r.sl), rpN_(r.tbSl), rpN_(r.giaTri,0), rpN_(r.tbGt,0),
+          r.thieu ? '<b>'+r.thieu+'</b>' : '0', r.devGt!=null ? rpPct_(r.devGt) : '—'],
+    })), { sz:'10.0pt' });
+
+  wXuat_('BaoCao-ChiPhiVatTu', 'BÁO CÁO CHI PHÍ VẬT TƯ',
+    'Tháng ' + cp.monthLabel + ' · so sánh với trung bình dòng máy và với tháng trước · số liệu lúc ' + RP.at, b);
+}
+
+/* ############################################################################
+ *  KIỂM KÊ & PHÂN BỔ CHÊNH LỆCH — phần giao diện
+ * ############################################################################
+ *  Ô "Kiểm kê =" trên phiếu gộp đã có sẵn. Phần thêm ở đây là những thứ quanh nó:
+ *
+ *    1 · XEM TRƯỚC (kkXemTruoc) — bấm trước khi lưu, thấy ngay lệch bao nhiêu, tiêu hao
+ *        thực tế trong kỳ là bao nhiêu, phân bổ bao nhiêu đ/kWh. Không xem trước thì
+ *        người đếm chỉ biết mình gõ một con số, không biết con số đó nói lên điều gì —
+ *        mà chính lúc còn đứng ở trại mới là lúc đếm lại được.
+ *
+ *    2 · KẾT QUẢ SAU KHI LƯU (kkHienKetQua_) — server trả về gói `kiemKe` kèm phiếu ghi.
+ *        Hiện luôn thành bảng, không để nó nằm im trong response.
+ *
+ *    3 · SỔ KIỂM KÊ (kkMoSo) — Sheet 35, tra lại mọi lần đã đếm.
+ *
+ *  VÌ SAO XEM TRƯỚC PHẢI GỌI SERVER, KHÔNG TỰ TÍNH Ở WEB: mẫu số của phép phân bổ là
+ *  số kWh phát ra TỪ LẦN KIỂM KÊ TRƯỚC TỚI NAY. Sheet 5 chỉ giữ một tháng; kỳ dài hơn
+ *  thì phải truy thẳng Smartgen hoặc LIXiSE để lấy đúng những ngày đã bị xoá. Trình
+ *  duyệt không đăng nhập được vào hai nơi đó. Tính ở web nghĩa là tính bằng một mẫu số
+ *  khác với lúc ghi thật — và khi đó xem trước còn tệ hơn không có.
+ * ######################################################################### */
+
+/** Gom các dòng ĐANG ĐIỀN ô "Kiểm kê =" trên phiếu gộp. */
+function kkDongDangDien_(){
+  const C = _mbCtx; if (!C) return [];
+  const out = [];
+  C.items.forEach((v, i) => {
+    const dat = qmbDaDien_(i);
+    if (dat.length !== 1) return;                 // dòng điền nhiều cột: qmbSubmit sẽ chặn
+    if (dat[0].loai !== 'Kiểm kê') return;
+    if (!isFinite(dat[0].v)) return;
+    out.push({ vt: v.vt, ten: v.ten, dvt: v.dvt, sl: dat[0].v, ton: v.ton });
+  });
+  return out;
+}
+
+async function kkXemTruoc(){
+  const C = _mbCtx; if (!C) return;
+  const box = document.getElementById('mbKK'); if (!box) return;
+  const lines = kkDongDangDien_();
+  if (!lines.length){
+    box.innerHTML = '<div style="font-size:11px;color:var(--mu);padding:6px 0">'
+      + 'Chưa điền ô <b>Kiểm kê =</b> nào. Điền số đếm được rồi bấm lại nút này.</div>';
+    return;
+  }
+  const khi = String((document.getElementById('mbKhi')||{}).value||'').trim();
+  box.innerHTML = '<div style="font-size:11px;color:var(--mu);padding:6px 0">'
+    + '⏳ Đang đối chiếu ' + lines.length + ' dòng — có thể phải truy Smartgen/LIXiSE để lấy '
+    + 'số kWh những ngày Sheet 5 đã xoá, mất khoảng 10–30 giây.</div>';
+
+  let d = null;
+  try {
+    d = await apiPost({ action:'kkPreview', payload:{ maCode: C.code, ngay: khi, lines: lines } });
+  } catch(e){ d = { ok:false, error:e.message }; }
+
+  if (!d || !d.ok){
+    box.innerHTML = '<div style="font-size:11px;color:var(--red);padding:6px 0">'
+      + 'Không xem trước được: ' + esc((d && d.error) || 'lỗi không rõ')
+      + '. <b>Vẫn ghi phiếu bình thường được</b> — server sẽ tự đối chiếu lúc lưu.</div>';
+    return;
+  }
+  box.innerHTML = kkBangHtml_(d, true);
+}
+
+/* Bảng đối chiếu — dùng cho CẢ xem trước và kết quả sau khi lưu. Một bảng duy nhất để
+ * người dùng không phải học hai cách đọc cho cùng một phép tính. */
+function kkBangHtml_(d, laXemTruoc){
+  const rows = (d.rows||[]).filter(r => r && r.ok !== false);
+  const loi  = (d.rows||[]).filter(r => r && r.ok === false);
+  if (!rows.length)
+    return '<div style="font-size:11px;color:var(--mu);padding:6px 0">Không có dòng nào đối chiếu được.'
+         + (loi.length ? ' (' + loi.length + ' dòng lỗi)' : '') + '</div>';
+
+  const mauHuong = h => h === 'Hụt' ? 'var(--red)' : (h === 'Thừa' ? 'var(--amb)' : 'var(--g)');
+  const tong = d.tongGiaTri || 0;
+  const coUoc = rows.some(r => r.uocTinh);
+
+  let h = '<div style="border:1.5px solid var(--bd);border-radius:8px;padding:8px 10px;margin-top:8px;background:#fbfdfc">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">'
+    + '<b style="font-size:12px;color:var(--bl)">'
+    +   (laXemTruoc ? '⚖ Xem trước chênh lệch kiểm kê' : '⚖ Kết quả đối chiếu kiểm kê')
+    + '</b>'
+    + '<span style="font-size:11px;color:var(--mu)">'+rows.length+' vật tư · '
+    +   'giá trị chênh <b style="color:'+(tong>=0?'var(--red)':'var(--g)')+'">'
+    +   (tong>=0?'+':'')+nfd_(tong)+' đ</b></span></div>';
+
+  h += '<div class="tw" style="margin-top:6px;max-height:260px"><table><thead><tr>'
+    + '<th>Vật tư</th><th style="text-align:right">Sổ → Đếm</th><th style="text-align:right">Lệch</th>'
+    + '<th style="text-align:right">Tiêu hao sổ / thực</th><th style="text-align:right">Suất hao thực</th>'
+    + '<th style="text-align:right">Kỳ</th><th style="text-align:right">Giá trị</th>'
+    + '<th style="text-align:right">Phân bổ</th><th>Kết luận</th></tr></thead><tbody>';
+
+  rows.forEach(r => {
+    const m = mauHuong(r.huong);
+    h += '<tr>'
+      + '<td><b>'+esc(r.ten||r.vt)+'</b>'
+      +   (r.dvt?' <span style="color:var(--mu);font-size:10px">'+esc(r.dvt)+'</span>':'')+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'+nfd_(r.tonSo)+' → <b>'+nfd_(r.tonKiemKe)+'</b></td>'
+      + '<td style="text-align:right;font-family:var(--mono);font-weight:700;color:'+m+'">'
+      +   (r.lech>0?'+':'')+nfd_(r.lech)+'<br><span style="font-size:10px;font-weight:600">'+esc(r.huong||'')+'</span></td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'+nfd_(r.tieuHaoSo)+' / <b>'+nfd_(r.tieuHaoThuc)+'</b>'
+      +   (r.pct!=null?'<br><span style="font-size:10px;color:'+m+'">'+(r.pct>0?'+':'')+r.pct+'%</span>':'')+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'
+      +   (r.suatThuc!=null ? nfd_(r.suatThuc)+(r.dinhMuc!=null?'<br><span style="font-size:10px;color:var(--mu)">ĐM '+nfd_(r.dinhMuc)+'</span>':'') : '—')+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'+(r.soNgay||0)+' ngày'
+      +   '<br><span style="font-size:10px;color:var(--mu)">'+nfd_(r.kwh)+' kWh</span>'
+      +   (r.uocTinh?'<br><span class="b ba" style="font-size:9px">ƯỚC TÍNH</span>':'')+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono);font-weight:700;color:'+m+'">'
+      +   (r.giaTri>0?'+':'')+nfd_(r.giaTri)+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'
+      +   (r.dKwh ? nfd_(r.dKwh)+'<br><span style="font-size:10px;color:var(--mu)">đ/kWh</span>' : '—')+'</td>'
+      + '<td style="font-size:11px">'+esc(r.ketLuan||'')
+      +   (r.viecCanLam?'<br><span style="color:var(--bl)">→ '+esc(r.viecCanLam)+'</span>':'')+'</td>'
+      + '</tr>';
+  });
+  h += '</tbody></table></div>';
+
+  /* Giải thích một lần, ngay dưới bảng — chứ không bắt người dùng đi tìm tài liệu.
+   * Đây là phép tính mà nếu hiểu sai dấu thì kết luận ngược hẳn. */
+  h += '<div style="font-size:11px;color:var(--mu);margin-top:6px;line-height:1.55">'
+    + '<b>Cách đọc:</b> <span style="color:var(--amb)">Thừa</span> = đếm được nhiều hơn sổ → hệ thống đã trừ '
+    + 'quá tay, phiếu bù <b>hoàn lại</b> phần trừ thừa (giá trị âm). '
+    + '<span style="color:var(--red)">Hụt</span> = đếm được ít hơn sổ → đã tiêu hao thật nhiều hơn định mức, '
+    + 'phần hụt được <b>phân bổ vào chi phí</b> theo số kWh máy phát ra trong kỳ (cột Phân bổ). '
+    + 'Tồn kho sau khi lưu luôn bằng đúng số đếm được — phiếu bù chỉ mang giá trị tiền, không đụng vào số lượng.';
+  if (coUoc)
+    h += '<br><span style="color:var(--amb)"><b>ƯỚC TÍNH:</b> kỳ này có ngày không lấy được số thật từ Sheet 5 '
+       + 'lẫn Smartgen/LIXiSE, mẫu số được suy ra từ tổng tháng ở Sheet 9. Con số phân bổ vì vậy là tương đối.</span>';
+  if ((d.loiMay||[]).length)
+    h += '<br><span style="color:var(--amb)">Ghi chú nguồn mây: '+esc(d.loiMay.join(' · '))+'</span>';
+  if (loi.length)
+    h += '<br><span style="color:var(--red)">'+loi.length+' dòng không tính được: '
+       + esc(loi.map(x=>(x.vt||'?')+' — '+(x.error||'')).join(' · '))+'</span>';
+  h += '</div></div>';
+  return h;
+}
+
+/** Kết quả server trả về sau khi ghi phiếu (trường `kiemKe`). Hiện thành hộp thoại
+ *  riêng, KHÔNG chỉ một dòng toast: đây là lúc duy nhất người vừa đếm còn nhớ mình
+ *  đếm cái gì, và cũng là lúc duy nhất sửa lại còn dễ. */
+function kkHienKetQua_(kk, maCode){
+  if (!kk) return;
+  if (kk.ok === false){
+    toast('Đã ghi phiếu, nhưng chưa đối chiếu được kiểm kê: ' + (kk.error||''), 'err');
+    return;
+  }
+  const rows = (kk.rows||[]).filter(r => r && r.ok !== false);
+  if (!rows.length) return;                    // phiếu không có dòng kiểm kê nào — im lặng
+
+  /* MỨC ĐỘ Ở ĐÂY LÀ MÃ NGẮN ('high'/'med'/'low'/'ok'), KHÔNG PHẢI NHÃN TIẾNG VIỆT.
+   * Nhãn ('Nghiêm trọng', 'Cần rà soát'…) chỉ xuất hiện khi kkRowObj_ ghi xuống Sheet 35,
+   * nên sổ kiểm kê đọc nhãn còn màn hình này đọc mã. So nhầm thì bộ lọc im lặng không
+   * bắt được dòng nào — sai kiểu không có thông báo lỗi nào chỉ ra.
+   * Ưu tiên dùng thẳng danh sách server đã lọc (kk.canhBao): một quy tắc, một nơi. */
+  const canhBao = Array.isArray(kk.canhBao) ? kk.canhBao
+                : rows.filter(r => r.mucDo === 'high' || r.mucDo === 'med');
+  const thieuBu = !!kk.chuaVa;                 // server: chuaVa = chưa ghi được phiếu bù
+
+  openOv(`
+    <div class="mh"><div><h2>Đã ghi phiếu &amp; đối chiếu kiểm kê — ${esc(maCode||kk.maCode||'')}</h2>
+      <p>Tồn kho đã về đúng số đếm được. Bảng dưới là phần chênh lệch đã được xử lý thành chi phí.</p>
+    </div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      ${canhBao.length ? `<div class="b br" style="display:block;padding:7px 10px;margin-bottom:8px;font-size:11px">
+        <b>${canhBao.length}/${rows.length} vật tư lệch đáng kể.</b>
+        ${esc(canhBao.slice(0,3).map(r => (r.ten||r.vt)+': '+(r.ketLuan||'')).join(' · '))}
+      </div>` : ''}
+      ${thieuBu ? `<div class="b ba" style="display:block;padding:7px 10px;margin-bottom:8px;font-size:11px">
+        <b>Chưa ghi được phiếu bù.</b> Tồn kho vẫn đúng, nhưng phần giá trị chênh lệch chưa vào chi phí.
+        Báo quản trị chạy lại <b>⚙️ eGreen → Cài đặt kiểm kê</b>.
+      </div>` : ''}
+      ${kkBangHtml_(kk, false)}
+      <div style="font-size:11px;color:var(--mu);margin-top:8px">
+        Toàn bộ dòng trên đã được lưu vào sổ kiểm kê (Sheet 35) — tra lại bất cứ lúc nào bằng nút
+        <b>Sổ kiểm kê</b> ở trang Kho vật tư.
+      </div>
+    </div>
+    <div class="mf"><button class="btn bg-g" onclick="closeOv()">Đã hiểu</button></div>`);
+}
+
+/* ---------------------------------------------------------------------------
+ *  SỔ KIỂM KÊ — Sheet 35
+ * ------------------------------------------------------------------------- */
+const KK = { log:null, dangTai:false, f:{ q:'', huong:'', muc:'' } };
+
+async function kkMoSo(){
+  openOv(`
+    <div class="mh"><div><h2>Sổ kiểm kê &amp; phân bổ chênh lệch</h2>
+      <p>Mọi lần đếm kho thực tế và phần chênh lệch đã xử lý — Sheet 35.</p>
+    </div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb" id="kkSoBody"><div class="empty">Đang tải sổ kiểm kê…</div></div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`);
+  if (!KK.log && !KK.dangTai){
+    KK.dangTai = true;
+    try {
+      const d = await apiPost({ action:'kkLog' });
+      KK.log = (d && d.ok) ? d.log : { headers:[], rows:[], total:0 };
+    } catch(e){ KK.log = { headers:[], rows:[], total:0 }; }
+    KK.dangTai = false;
+  }
+  kkVeSo_();
+}
+
+function kkLocSo(k, v){ KK.f[k] = v; kkVeSo_(); }
+
+function kkVeSo_(){
+  const box = document.getElementById('kkSoBody'); if (!box) return;
+  const L = KK.log || { rows:[], total:0 };
+  const all = (L.rows||[]).slice().reverse();          // mới nhất lên đầu
+  const q = kkSlug_(KK.f.q);
+  const rows = all.filter(r => {
+    if (KK.f.huong && String(r['Hướng']||'') !== KK.f.huong) return false;
+    if (KK.f.muc   && String(r['Mức độ']||'') !== KK.f.muc)  return false;
+    if (q){
+      const hay = kkSlug_([r['Mã máy'], r['Tên vật tư'], r['Trang trại'], r['Người kiểm kê'],
+                         r['Kỹ thuật viên']].join(' '));
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+
+  const nut = (k, v, nhan) => '<button class="fchip '+(KK.f[k]===v?'on':'')+'" '
+    + 'onclick="kkLocSo(\''+k+'\',\''+v+'\')">'+nhan+'</button>';
+
+  let h = '<div class="msg" style="margin-bottom:8px">'
+    + '<input class="si" style="flex:1" placeholder="🔍 Mã máy · vật tư · trại · người kiểm kê…" '
+    +   'value="'+esc(KK.f.q)+'" oninput="kkLocSo(\'q\',this.value)">'
+    + nut('huong','','Tất cả') + nut('huong','Hụt','Hụt') + nut('huong','Thừa','Thừa')
+    + nut('muc','Nghiêm trọng','Nghiêm trọng') + nut('muc','Cần rà soát','Cần rà soát')
+    + (KK.f.muc ? '<button class="fchip" onclick="kkLocSo(\'muc\',\'\')">✕ bỏ lọc mức độ</button>' : '')
+    + '</div>';
+
+  if (!rows.length){
+    box.innerHTML = h + '<div class="empty">'
+      + (L.total ? 'Không có dòng nào khớp bộ lọc.' : 'Chưa có lần kiểm kê nào được ghi.')+'</div>';
+    return;
+  }
+
+  const hut = rows.filter(r => String(r['Hướng']||'')==='Hụt');
+  const thua = rows.filter(r => String(r['Hướng']||'')==='Thừa');
+  const tien = rows.reduce((s,r) => s + (Number(r['Giá trị chênh lệch (đ)'])||0), 0);
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:11px">'
+    + '<span class="b br">Hụt: '+hut.length+'</span>'
+    + '<span class="b ba">Thừa: '+thua.length+'</span>'
+    + '<span class="b bg">Khớp: '+(rows.length-hut.length-thua.length)+'</span>'
+    + '<span class="b" style="background:#f1f5f9">Tổng giá trị chênh: <b>'+nfd_(tien)+' đ</b></span>'
+    + '<span style="color:var(--mu);align-self:center">'+rows.length+'/'+(L.total||rows.length)+' dòng</span>'
+    + '</div>';
+
+  h += '<div class="tw" style="max-height:58vh"><table><thead><tr>'
+    + '<th>Thời điểm</th><th>Mã máy</th><th>Vật tư</th><th style="text-align:right">Sổ → Đếm</th>'
+    + '<th style="text-align:right">Lệch</th><th style="text-align:right">Tiêu hao sổ / thực</th>'
+    + '<th style="text-align:right">Kỳ</th><th style="text-align:right">Giá trị</th>'
+    + '<th style="text-align:right">Phân bổ</th><th>Mức độ</th><th>Kết luận</th>'
+    + '<th>Người kiểm kê</th></tr></thead><tbody>';
+
+  rows.slice(0, 400).forEach(r => {
+    const huong = String(r['Hướng']||'');
+    const m = huong==='Hụt' ? 'var(--red)' : (huong==='Thừa' ? 'var(--amb)' : 'var(--g)');
+    const muc = String(r['Mức độ']||'');
+    const huy = String(r['Trạng thái']||'').indexOf('ĐÃ HUỶ') === 0;
+    h += '<tr'+(huy?' style="opacity:.5;text-decoration:line-through"':'')+'>'
+      + '<td style="font-size:11px;white-space:nowrap">'+esc(String(r['Thời gian kiểm kê']||'').slice(0,16))
+      +   '<br><span style="color:var(--mu)">'+esc(String(r['Mốc kỳ trước']||'').slice(0,16))+'</span></td>'
+      + '<td><span class="mm">'+esc(r['Mã máy']||'')+'</span>'
+      +   '<br><span style="font-size:10px;color:var(--mu)">'+esc(r['Trang trại']||'')+'</span></td>'
+      + '<td style="font-size:11px">'+esc(r['Tên vật tư']||r['Mã VT']||'')+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'+nfd_(r['Tồn theo sổ'])+' → <b>'+nfd_(r['Tồn kiểm kê'])+'</b></td>'
+      + '<td style="text-align:right;font-family:var(--mono);font-weight:700;color:'+m+'">'
+      +   nfd_(r['Chênh lệch'])+'<br><span style="font-size:10px">'+esc(huong)+'</span></td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'+nfd_(r['Tiêu hao theo sổ'])
+      +   ' / <b>'+nfd_(r['Tiêu hao thực tế'])+'</b></td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'+nfd_(r['Số ngày trong kỳ'])+' ngày'
+      +   '<br><span style="font-size:10px;color:var(--mu)">'+nfd_(r['Điện phát trong kỳ (kWh)'])+' kWh</span></td>'
+      + '<td style="text-align:right;font-family:var(--mono);font-weight:700;color:'+m+'">'
+      +   nfd_(r['Giá trị chênh lệch (đ)'])+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'
+      +   (Number(r['Phân bổ (đ/kWh)']) ? nfd_(r['Phân bổ (đ/kWh)']) : '—')+'</td>'
+      /* Nhãn đúng như kkRowObj_ ghi xuống Sheet 35: Nghiêm trọng · Cần rà soát · Nhẹ · Khớp. */
+      + '<td><span class="b '+(muc==='Nghiêm trọng'?'br':(muc==='Cần rà soát'?'ba':'bg'))+'">'+esc(muc||'—')+'</span></td>'
+      + '<td style="font-size:11px">'+esc(r['Kết luận']||'')
+      +   (r['Việc cần làm']?'<br><span style="color:var(--bl)">→ '+esc(r['Việc cần làm'])+'</span>':'')+'</td>'
+      + '<td style="font-size:11px">'+esc(r['Người kiểm kê']||'')
+      +   (r['Kỹ thuật viên']?'<br><span style="color:var(--mu)">'+esc(r['Kỹ thuật viên'])+'</span>':'')+'</td>'
+      + '</tr>';
+  });
+  h += '</tbody></table></div>';
+  if (rows.length > 400)
+    h += '<div style="font-size:11px;color:var(--mu);margin-top:4px">Đang hiện 400 dòng mới nhất trong '
+       + rows.length + ' dòng khớp bộ lọc.</div>';
+  box.innerHTML = h;
+}
+
+/** Bỏ dấu + hạ chữ thường để ô tìm gõ "kiem ke" cũng ra "kiểm kê".
+ *  CỐ Ý KHÔNG dùng nfd_ — tên gần giống nhưng nfd_ là hàm ĐỊNH DẠNG SỐ (1.234,5),
+ *  gọi nhầm thì ô tìm im lặng không lọc được gì mà cũng không báo lỗi. */
+function kkSlug_(s){
+  return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/đ/gi,'d').toLowerCase().trim();
+}
+
+/** Soát lại lần kiểm kê gần nhất của một máy (chỉ đọc — không ghi gì). */
+async function kkSoatLai(maCode){
+  const code = String(maCode||'').trim().toUpperCase();
+  if (!code) return;
+  toast('Đang soát lại kiểm kê ' + code + '…');
+  let d = null;
+  try { d = await apiPost({ action:'kkRecheck', payload:{ maCode: code } }); }
+  catch(e){ d = { ok:false, error:e.message }; }
+  if (!d || !d.ok){ toast((d&&d.error)||'Không soát lại được','err'); return; }
+  if (!(d.rows||[]).length){ toast('Máy ' + code + ' chưa có phiếu kiểm kê nào','info'); return; }
+  openOv(`
+    <div class="mh"><div><h2>Soát lại kiểm kê — ${esc(code)}</h2>
+      <p>Tính lại lần kiểm kê gần nhất của từng vật tư bằng số liệu hiện tại. Chỉ đọc — không ghi gì vào sổ.</p>
+    </div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">${kkBangHtml_(d, true)}</div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`);
+}
+
+/* ---------------------------------------------------------------------------
+ *  THẺ CẢNH BÁO KIỂM KÊ — cho trang Cảnh báo / Kho vật tư
+ * ------------------------------------------------------------------------- */
+function kkTheCanhBao_(){
+  const al = ((window.Q && Q.alerts && Q.alerts.kiemke) || []);
+  if (!al.length) return '';
+  const nang = al.filter(a => a.severity === 'high');
+  return '<div class="card" style="border-left:3px solid #b91c1c"><div class="cb" style="padding:10px 12px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">'
+    + '<b style="font-size:12px;color:#b91c1c">Chênh lệch kiểm kê cần xử lý</b>'
+    + '<span style="font-size:11px;color:var(--mu)">'+al.length+' mục'
+    +   (nang.length?' · '+nang.length+' nghiêm trọng':'')
+    +   ' <b style="color:var(--bl);cursor:pointer;text-decoration:underline" onclick="kkMoSo()">xem sổ →</b></span></div>'
+    + '<div class="tw" style="margin-top:6px;max-height:260px"><table><thead><tr>'
+    + '<th>Mã máy</th><th>Trang trại</th><th>Vật tư</th><th style="text-align:right">Lệch</th>'
+    + '<th style="text-align:right">Tiêu hao thực</th><th style="text-align:right">Giá trị</th>'
+    + '<th>Kết luận</th><th>Việc cần làm</th></tr></thead><tbody>'
+    + al.slice(0, 40).map(a => '<tr>'
+      + '<td><span class="mm">'+esc(a.maCode)+'</span></td>'
+      + '<td style="font-size:11px">'+esc(a.site||'—')+'</td>'
+      + '<td style="font-size:11px">'+esc(a.field||'')+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono);font-weight:700;color:'
+      +   (a.type==='kk-hut'?'var(--red)':'var(--amb)')+'">'+nfd_(a.lech)+' '+esc(a.dvt||'')+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono)">'
+      +   (a.suatThuc!=null ? nfd_(a.suatThuc)+(a.dinhMuc!=null?' / ĐM '+nfd_(a.dinhMuc):'') : '—')+'</td>'
+      + '<td style="text-align:right;font-family:var(--mono);font-weight:600">'+nfd_(a.giaTri)+' đ'
+      +   (a.dKwh?'<br><span style="font-size:10px;color:var(--mu)">'+nfd_(a.dKwh)+' đ/kWh</span>':'')+'</td>'
+      + '<td style="font-size:11px">'+esc(a.message||'')+'</td>'
+      + '<td style="font-size:11px;color:var(--bl)">'+esc(a.action||'')+'</td>'
+      + '</tr>').join('')
+    + '</tbody></table></div></div></div>';
 }
 
 </script>
