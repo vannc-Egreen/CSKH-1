@@ -5359,7 +5359,8 @@ function gioDashCard_(){
   const order = decide.concat(legacy, tin);
 
   const kieu = r => {
-    if (r.decide) return `<b>${esc(r.chieu||r.loai)}</b><br><span style="font-size:10px;color:var(--amb)">đang giữ số giờ — chờ chọn</span>`;
+    if (r.decide) return `<b>${esc(r.chieu||r.loai)}</b><br><span style="font-size:10px;color:var(--amb)">đang giữ số giờ — chờ chọn</span>`
+      + (r.luat ? `<br><span style="font-size:10px;color:var(--red)">${esc(r.luat)}</span>` : '');
     if (r.legacy){
       const bu = r.buThem;
       return `${esc(r.chieu||'')} <span class="b bmu" title="Bản cũ tự bù, không hỏi ai">bản cũ</span><br>
@@ -5372,10 +5373,11 @@ function gioDashCard_(){
       <td><span class="mm">${esc(r.code)}</span></td>
       <td style="font-size:11px">${kieu(r)}</td>
       <td style="text-align:right;white-space:nowrap">${r.truoc==null?'—':nfmt_(r.truoc)} → ${r.sau==null?'—':nfmt_(r.sau)}
-        ${r.truoc!=null&&r.sau!=null?`<br><span style="font-size:10px;color:var(--mu)">${r.sau-r.truoc>0?'+':''}${nfmt_(r.sau-r.truoc)} h</span>`:''}</td>
+        ${r.truoc!=null&&r.sau!=null?`<br><span style="font-size:10px;color:var(--mu)">${r.sau-r.truoc>0?'+':''}${nfmt_(r.sau-r.truoc)} h${r.soNgay?' / '+nfmt_(r.soNgay)+' ngày':''}${r.tran!=null?' · trần '+nfmt_(r.tran)+' h':''}</span>`:''}
+        ${(r.ngayTruoc||r.ngaySau)?`<br><span style="font-size:9px;color:var(--mu)">nạp ${esc(gioNgayVN_(r.ngayTruoc)||'?')} → ${esc(gioNgayVN_(r.ngaySau)||'?')}</span>`:''}</td>
       <td style="text-align:right">${r.decide?'<span style="color:var(--mu)">chưa bù</span>':(r.buThem==null?'—':`<b>${r.buThem>0?'+':''}${nfmt_(r.buThem)} h</b>`)}</td>
       <td style="text-align:right">${r.tong==null?'—':nfmt_(r.tong)}</td>
-      <td style="font-size:10px;color:var(--mu);white-space:nowrap">${esc(String(r.at||'').slice(0,16))}</td>
+      <td style="font-size:10px;color:var(--mu);white-space:nowrap">${esc(gioVN_(r.at))}</td>
       <td>${gioStatusCell_(r)}</td>
     </tr>`).join('');
   const ackIds = tin.map(x => x.id);
@@ -5502,41 +5504,54 @@ function viewHourBase(){
 
   const rows = list.map(x => {
     const b = x.b;
-    const raw = b.raw == null ? null : Number(b.raw);
     const off = Number(b.offset)||0;
     const lim = (S.gio.cfg||{}).silentH || 36;
-    return `<tr style="${x.p?'background:#fffbeb':''}">
+    const cap = gioCapDoc_(b, lim);
+    const dong = `<tr style="${x.p?'background:#fffbeb':''}">
       <td><span class="mm" style="cursor:pointer;text-decoration:underline" onclick="bdOpenProfile('${esc(x.code)}')">${esc(x.code)}</span>
         ${b.stuck?'<br><span class="b br" title="Số đọc không đổi qua nhiều lượt đồng bộ — máy dừng, mất truyền thông hoặc màn hình treo">⏸ đứng yên</span>':''}</td>
       ${farmCellVal_(x.m._byLetter[COL.TRAI]||'')}
       <td>${esc(x.m._byLetter[COL.DONVI]||'')||'—'}</td>
       <td style="text-align:right;white-space:nowrap;font-weight:700">${odoCell_(x.code, x.odo)}</td>
-      <td style="text-align:right">${raw==null?'<span class="b bmu" title="Chưa có lượt đồng bộ nào ghi nhận số đọc">chưa có</span>':nfmt_(raw)}</td>
+      <td style="text-align:right;white-space:nowrap;line-height:1.35">${cap.html}</td>
+      <td style="text-align:right;white-space:nowrap;line-height:1.35">${cap.delta}</td>
       <td style="text-align:right">${Math.abs(off)>0.01
           ? `<span class="b ${off>0?'ba':'br'}" title="${off>0?'Màn hình đã thay, màn mới đọc thấp hơn — CỘNG thêm phần giờ của màn cũ':'Màn hình thay vào có sẵn giờ cao hơn — TRỪ bớt phần dôi ra'}">${off>0?'+':''}${nfmt_(off)}</span>`
           : '<span style="color:var(--mu)">0</span>'}</td>
-      <td style="font-size:10px;white-space:nowrap">${esc(b.at||'—')}${b.silentH!=null&&b.silentH>lim?`<br><span style="color:var(--amb)">${gioSilentTxt_(b.silentH)} chưa có số mới</span>`:''}</td>
       <td style="text-align:center">${(b.resets||0)>0?`<span class="b br">${b.resets}</span>`:'<span style="color:var(--mu)">0</span>'}</td>
-      <td style="font-size:10px;color:var(--mu)">${esc(b.lastReset||'—')}</td>
+      <td style="font-size:10px;color:var(--mu);white-space:nowrap">${esc(gioVN_(b.lastReset)||'—')}</td>
       <td style="white-space:nowrap">
         ${x.p?`<button class="btn bg-a sm" onclick="openPendingResolve('${esc(x.p.id)}')">⚠ Chọn thay màn hình / máy</button>`:''}
         <button class="btn bg-g sm" title="Smartgen/LIXiSE không cập nhật — nhập số giờ đọc tại máy" onclick="openManualOdoForm('${esc(x.code)}')">✍ Nhập tay</button>
         <button class="btn bg-b sm" onclick="openResetForm('${esc(x.code)}')">🔁 Khai báo</button></td>
     </tr>`;
+    /* Máy đang chờ xác nhận được kèm NGAY một dòng chẩn đoán đầy đủ — không bắt ai phải
+     * bấm mở hộp thoại rồi mới biết chuyện gì đã xảy ra. */
+    return dong + (x.p ? gioChanDoanRow_(x.p) : '');
   }).join('') || '<tr><td colspan="99"><div class="empty">Không có máy nào khớp.</div></td></tr>';
 
-  const logs = (S.gio.resets||[]).slice(0,80).map(r => `<tr>
-      <td style="font-size:10px;white-space:nowrap">${esc(r.at||'')}</td>
+  const logs = (S.gio.resets||[]).slice(0,80).map(r => {
+    const d = (r.truoc!=null && r.sau!=null) ? Math.round((r.sau-r.truoc)*100)/100 : null;
+    const soNgay = (r.soNgay != null) ? Number(r.soNgay) : gioSoNgay_(r.ngayTruoc, r.ngaySau);
+    const ngay = v => v ? `<div style="font-size:9px;color:var(--mu)">${esc(gioNgayVN_(v))}</div>` : '';
+    return `<tr>
+      <td style="font-size:10px;white-space:nowrap">${esc(gioVN_(r.at)||'')}</td>
       <td><span class="mm">${esc(r.code||'')}</span></td>
       <td>${esc(r.loai||'')}${r.chieu?`<br><span style="font-size:9px;color:var(--mu)">${esc(r.chieu)}</span>`:''}</td>
-      <td style="text-align:right">${r.truoc==null?'—':nfmt_(r.truoc)}</td>
-      <td style="text-align:right">${r.sau==null?'—':nfmt_(r.sau)}</td>
+      <td style="text-align:right">${r.truoc==null?'—':nfmt_(r.truoc)}${ngay(r.ngayTruoc)}</td>
+      <td style="text-align:right">${r.sau==null?'—':nfmt_(r.sau)}${ngay(r.ngaySau)}</td>
+      <td style="text-align:right">${d==null?'—':`<b>${d>0?'+':''}${nfmt_(d)}</b>`}
+        ${soNgay?`<div style="font-size:9px;color:var(--mu)">${nfmt_(soNgay)} ngày${d!=null?' · '+nfmt_(Math.round(d/soNgay*100)/100)+' h/ngày':''}</div>`:''}</td>
+      <td style="text-align:right">${r.tran==null?'<span style="color:var(--mu)">—</span>':nfmt_(r.tran)}</td>
+      <td style="font-size:10px">${r.luat?esc(r.luat):'<span style="color:var(--mu)">—</span>'}
+        ${r.canCu?`<div style="font-size:9px;color:var(--mu)">${esc(r.canCu)}</div>`:''}</td>
       <td style="text-align:right">${r.buThem==null?'—':(r.buThem>0?'+':'')+nfmt_(r.buThem)}</td>
       <td style="text-align:right"><b>${r.tong==null?'—':nfmt_(r.tong)}</b></td>
       <td style="font-size:10px">${esc(r.lyDo||'')}</td>
       <td style="font-size:10px">${esc(r.nguoi||'')}</td>
       <td>${gioStatusCell_(r)}</td>
-    </tr>`).join('') || '<tr><td colspan="99"><div class="empty">Chưa có lần thay/reset nào được ghi nhận.</div></td></tr>';
+    </tr>`;
+  }).join('') || '<tr><td colspan="99"><div class="empty">Chưa có lần thay/reset nào được ghi nhận.</div></td></tr>';
 
   return `
     <div class="ph">
@@ -5550,9 +5565,15 @@ function viewHourBase(){
         <b>Số giờ máy chạy</b> = ô cột E Sheet 2 — <b>ODO duy nhất</b>, mọi phép tính bảo dưỡng đọc ô này.
         Các cột còn lại chỉ là <b>hiệu chuẩn đồng hồ</b>: <b>số đọc đồng hồ</b> (Smartgen/LIXiSE trả về) + <b>giờ bù</b> (khi màn hình đã thay)
         = số đồng bộ đề xuất ghi vào ô E.
-        <br>Mỗi lượt đồng bộ: số đọc <b>không đổi</b> → giữ nguyên ô E ·
-        <b>tăng</b> ≤ ${nfmt_((S.gio.cfg||{}).maxDay||24)} h/ngày (chia cho số ngày kể từ lần số đọc đổi) → ghi ·
-        <b>tăng quá</b> hoặc <b>tụt</b> → giữ ô E và hiện <b>⚠ Chọn thay màn hình / máy</b> để KTV xác nhận.
+        <br><b>Luật kiểm tra mỗi lượt đồng bộ</b> — số đọc <b>không đổi</b> → giữ nguyên ô E ·
+        <b>tăng</b> trong <b>trần cho phép</b> → ghi · <b>tăng quá trần</b> hoặc <b>tụt quá
+        ${nfmt_((S.gio.cfg||{}).tol||2)} h</b> → giữ ô E và hiện <b>⚠ Chọn thay màn hình / máy</b>.
+        <br><b>Trần cho phép</b> = số nhỏ hơn giữa (a) tổng <b>giờ chạy/ngày</b> mà Smartgen/LIXiSE
+        báo cho khoảng từ ngày nạp số cũ đến ngày nạp số mới, và (b) ${nfmt_((S.gio.cfg||{}).maxDay||24)} h/ngày ×
+        số ngày giữa 2 lần nạp. Số ngày lấy theo <b>NGÀY DỮ LIỆU</b>, không theo lúc chạy script —
+        nghỉ lễ không ai đăng nhập thì số dồn mấy ngày vẫn hợp lệ.
+        <br>Mọi mốc thời gian dưới đây là <b>giờ Việt Nam</b>. Dòng cảnh báo hiện ngay
+        <b>số cũ nạp ngày nào → số mới nạp ngày nào → chênh bao nhiêu → vi phạm luật nào</b>.
         <br><b>Mất truyền thông</b>: bấm <b>✍ Nhập tay</b>, ghi thẳng ô E. Có sóng lại, số đồng bộ vượt số nhập tay thì tự thay — không cộng trùng giờ.</span></p>
     </div>
     <div class="fbar">
@@ -5566,11 +5587,13 @@ function viewHourBase(){
       <thead><tr>
         <th>Mã máy</th><th>Trang trại</th><th>Đơn vị</th>
         <th style="text-align:right" title="Cột E Sheet 2 — bấm để nhập tay">Số giờ máy chạy (h)</th>
-        <th style="text-align:right">Số đọc đồng hồ (h)</th>
+        <th style="text-align:right" title="Số đọc đồng hồ lần trước và lần này, kèm NGÀY DỮ LIỆU mà mỗi số được nạp">
+          Số đọc đồng hồ (h)<br><span style="font-weight:400;text-transform:none;font-size:9px">cũ → mới · ngày nạp</span></th>
+        <th style="text-align:right" title="Chênh lệch giữa 2 số đọc, số ngày giữa 2 lần nạp, và bình quân giờ/ngày">
+          Chênh lệch<br><span style="font-weight:400;text-transform:none;font-size:9px">số ngày · h/ngày</span></th>
         <th style="text-align:right">Giờ bù (h)</th>
-        <th>Số đọc đổi lúc</th>
         <th style="text-align:center">Số lần thay</th>
-        <th>Thay gần nhất</th><th></th>
+        <th>Thay gần nhất<br><span style="font-weight:400;text-transform:none;font-size:9px">giờ VN</span></th><th></th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div></div>
@@ -5578,8 +5601,13 @@ function viewHourBase(){
     <div class="ph" style="margin-top:18px"><h1 style="font-size:15px">Lịch sử bộ đếm giờ</h1>
       <p>80 bản ghi gần nhất · nguồn “31. Lịch sử thay &amp; reset bộ đếm giờ”. Dòng chưa xác nhận nổi lên trang Tổng quan.</p></div>
     <div class="card"><div class="tw" style="max-height:40vh"><table>
-      <thead><tr><th>Thời gian</th><th>Mã máy</th><th>Kiểu</th>
-        <th style="text-align:right">Trước (h)</th><th style="text-align:right">Số đọc (h)</th>
+      <thead><tr><th>Thời gian<br><span style="font-weight:400;text-transform:none;font-size:9px">giờ VN</span></th>
+        <th>Mã máy</th><th>Kiểu</th>
+        <th style="text-align:right">Số đọc cũ (h)<br><span style="font-weight:400;text-transform:none;font-size:9px">ngày nạp</span></th>
+        <th style="text-align:right">Số đọc mới (h)<br><span style="font-weight:400;text-transform:none;font-size:9px">ngày nạp</span></th>
+        <th style="text-align:right">Chênh lệch<br><span style="font-weight:400;text-transform:none;font-size:9px">số ngày · h/ngày</span></th>
+        <th style="text-align:right">Trần (h)</th>
+        <th>Luật vi phạm &amp; căn cứ</th>
         <th style="text-align:right">Bù (h)</th><th style="text-align:right">Số giờ máy chạy (h)</th>
         <th>Lý do</th><th>Người ghi</th><th>Trạng thái</th></tr></thead>
       <tbody>${logs}</tbody>
@@ -5609,6 +5637,127 @@ function gioSilentTxt_(h){
   if (h == null) return '';
   return h >= 48 ? Math.floor(h/24) + ' ngày' : Math.round(h) + ' giờ';
 }
+
+/* ============================================================================
+ *  MỌI MỐC THỜI GIAN CỦA BỘ ĐẾM ĐI QUA ĐÚNG MỘT CỬA
+ * ----------------------------------------------------------------------------
+ *  Giao diện đang hiện ra ba dạng khác nhau cho cùng một loại giá trị:
+ *      "2026-09-28 09:10:53"                              ← chuỗi server ghi
+ *      "2026-09-29T03:59:59.000Z"                         ← ô bị Sheets đổi thành ngày
+ *      "Mon Sep 21 2026 21:49:44 GMT+0700 (Indochina Time)" ← String(new Date())
+ *  Dạng thứ ba là thứ đang nằm ở cột "Thay gần nhất". Không ai đọc bảng như thế để đi
+ *  điều tra được.
+ *
+ *  Quy ước: chuỗi "yyyy-MM-dd HH:mm" là GIỜ VIỆT NAM do server ghi sẵn → chỉ đổi cách
+ *  viết, KHÔNG quy đổi lại (quy đổi một lần nữa là cộng thêm 7 giờ oan). Mọi dạng còn
+ *  lại là mốc tuyệt đối → quy về Asia/Ho_Chi_Minh.
+ * ========================================================================== */
+function gioVN_(v){
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::\d{2})?$/);
+  if (m) return m[3] + '/' + m[2] + '/' + m[1] + ' ' + m[4] + ':' + m[5];
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return m[3] + '/' + m[2] + '/' + m[1];
+  const d = new Date(s);
+  if (!isFinite(d.getTime())) return s;
+  try {
+    /* Ghép tay từ formatToParts chứ không dùng format(): vi-VN trả "10:59 29/09/2026"
+     * — giờ đứng trước ngày, đọc ngược hẳn với mọi mốc khác trên trang này. */
+    const g = {};
+    new Intl.DateTimeFormat('vi-VN', { timeZone:'Asia/Ho_Chi_Minh',
+      day:'2-digit', month:'2-digit', year:'numeric',
+      hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(d)
+      .forEach(x => { g[x.type] = x.value; });
+    if (!g.day) return s;
+    return g.day + '/' + g.month + '/' + g.year + ' ' + (g.hour||'00') + ':' + (g.minute||'00');
+  } catch(e){ return s; }
+}
+/** Chỉ phần NGÀY — dùng cho "ngày nạp số đọc", vốn là ngày dữ liệu chứ không phải mốc giờ. */
+function gioNgayVN_(v){ return gioVN_(v).slice(0, 10); }
+
+/** Số ngày bao trùm giữa 2 chuỗi 'yyyy-MM-dd' (cùng ngày = 1). null nếu thiếu. */
+function gioSoNgay_(d1, d2){
+  const p = s => { const m = String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
+                   return m ? Date.UTC(+m[1], +m[2]-1, +m[3], 12) : null; };
+  const a = p(d1), b = p(d2);
+  if (a === null || b === null) return null;
+  const n = Math.round((b - a) / 86400000);
+  return n < 0 ? null : n + 1;
+}
+
+/**
+ * Ô "số đọc đồng hồ" — CẶP số cũ → mới, mỗi số kèm NGÀY NẠP.
+ * Một con số trơ trọi không cho ai điều tra được gì; cặp số kèm ngày thì trả lời ngay
+ * "cũ bao nhiêu nạp hôm nào, mới bao nhiêu nạp hôm nào, cách nhau mấy ngày".
+ */
+function gioCapDoc_(b, lim){
+  const raw  = (b && b.raw     != null) ? Number(b.raw)     : null;
+  const prev = (b && b.prevRaw != null) ? Number(b.prevRaw) : null;
+  const im   = (b && b.silentH != null && b.silentH > (lim||36))
+    ? `<div style="font-size:10px;color:var(--amb)">${gioSilentTxt_(b.silentH)} chưa có số mới</div>` : '';
+  if (raw == null)
+    return { html:'<span class="b bmu" title="Chưa có lượt đồng bộ nào ghi nhận số đọc">chưa có</span>' + im,
+             delta:'<span style="color:var(--mu)">—</span>' };
+
+  const dMoi = (b.rawDate ? gioNgayVN_(b.rawDate) : (b.at ? gioVN_(b.at) : ''));
+  const dCu  = (b.prevDate ? gioNgayVN_(b.prevDate) : '');
+  const moi = `<b>${nfmt_(raw)}</b><div style="font-size:10px;color:var(--mu)">nạp ${esc(dMoi||'—')}</div>`;
+  if (prev == null)
+    return { html: moi + im, delta:'<span style="color:var(--mu)" title="Chưa có số đọc trước để so sánh">—</span>' };
+
+  const cu = `<span style="color:var(--mu)">${nfmt_(prev)}</span>`
+           + `<div style="font-size:10px;color:var(--mu)">nạp ${esc(dCu||'—')}</div>`;
+  const d = Math.round((raw - prev) * 100) / 100;
+  const n = gioSoNgay_(b.prevDate, b.rawDate);
+  const tren = (n && n > 0) ? Math.round(d / n * 100) / 100 : null;
+  const maxDay = (S.gio.cfg||{}).maxDay || 24;
+  const mau = d < 0 ? 'var(--red)' : (tren != null && tren > maxDay ? 'var(--amb)' : 'inherit');
+  return {
+    html: cu + `<div style="font-size:10px;color:var(--mu);line-height:1">↓</div>` + moi + im,
+    delta: `<b style="color:${mau}">${d>0?'+':''}${nfmt_(d)}</b>`
+         + `<div style="font-size:10px;color:var(--mu)">${n==null?'—':n+' ngày'}`
+         + `${tren!=null?' · '+nfmt_(tren)+' h/ngày':''}</div>`
+  };
+}
+
+/**
+ * KHỐI CHẨN ĐOÁN CỦA MỘT DÒNG CHỜ XÁC NHẬN.
+ * Đây là thứ trả lời đủ 3 câu hỏi để điều tra được: số cũ nạp ngày nào, số mới nạp
+ * ngày nào, và chênh lệch đó vi phạm luật nào. Dòng ghi từ bản cũ chưa có 6 trường này
+ * thì rơi về câu lý do dạng văn xuôi — vẫn đọc được, chỉ không tách cột.
+ */
+function gioChanDoanHtml_(r){
+  if (!r) return '';
+  const d = (r.truoc != null && r.sau != null) ? Math.round((r.sau - r.truoc) * 100) / 100 : null;
+  const soNgay = (r.soNgay != null) ? Number(r.soNgay) : gioSoNgay_(r.ngayTruoc, r.ngaySau);
+  const tren = (d != null && soNgay) ? Math.round(d / soNgay * 100) / 100 : null;
+  const o = (nhan, val, phu) => `<div style="min-width:118px">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--mu)">${nhan}</div>
+      <div style="font-size:12.5px;font-weight:700">${val}</div>
+      ${phu ? `<div style="font-size:10px;color:var(--mu)">${phu}</div>` : ''}</div>`;
+  const coTruong = !!(r.luat || r.ngaySau || r.tran != null);
+  return `<div style="border-left:3px solid var(--amb);padding:2px 0 2px 10px">
+    <div style="font-size:11px;font-weight:700;color:#92400e;margin-bottom:6px">
+      ⚠ ${esc(r.chieu || r.loai || 'Chờ xác nhận')} · hệ thống phát hiện lúc ${esc(gioVN_(r.at)||'—')} (giờ VN)</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px 20px;margin-bottom:6px">
+      ${o('Số đọc cũ',  r.truoc==null?'—':nfmt_(r.truoc)+' h', 'nạp ngày ' + esc(gioNgayVN_(r.ngayTruoc)||'?'))}
+      ${o('Số đọc mới', r.sau==null?'—':nfmt_(r.sau)+' h',     'nạp ngày ' + esc(gioNgayVN_(r.ngaySau)||'?'))}
+      ${o('Chênh lệch', d==null?'—':(d>0?'+':'')+nfmt_(d)+' h',
+           (soNgay?nfmt_(soNgay)+' ngày':'—') + (tren!=null?' · '+nfmt_(tren)+' h/ngày':''))}
+      ${o('Trần cho phép', r.tran==null?'—':nfmt_(r.tran)+' h', 'tối đa ' + nfmt_((S.gio.cfg||{}).maxDay||24) + ' h/ngày')}
+      ${o('Số giờ máy chạy đang giữ', r.tong==null?'—':nfmt_(r.tong)+' h', 'ô E Sheet 2, không đổi tới khi xác nhận')}
+    </div>
+    ${r.luat  ? `<div style="font-size:11.5px;margin-bottom:3px"><b style="color:var(--red)">Vi phạm:</b> ${esc(r.luat)}</div>` : ''}
+    ${r.canCu ? `<div style="font-size:11px;color:var(--mu)"><b>Căn cứ tính trần:</b> ${esc(r.canCu)}</div>` : ''}
+    ${coTruong ? '' : `<div style="font-size:11px;color:var(--mu)">${esc(r.lyDo||'')}</div>`}
+  </div>`;
+}
+/** Khối chẩn đoán làm một dòng phụ ngay dưới dòng máy trong bảng. */
+function gioChanDoanRow_(r){
+  return `<tr style="background:#fffbeb"><td colspan="99" style="padding:4px 10px 10px 10px;border-top:none">
+    ${gioChanDoanHtml_(r)}</td></tr>`;
+}
 function gioStatusCell_(r){
   if (r.trangThai === 'Đã xác nhận') return `<span class="b bg" title="${esc(r.nguoiXn||'')}">✓ đã xác nhận</span>`;
   if (r.decide || (r.legacy && r.trangThai !== 'Đã xác nhận')) return `<button class="btn bg-a sm" onclick="openPendingResolve('${esc(r.id)}')">⚠ Chọn</button>`;
@@ -5623,11 +5772,11 @@ function odoCell_(code, odo){
   let tag = '';
   if (p){
     tag = ` <span class="b ba" style="cursor:pointer" onclick="event.stopPropagation();openPendingResolve('${esc(p.id)}')"
-      title="${esc(p.chieu||'')} lúc ${esc(p.at||'')} — số giờ đang được GIỮ NGUYÊN, bấm để chọn thay màn hình / thay máy">⚠ chờ xác nhận</span>`;
+      title="${esc(p.chieu||'')} lúc ${esc(gioVN_(p.at))} (giờ VN)${p.luat?' — '+esc(p.luat):''} — số giờ đang được GIỮ NGUYÊN, bấm để chọn thay màn hình / thay máy">⚠ chờ xác nhận</span>`;
   } else if (b && b.quyDoi != null && odo != null && odo > b.quyDoi + 0.5){
     tag = ` <span class="b ba" title="Số NHẬP TAY — cao hơn số đồng hồ quy đổi (${nfd_(b.quyDoi)} h) ${nfd_(odo - b.quyDoi)} h. Có sóng lại, số đồng hồ vượt qua thì tự thay.">✍</span>`;
   } else if (b && b.stuck){
-    tag = ` <span class="b bmu" title="Số đọc không đổi ${gioSilentTxt_(b.silentH)} (từ ${esc(b.at||'?')}) — máy dừng hoặc MẤT TRUYỀN THÔNG. Máy vẫn chạy thì bấm số để nhập tay.">📡 ${gioSilentTxt_(b.silentH)}</span>`;
+    tag = ` <span class="b bmu" title="Số đọc không đổi ${gioSilentTxt_(b.silentH)} (từ ${esc(gioVN_(b.at)||'?')} giờ VN) — máy dừng hoặc MẤT TRUYỀN THÔNG. Máy vẫn chạy thì bấm số để nhập tay.">📡 ${gioSilentTxt_(b.silentH)}</span>`;
   }
   return `<span style="cursor:pointer;text-decoration:underline dotted" title="Bấm để nhập tay số giờ máy chạy"
     onclick="openManualOdoForm('${esc(code)}')">${odo==null?'—':nfd_(odo)}</span>${tag}`;
@@ -5775,12 +5924,16 @@ function openPendingResolve(id){
       <span style="color:var(--mu);font-size:11px">${sub}</span></span></label>`;
   openOv(`
     <div class="mh"><div><h2>⚠ Số đọc ${tut?'TỤT':'NHẢY VỌT'} · ${codeFarmLine_(String(r.code))}</h2>
-      <p>${esc(r.lyDo||'')}</p></div>
+      <p>Xem kỹ khối chẩn đoán bên dưới trước khi chọn — nó nói rõ số cũ nạp ngày nào,
+         số mới nạp ngày nào, và chênh lệch đó vi phạm luật gì.</p></div>
       <button class="mcl" onclick="closeOv()">✕</button></div>
     <div class="mb">
+      <div style="background:#fffbeb;border:1.5px solid var(--amb);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+        ${gioChanDoanHtml_(r)}
+      </div>
       <div class="fgrid fg3" style="margin-bottom:8px">
-        <div class="iw"><div class="il">Số đọc trước</div><div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px">${r.truoc==null?'—':nfd_(r.truoc)} h</div></div>
         <div class="iw"><div class="il">Số đọc lúc phát hiện → mới nhất</div><div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px">${r.sau==null?'—':nfd_(r.sau)} → <b>${rNow==null?'—':nfd_(rNow)}</b> h</div></div>
+        <div class="iw"><div class="il">Giờ bù đang có</div><div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px">${off?(off>0?'+':'')+nfd_(off):'0'} h</div></div>
         <div class="iw"><div class="il">Số giờ máy chạy đang giữ</div><div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px"><b>${eNow==null?'—':nfd_(eNow)} h</b></div></div>
       </div>
       ${opt('manhinh','Thay MÀN HÌNH','Máy vẫn là máy cũ — tổng giờ nối tiếp, mốc bảo dưỡng GIỮ NGUYÊN. Hệ thống tự tính giờ bù cho các lượt đồng bộ sau.', thay, true)}
