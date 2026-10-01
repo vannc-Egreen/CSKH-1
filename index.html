@@ -916,7 +916,7 @@ function computeEffStreakAlerts_(){
     const site = `${r._byLetter[COL.DONVI]||''} · ${r._byLetter[COL.TRAI]||''}`.replace(/^\s*·\s*/,'').trim();
     const nang = x.streakKinds.indexOf('ineffective') >= 0;
     const chiTiet = x.dayEvals.slice(-x.streak).map(d =>
-        `ngày ${d.day}: CS ${d.pctKw==null?'—':Math.round(d.pctKw)+'%'} · giờ ${d.pctHr==null?'—':Math.round(d.pctHr)+'%'}`
+        `ngày ${d.nhan || d.day}: CS ${d.pctKw==null?'—':Math.round(d.pctKw)+'%'} · giờ ${d.pctHr==null?'—':Math.round(d.pctHr)+'%'}`
       ).join(' | ');
     return {
       type:'eff-streak', kind:'efficiency', maCode:x.code,
@@ -1280,6 +1280,10 @@ async function reloadAll(opt){
     const d = await apiGet('bootstrap', Object.keys(params).length ? params : null);
     if (!d.ok) throw new Error(d.error||'Lỗi bootstrap');
     if (d.rev) S.rev = Number(d.rev.n) || 0;
+    /* BỐI CẢNH NGÀY DỮ LIỆU — phải nhận TRƯỚC khi dựng màn hình, vì mọi phép đọc khối
+     * cột ngày của Sheet 5 bám vào nó (xem khối "NGÀY DỮ LIỆU"). Server tính ngoài
+     * cache nên không bao giờ cũ; thiếu nó (Code.gs chưa deploy bản mới) thì web tự suy. */
+    if (d.dataCtx) S.dataCtx = d.dataCtx;
     if (d.perm) applyPerm_(d.perm, d.pending);
     Object.assign(S, {
       master:d.master, tracking:d.tracking, spec:d.spec, filter:d.filter,
@@ -1751,6 +1755,16 @@ async function checkDataVersion_(){
       return;
     }
     if (!d || !d.ok || !d.rev) return;
+
+    /* Nhịp 15 giây này cũng là thứ đưa web qua nửa đêm cho đúng: máy để mở từ hôm
+     * qua sẽ nhận bối cảnh ngày mới mà không cần ai F5. Gói version chỉ đọc vài dòng
+     * ScriptProperties nên mang thêm dataCtx không tốn gì. */
+    if (d.dataCtx){
+      const cu = S.dataCtx && S.dataCtx.ym + '|' + S.dataCtx.maxValidDay;
+      S.dataCtx = d.dataCtx;
+      // Đổi ngày/đổi tháng → vẽ lại, nếu không màn hình vẫn nằm ở tháng của hôm qua
+      if (cu && cu !== (d.dataCtx.ym + '|' + d.dataCtx.maxValidDay)) { try { renderCurrent(); } catch(e){} }
+    }
 
     /* ---- CỔNG 1 · SMARTGEN ĐANG CHẠY THÌ KHÔNG ĐỒNG BỘ GOOGLE SHEET -------------
      * Cờ sg do server giữ, nên máy nào cũng thấy — kể cả máy KHÔNG phải người bấm
@@ -2434,11 +2448,13 @@ function anomalyCatChipsHtml_(pool){
  *  Duyệt gắn với ĐÚNG GIÁ TRỊ lúc duyệt: ai sửa ô đó về sau thì cảnh báo bật lại.
  * ========================================================================== */
 
-/** Tháng của dữ liệu Sheet 5, dạng YYYY-MM. Phải khớp với anomalyKey_ ở QLVT.gs. */
-function effMonthKey_(){
-  const n = new Date();
-  return n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0');
-}
+/** Tháng của dữ liệu Sheet 5, dạng YYYY-MM. Phải khớp với anomalyKey_ ở QLVT.gs.
+ *  THEO THÁNG DỮ LIỆU, KHÔNG THEO ĐỒNG HỒ — đây là khoá của Sheet 24 "xác nhận ô bất
+ *  thường". Lấy theo đồng hồ thì đúng 0h mùng 1, mọi lần duyệt của tháng cũ đổi khoá
+ *  trong im lặng: cả loạt cảnh báo đã tắt bật lại cùng lúc, trong khi ô số liệu không
+ *  ai đụng vào. Bật nhầm hàng loạt là cách nhanh nhất để người vận hành học cách phớt
+ *  lờ cảnh báo — xem lý do 2 của Sheet 24 trong QLVT.gs. */
+function effMonthKey_(){ return dataCtx_().ym; }
 /** 'yyyy-MM' — bản sao của _thangKey_() ở QLVT.gs. Xem giải thích ở đó (Sheets tự
  *  đổi "2026-08" thành ngày 01/08/2026, đọc lên là Date chứ không phải chuỗi). */
 function _thangKey_(v){
@@ -2773,6 +2789,7 @@ function computeDailyTotals_(filteredMasterRows){
 
   const nDays = Math.min(powerCols.length, hoursCols.length);
   const maxValidDay = maxValidDayOfMonth_();
+  const keep = keptTail_();          // đuôi tháng trước còn giữ lại, hoặc null
   const kwhByDay = Array(nDays).fill(0);
   const hoursByDay = Array(nDays).fill(0);
   const detailByDay = Array.from({length:nDays}, () => []);
@@ -2789,6 +2806,13 @@ function computeDailyTotals_(filteredMasterRows){
        * đường trung bình. Backend đã có clearStaleSheet5Cells_ dọn việc này, nhưng nó chỉ chạy
        * lúc đồng bộ; chặn thêm ở đây để biểu đồ đúng ngay cả trong khoảng chờ giữa 2 lần chạy. */
       if (i+1 > maxValidDay) continue;
+      /* ĐUÔI THÁNG TRƯỚC — ngày 21..31 giữ lại tới mùng 5 để còn so sánh. Chúng nằm
+       * ngay trong khối cột của tháng mới nhưng là số của THÁNG CŨ: cộng vào đây là
+       * cộng tháng 9 vào tổng tháng 10. Trong cửa sổ giữ lại thì maxValidDay chỉ 1..5
+       * nên dòng trên đã chặn rồi — vẫn viết ra một lần nữa, vì điều kiện ngầm "ngày
+       * giữ lại luôn lớn hơn ngày đang chạy" là thứ sẽ im lặng vỡ khi ai đó đổi mốc
+       * xoá, mà vỡ thì không có dấu hiệu gì ngoài một con số tổng cao bất thường. */
+      if (keep && i+1 >= keep.fromDay && i+1 <= keep.toDay) continue;
       const p = num(effRow[powerCols[i].header]);
       const h = num(effRow[hoursCols[i].header]);
       if (p!=null) kwhByDay[i] += p;
@@ -3150,11 +3174,13 @@ function analysisFilterBarHtml_(pfx){
 function viewAnalysis(){
   const filteredM = applyAnalysisFilters_(S.master.rows);
   const totals = computeDailyTotals_(filteredM);
+  const _ctx = dataCtx_();
 
   return `
     <div class="ph">
       <h1>Phân tích tổng hợp</h1>
-      <p>${filteredM.length}/${S.master.rows.length} máy theo bộ lọc · Tổng ${nfd_(totals.totalKwh)} kWh · ${nfd_(totals.totalHours)} h trong tháng</p>
+      <p>${filteredM.length}/${S.master.rows.length} máy theo bộ lọc · Tổng ${nfd_(totals.totalKwh)} kWh · ${nfd_(totals.totalHours)} h — <b>tháng ${esc(_ctx.month)}</b></p>
+      ${bangTinNgayDuLieu_()}
     </div>
 
     ${analysisFilterBarHtml_('an')}
@@ -3234,6 +3260,7 @@ function computeCapacityClassification_(filteredMasterRows){
   const { powerCols, hoursCols } = getDailyColSplitForMonth_(H, getDaysInCurrentMonth_());
   const num = numOrNull_;
   const nDays = Math.min(powerCols.length, hoursCols.length);
+  const ccKeep = keptTail_();   // đuôi tháng trước — không được cộng vào tháng đang xem
 
   const rows = filteredMasterRows.map(r => {
     const code = String(r._byLetter.B||'').trim();
@@ -3242,6 +3269,7 @@ function computeCapacityClassification_(filteredMasterRows){
 
     let sumKwh = 0, sumHr = 0, nDaysRun = 0;
     for (let i=0;i<nDays;i++){
+      if (ccKeep && i+1 >= ccKeep.fromDay && i+1 <= ccKeep.toDay) continue;
       const p = num(effRow[powerCols[i].header]);
       const h = num(effRow[hoursCols[i].header]);
       if (p!=null) sumKwh += p;
@@ -6448,7 +6476,8 @@ function viewEfficiency(){
   const nOk = countBy('ok');
   const nOver = countBy('over');
   const nStreak = allEval.filter(x => x.needCheck).length;
-  const evalDay = (allEval.find(x => x.evalDay != null) || {}).evalDay;
+  const _evX = allEval.find(x => x.evalDay != null) || {};
+  const evalDay = _evX.evalNhan || _evX.evalDay;
 
   const allMachineCards = computeEfficiencyPageList_(filtered);
 
@@ -7166,17 +7195,123 @@ function numOrNull_(v){
  * thực tế của tháng hiện tại bằng getDailyColSplitForMonth_() — không dùng getDailyColSplit_()
  * (bản đầy đủ 31 cột) trực tiếp để hiển thị/tính toán, tránh cả lỗi hiển thị thừa ngày lẫn
  * lỗi cộng nhầm số liệu tháng trước còn sót lại. */
-function getDaysInCurrentMonth_(){
+/* ============================================================================
+ *  NGAY DU LIEU — MOT MOC DUY NHAT CHO MOI PHEP TINH THEO NGAY
+ * ----------------------------------------------------------------------------
+ *  SU CO 01/10/2026, va vi sao no la loi THIET KE chu khong phai loi hien thi:
+ *
+ *  Ban cu neo moi phep doc khoi cot ngay vao DONG HO MAY NGUOI DUNG (new Date()).
+ *  Nhung Sheet 5 KHONG BAO GIO chua "hom nay": Smartgen chot mot ngay vao luc gan
+ *  nua dem, nen luot dong bo sang 1/10 ghi so cua NGAY 30/9 vao COT 30 — dung.
+ *  Dung 0h00 ngay 1/10, dong ho nhay sang thang 10 trong khi Sheet 5 van nguyen ven
+ *  thang 9. Web lap tuc cat mang ngay con 1, doc COT "ngay 1" (dang chua so cua 1/9)
+ *  roi gan nhan "ngay 1 thang 10". Ra dung man hinh da gap: 1 ngay co du lieu,
+ *  24.119 kWh, bieu do thang 10 co dung mot cot — ma con so do la cua ngay 1/9.
+ *
+ *  SUA TAN GOC: moc cua moi phep tinh theo ngay la NGAY DU LIEU = HOM QUA.
+ *  He qua truc tiep, va do la hanh vi dung: THANG DU LIEU DOI VAO MUNG 2, dung luc
+ *  co o dau tien cua thang moi de doc — khong phai 0h mung 1, luc chua co gi ca.
+ *
+ *  AI LA NGUON SU THAT: server. sheet5Ctx_() trong Code.gs doc PROP_SHEET5_MONTH nen
+ *  no biet CHAC khoi cot ngay dang chua thang nao — ke ca khi may ngay khong ai mo
+ *  web nen chua kip chuyen thang. Web chi tu suy khi chua nhan duoc goi do (vi du
+ *  index.html da len GitHub Pages ma Code.gs chua deploy) — xem suyNgayDuLieu_().
+ *
+ *  DUOI THANG TRUOC (ctx.keep): tu mung 2 den mung 5, khoi cot ngay chua HAI THANG
+ *  cung luc — cot 1..n la thang moi, cot 21..31 la duoi thang cu giu lai de so sanh.
+ *  Moi phep CONG phai loai tru dai do; chi cua so danh gia moi duoc doc sang, va khi
+ *  doc thi phai gan nhan thang de khong ai nham "ngay 21" la cua thang nao.
+ * ========================================================================== */
+function soThang_(d){ return ('0'+(d.getMonth()+1)).slice(-2) + '/' + d.getFullYear(); }
+
+/* Tu suy khi server chua tra dataCtx. CO Y giu nguyen quy tac cua server de hai ben
+ * khong noi hai chuyen: ngay du lieu = hom qua, thang du lieu = thang cua hom qua. */
+function suyNgayDuLieu_(){
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  const y = d.getFullYear(), m = d.getMonth();
+  const dim = new Date(y, m + 1, 0).getDate();
   const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  /* maxValidDay = ngay cuoi cung DUOC PHEP co so trong khoi cot.
+   *   · thang du lieu ≠ thang cua hom nay (dang o mung 1) → tron thang cu: 1..dim
+   *   · cung thang → toi HOM NAY, giu nguyen nhuong bo cu: van hanh co the nhap tay
+   *     so cua hom nay truoc khi Smartgen chot, giau di la giau so nguoi ta vua go. */
+  const cungThang = (now.getFullYear() === y && now.getMonth() === m);
+  return {
+    ym: y + '-' + ('0'+(m+1)).slice(-2),
+    month: soThang_(d),
+    daysInMonth: dim,
+    dataDay: d.getDate(),                    // ngay moi nhat DA CHOT so
+    maxValidDay: cungThang ? Math.min(now.getDate(), dim) : dim,
+    keep: null,                 // web khong tu doan duoc duoi thang — chi server biet
+    suy: true
+  };
 }
+
+/** Boi canh ngay dang dung. Server noi gi thi nghe server. */
+function dataCtx_(){
+  const s = S.dataCtx;
+  if (s && s.ym && s.daysInMonth) return s;
+  return suyNgayDuLieu_();
+}
+
+/* NGAY MOI NHAT DA CHOT SO (= hom qua, hoac ngay cuoi thang cu khi dang o mung 1).
+ * Khac maxValidDayOfMonth_ dung mot cho: moc nay KHONG tinh hom nay, vi hom nay may
+ * con dang chay. Moi KET LUAN danh gia phai chot o day. */
+function dataDayOfMonth_(){ return dataCtx_().dataDay; }
+
+/* DUOI THANG TRUOC CON GIU LAI — { ym, month, fromDay, toDay } hoac null.
+ * Dai cot nay nam NGAY TRONG khoi ngay cua thang moi nhung chua so cua thang CU.
+ * Ham cong nao quen loai tru no la cong thang 9 vao thang 10. */
+function keptTail_(){
+  const k = dataCtx_().keep;
+  if (!k || !(k.fromDay >= 1) || !(k.toDay >= k.fromDay)) return null;
+  return k;
+}
+/** Cot ngay thu `day` co phai cua THANG KHAC (duoi thang truoc giu lai) khong? */
+function isKeptTailDay_(day){
+  const k = keptTail_();
+  return !!(k && day >= k.fromDay && day <= k.toDay);
+}
+/** Nhan ngay cho man hinh: "21/9" neu la duoi thang truoc, "21" neu la thang dang xem. */
+function nhanNgay_(day){
+  const k = keptTail_();
+  if (k && day >= k.fromDay && day <= k.toDay) return day + '/' + Number(String(k.month||'').slice(0,2));
+  return String(day);
+}
+
+/* ----------------------------------------------------------------------------
+ *  DAI TIN "DANG XEM THANG NAO" — chi hien dung luc no giai thich duoc mot thu
+ *  trong nhu loi, tuc la vai ngay dau thang. Hien quanh nam thi no thanh nen va
+ *  khong ai doc nua, ma dung cai ngay can doc thi lai la ngay no bi bo qua.
+ * -------------------------------------------------------------------------- */
+function bangTinNgayDuLieu_(){
+  const c = dataCtx_();
+  const now = new Date();
+  const thangDongHo = soThang_(now);
+  const k = keptTail_();
+  if (c.month === thangDongHo && !k) return '';   // giua thang, khong co gi phai giai thich
+
+  const mai = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const y = [];
+  if (c.month !== thangDongHo){
+    y.push(`Đang xem <b>tháng ${esc(c.month)}</b> — số liệu đã chốt đến hết ngày ${c.dataDay}/${Number(String(c.month).slice(0,2))}.`);
+    y.push(`Số của ngày ${now.getDate()}/${now.getMonth()+1} sẽ có vào sáng ${mai.getDate()}/${mai.getMonth()+1}, khi đó màn hình tự chuyển sang tháng ${esc(thangDongHo)}.`);
+  } else {
+    y.push(`Đang xem <b>tháng ${esc(c.month)}</b> — mới có số đến ngày ${c.dataDay}.`);
+  }
+  if (k) y.push(`Ngày ${k.fromDay}–${k.toDay} của tháng ${esc(k.month)} vẫn được giữ lại để so sánh, <b>không</b> cộng vào tổng tháng này.`);
+
+  return `<div class="b bmu" style="display:block;margin-top:6px;padding:7px 10px;line-height:1.55;font-weight:500;white-space:normal">
+    🗓 ${y.join(' ')}
+  </div>`;
+}
+
+function getDaysInCurrentMonth_(){ return dataCtx_().daysInMonth; }
 /* NGÀY CUỐI CÙNG TRONG THÁNG ĐƯỢC PHÉP CÓ SỐ LIỆU = hôm nay.
  * Ngày mai trở đi chưa xảy ra, nên bất kỳ số nào nằm ở đó đều là dữ liệu tháng trước còn sót.
  * Hôm nay vẫn tính vì vận hành có thể nhập tay trước khi Smartgen chốt lúc gần nửa đêm. */
-function maxValidDayOfMonth_(){
-  const now = new Date();
-  return Math.min(now.getDate(), getDaysInCurrentMonth_());
-}
+function maxValidDayOfMonth_(){ return dataCtx_().maxValidDay; }
 function getDailyColSplitForMonth_(headers, daysInMonth){
   const { powerCols, hoursCols } = getDailyColSplit_(headers);
   return { powerCols: powerCols.slice(0, daysInMonth), hoursCols: hoursCols.slice(0, daysInMonth) };
@@ -7192,6 +7327,37 @@ function recentWindowDays_(arr, anchorDay, n){
   for (let day = startDay; day <= anchorDay; day++){
     const v = arr[day-1];
     if (v != null) out.push({ day, val: v });
+  }
+  return out;
+}
+
+/* ----------------------------------------------------------------------------
+ *  CỬA SỔ NGÀY VẮT QUA RANH GIỚI THÁNG
+ * ----------------------------------------------------------------------------
+ *  ĐÂY LÀ LÝ DO TỒN TẠI của việc giữ lại ngày 21..31 của tháng cũ tới mùng 5.
+ *  Mùng 2 tháng mới, cửa sổ đánh giá 7 ngày chỉ còn ĐÚNG MỘT ngày có số — mọi so
+ *  sánh "hơn/kém ngày trước", mọi chuỗi ngày kém liên tiếp đều tắt ngóm, và tắt
+ *  đúng vào lúc chẳng ai để ý vì màn hình vẫn xanh. Giữ đuôi tháng cũ mà không
+ *  hàm nào đọc sang được thì chỉ là giữ rác.
+ *
+ *  Hàm này trả về dãy cột cần đọc, mới nhất ở CUỐI:
+ *      [{ col, day, nhan, thangTruoc }]
+ *  `col` là số thứ tự cột trong khối ngày (1-based) — đuôi tháng cũ nằm đúng tại
+ *  cột mang số ngày của nó (ngày 21/9 ở cột 21), nên col === day cho cả hai vế.
+ *  `nhan` là thứ ĐƯỢC PHÉP in ra màn hình: "21/9" cho đuôi tháng cũ, "21" cho
+ *  tháng đang xem. In trần số 21 cho cả hai là mời người đọc hiểu nhầm.
+ * -------------------------------------------------------------------------- */
+function cuaSoNgay_(anchorDay, n){
+  const out = [];
+  for (let day = anchorDay; day >= 1 && out.length < n; day--)
+    out.unshift({ col: day, day, nhan: String(day), thangTruoc: false });
+  if (out.length < n){
+    const k = keptTail_();
+    if (k){
+      const mm = Number(String(k.month||'').slice(0,2)) || '';
+      for (let day = k.toDay; day >= k.fromDay && out.length < n; day--)
+        out.unshift({ col: day, day, nhan: day + '/' + mm, thangTruoc: true });
+    }
   }
   return out;
 }
@@ -7316,8 +7482,16 @@ function computeEfficiencyAll_(masterRows){
     const daily = { power: [], hours: [] };
     const powerArr = [], hoursArr = [];
     if (effRow){
-      powerCols.forEach((c,i) => { const v = num(effRow[c.header]); daily.power.push({ day: i+1, val: v, header: c.header, rowId: effRow._row, editable: uniqueHeader(c.header) }); powerArr.push(v); });
-      hoursCols.forEach((c,i) => { const v = num(effRow[c.header]); daily.hours.push({ day: i+1, val: v, header: c.header, rowId: effRow._row, editable: uniqueHeader(c.header) }); hoursArr.push(v); });
+      /* HAI MẢNG, HAI MỤC ĐÍCH, CỐ Ý KHÁC NHAU:
+       *   powerArr/hoursArr — số THÔ theo vị trí cột. Cửa sổ đánh giá đọc sang đuôi
+       *     tháng trước qua đây, nên tuyệt đối không được lọc.
+       *   daily.power/hours — thứ BIỂU ĐỒ vẽ dưới nhãn "ngày N của tháng đang xem".
+       *     Ô thuộc đuôi tháng trước phải thành khoảng trống, nếu không ngày 21/9 sẽ
+       *     hiện lên như ngày 21/10 và không có gì trên màn hình nói khác đi. */
+      const eaKeep = keptTail_();
+      const eaNgoai = i => !!(eaKeep && i+1 >= eaKeep.fromDay && i+1 <= eaKeep.toDay);
+      powerCols.forEach((c,i) => { const v = num(effRow[c.header]); daily.power.push({ day: i+1, val: eaNgoai(i) ? null : v, thangTruoc: eaNgoai(i), header: c.header, rowId: effRow._row, editable: uniqueHeader(c.header) }); powerArr.push(v); });
+      hoursCols.forEach((c,i) => { const v = num(effRow[c.header]); daily.hours.push({ day: i+1, val: eaNgoai(i) ? null : v, thangTruoc: eaNgoai(i), header: c.header, rowId: effRow._row, editable: uniqueHeader(c.header) }); hoursArr.push(v); });
     }
 
     // Backward compat: points cho code cũ (chỉ dùng khối power)
@@ -7339,27 +7513,32 @@ function computeEfficiencyAll_(masterRows){
      *       STREAK_ALERT_DAYS ngày trở lên → needCheck = phải đi kiểm tra, và chỉ
      *       những máy này mới được nhắn Zalo cho KTV phụ trách.
      *
-     * NGÀY ĐÁNH GIÁ CHỐT = HÔM QUA: số liệu hôm nay Smartgen chưa chốt xong, lấy vào
-     * là mỗi sáng cả danh sách hoá đỏ rồi trưa lại tự khỏi. */
-    const anchorDay = Math.max(1, Math.min(new Date().getDate() - 1, daysInMonth));
+     * NGÀY ĐÁNH GIÁ CHỐT = NGÀY DỮ LIỆU (hôm qua, hoặc ngày cuối tháng cũ nếu hôm
+     * nay là mùng 1): số liệu hôm nay Smartgen chưa chốt xong, lấy vào là mỗi sáng cả
+     * danh sách hoá đỏ rồi trưa lại tự khỏi. Bản cũ viết thẳng new Date().getDate()-1,
+     * nên sáng mùng 1 ra số 0 → kẹp về 1 → đi chấm điểm "ngày 1 của tháng mới" bằng ô
+     * đang chứa số của ngày 1 THÁNG TRƯỚC. Nay bám dataDayOfMonth_(). */
+    const anchorDay = Math.max(1, Math.min(dataDayOfMonth_(), daysInMonth));
     const pctOf = (val, design) => (val!=null && design!=null && design>0) ? (val/design*100) : null;
 
-    const winFrom = Math.max(1, anchorDay - EVAL_WINDOW_DAYS + 1);
+    /* Cửa sổ có thể vắt sang đuôi tháng trước còn giữ lại — xem cuaSoNgay_(). */
     const dayEvals = [];
-    for (let day = winFrom; day <= anchorDay; day++){
-      const vHr = hoursArr[day-1], vKw = powerArr[day-1];
+    cuaSoNgay_(anchorDay, EVAL_WINDOW_DAYS).forEach(w => {
+      const vHr = hoursArr[w.col-1], vKw = powerArr[w.col-1];
       /* Trống cả hai vế = CHƯA ĐỒNG BỘ TỚI NGÀY NÀY, không phải ngày kém. Chấm điểm
        * một ngày chưa có dữ liệu là cách nhanh nhất để cả hệ thống hoá đỏ mỗi sáng. */
-      if (vHr == null && vKw == null) continue;
+      if (vHr == null && vKw == null) return;
       const pHr = pctOf(vHr, designHr), pKw = pctOf(vKw, designKw);
-      if (pHr == null && pKw == null) continue;          // chưa khai định mức → không kết luận
-      dayEvals.push({ day, valHr:vHr, valKw:vKw, pctHr:pHr, pctKw:pKw, status:effDayStatus_(pHr, pKw) });
-    }
+      if (pHr == null && pKw == null) return;          // chưa khai định mức → không kết luận
+      dayEvals.push({ day:w.day, nhan:w.nhan, thangTruoc:w.thangTruoc,
+                      valHr:vHr, valKw:vKw, pctHr:pHr, pctKw:pKw, status:effDayStatus_(pHr, pKw) });
+    });
     /* So với ngày ĐƯỢC CHẤM liền trước, không phải ngày lịch liền trước: nếu hôm kia
      * chưa đồng bộ thì so với hôm kia là so với khoảng trắng. */
     dayEvals.forEach((d, i) => {
       const prev = dayEvals[i-1];
       d.prevDay = prev ? prev.day : null;
+      d.prevNhan = prev ? (prev.nhan || String(prev.day)) : null;
       d.dHr = (prev && d.pctHr != null && prev.pctHr != null) ? d.pctHr - prev.pctHr : null;
       d.dKw = (prev && d.pctKw != null && prev.pctKw != null) ? d.pctKw - prev.pctKw : null;
     });
@@ -7385,6 +7564,9 @@ function computeEfficiencyAll_(masterRows){
     const pctHr    = lastEval ? lastEval.pctHr : null;
     const pctKw    = lastEval ? lastEval.pctKw : null;
     const evalDay  = lastEval ? lastEval.day   : null;
+    /* Nhãn hiển thị của ngày chốt. Khác evalDay đúng ở ca cửa sổ vắt sang tháng
+     * trước: lúc đó số 21 trần trụi không nói được nó là 21 của tháng nào. */
+    const evalNhan = lastEval ? (lastEval.nhan || String(lastEval.day)) : null;
 
     const badHr = pctHr != null && pctHr < BAD_THRESHOLD_PCT;
     const badKw = pctKw != null && pctKw < BAD_THRESHOLD_PCT;
@@ -7409,7 +7591,7 @@ function computeEfficiencyAll_(masterRows){
       recentDaysKw: dayEvals.filter(d => d.valKw != null).length,
       recentHrDays, recentKwDays, worstDays, badDays,
       daily, points, powerArr, hoursArr, badHr, badKw,
-      dayEvals, evalDay, streak, streakDays, needCheck,
+      dayEvals, evalDay, evalNhan, streak, streakDays, needCheck,
       streakKinds:[...streakKinds],
       isIneffective, isBad, effStatus
     };
@@ -7447,8 +7629,12 @@ function computeMonthlyReport(masterRows){
     const designKw = num(effRow[hKwTk]);
 
     let sumKwh = 0, daysKwh = 0, sumHr = 0, daysHr = 0;
-    powerCols.forEach(c => { const v = num(effRow[c.header]); if (v!=null){ sumKwh += v; daysKwh++; } });
-    hoursCols.forEach(c => { const v = num(effRow[c.header]); if (v!=null){ sumHr += v; daysHr++; } });
+    /* Bỏ qua đuôi tháng trước đang giữ lại — xem keptTail_(). Không bỏ thì báo cáo
+     * tháng mới cộng luôn 10 ngày cuối tháng cũ và tự khoe một con số không có thật. */
+    const mrKeep = keptTail_();
+    const mrBo = i => !!(mrKeep && i+1 >= mrKeep.fromDay && i+1 <= mrKeep.toDay);
+    powerCols.forEach((c,i) => { if (mrBo(i)) return; const v = num(effRow[c.header]); if (v!=null){ sumKwh += v; daysKwh++; } });
+    hoursCols.forEach((c,i) => { if (mrBo(i)) return; const v = num(effRow[c.header]); if (v!=null){ sumHr += v; daysHr++; } });
 
     const targetKwh = designKw!=null ? designKw * daysInMonth : null;
     const targetHr  = designHr!=null ? designHr * daysInMonth : null;
@@ -8026,10 +8212,11 @@ function daysInMonthLabel_(label){
   return new Date(Number(m[2]), Number(m[1]), 0).getDate();
 }
 
-function currentMonthLabel_(){
-  const d = new Date();
-  return ('0'+(d.getMonth()+1)).slice(-2) + '/' + d.getFullYear();
-}
+/* THANG DANG XEM = THANG DU LIEU, khong phai thang cua dong ho.
+ * Ngay 1/10 thi thang 10 chua co lay mot o so lieu nao; goi no la "thang hien tai"
+ * roi di doc cot 10/2026 cua Sheet 9 chi cho ra mot cot rong va mot the "0%".
+ * Xem khoi NGAY DU LIEU o tren. */
+function currentMonthLabel_(){ return dataCtx_().month; }
 
 /**
  * SỐ NGÀY CỦA THÁNG ĐÃ CÓ GHI NHẬN CHỈ SỐ — mẫu số của mọi phép "trung bình theo ngày".
@@ -8051,8 +8238,12 @@ function daysRecordedCurrentMonth_(codes){
   const hMa = findHeader(H, 'mã.?máy','ma may','^ma$');
   const { powerCols, hoursCols } = getDailyColSplitForMonth_(H, getDaysInCurrentMonth_());
   const n = Math.min(powerCols.length, hoursCols.length);
+  const drKeep = keptTail_();
   let count = 0;
   for (let i=0; i<n; i++){
+    /* Ngày của tháng trước không phải "ngày đã ghi nhận" của tháng này. Đếm nhầm là
+     * mẫu số phình thêm 10 — mọi chỉ số trung bình/ngày tụt xuống mà không ai hiểu vì sao. */
+    if (drKeep && i+1 >= drKeep.fromDay && i+1 <= drKeep.toDay) continue;
     const has = eff.rows.some(r => {
       const code = String((hMa?r[hMa]:'')||r._byLetter?.B||'').trim();
       if (codes && !codes.has(code)) return false;
@@ -8779,6 +8970,14 @@ function computeDataAnomalies(opts){
   const hKwTk = findHeader(H, 'công suất thiết kế phát','thiết kế.*phát/.?ngày');
   const { powerCols, hoursCols } = getDailyColSplitForMonth_(H, getDaysInCurrentMonth_());
   const num = numOrNull_;
+  /* QUÉT TỚI ĐÂU — hai mốc, và thiếu mốc nào cũng cho ra cùng một hậu quả: một loạt
+   * cảnh báo BẬT LẠI hàng loạt dù không ai đụng vào số liệu.
+   *   · maxValidDay : ngày chưa tới thì không có gì để soi. Bản cũ quét trọn 31 cột.
+   *   · đuôi tháng trước (ngày 21-31 giữ lại tới mùng 5): là số của THÁNG CŨ, mà khoá
+   *     xác nhận có mang tháng trong đó. Soi chúng dưới tháng mới = 433 ô KTV đã duyệt
+   *     trong tháng 9 bỗng không khớp khoá nào và hiện lại hết. */
+  const anMaxDay = maxValidDayOfMonth_();
+  const anKeep = keptTail_();
   const mByCode = new Map(S.master.rows.map(m => [String(m._byLetter[COL.MA]||'').trim(), m]));
 
   const alerts = [];
@@ -8819,6 +9018,8 @@ function computeDataAnomalies(opts){
     for (let i=0;i<n;i++){
       const p = powerVals[i], h = hoursVals[i];
       const day = i+1;
+      if (day > anMaxDay) continue;                                            // ngày chưa tới
+      if (anKeep && day >= anKeep.fromDay && day <= anKeep.toDay) continue;     // số của tháng trước
 
       /* NGÀY CHƯA CÓ DỮ LIỆU — BỎ QUA HOÀN TOÀN.
        * Cả điện phát lẫn giờ chạy đều bằng 0 nghĩa là chưa đồng bộ tới ngày này (hoặc
@@ -8969,7 +9170,7 @@ function ineffCardHtml(x, uid){
   const r = x.row;
   const region = regionOf(r);
   const anomalies = (S.alerts.alerts||[]).filter(a => a.type==='data-anomaly' && a.maCode===x.code);
-  const dayLbl = x.evalDay != null ? ('ngày ' + x.evalDay) : 'chưa có ngày nào chốt';
+  const dayLbl = x.evalDay != null ? ('ngày ' + (x.evalNhan || x.evalDay)) : 'chưa có ngày nào chốt';
 
   /* Δ hiển thị bằng điểm phần trăm (không phải %), vì nó là hiệu của hai tỷ lệ.
    * Ngưỡng ±3 điểm mới tô màu: dao động nhỏ hơn thế là nhiễu của khí và tải. */
@@ -8984,9 +9185,9 @@ function ineffCardHtml(x, uid){
 
   const dayRows = (x.dayEvals||[]).slice().reverse().map(d => {
     const meta = EFF_DAY_META[d.status] || EFF_DAY_META.nodata;
-    const laNgayChot = d.day === x.evalDay;
+    const laNgayChot = (d.nhan || String(d.day)) === String(x.evalNhan != null ? x.evalNhan : x.evalDay);
     return `<tr${laNgayChot?' style="background:#f8fafc"':''}>
-      <td style="white-space:nowrap"><b>Ngày ${d.day}</b>${laNgayChot?' <span class="b bmu" title="Ngày mới nhất đã chốt số liệu — kết luận của thẻ lấy ở đây">chốt</span>':''}</td>
+      <td style="white-space:nowrap"><b>Ngày ${d.nhan || d.day}</b>${laNgayChot?' <span class="b bmu" title="Ngày mới nhất đã chốt số liệu — kết luận của thẻ lấy ở đây">chốt</span>':''}</td>
       <td style="text-align:right">${d.valKw==null?'—':nfd_(d.valKw)}</td>
       <td style="text-align:right">${pctCell(d.pctKw)}</td>
       <td style="text-align:right">${delta(d.dKw)}</td>
@@ -15661,14 +15862,14 @@ function rpHieuQua_(){
     (x.dayEvals || []).forEach(d => {
       const p = (d.pctKw != null) ? d.pctKw : d.pctHr;
       if (p == null) return;
-      if (!teNhat || p < teNhat.pct) teNhat = { day:d.day, pct:p };
+      if (!teNhat || p < teNhat.pct) teNhat = { day:d.day, nhan:(d.nhan || String(d.day)), pct:p };
     });
 
     return {
       code: x.code, khu: m.khu, site: m.site, vanHanh: m.vanHanh, loaiHinh: m.loaiHinh,
       designKw: x.designKw, designHr: x.designHr,
       actualKw: x.actualKw, actualHr: x.actualHr,
-      pctKw: x.pctKw, pctHr: x.pctHr, evalDay: x.evalDay,
+      pctKw: x.pctKw, pctHr: x.pctHr, evalDay: x.evalDay, evalNhan: x.evalNhan,
       trangThai: x.effStatus, streak: x.streak || 0, needCheck: !!x.needCheck,
       soNgayKw: kw.length, tbKw: kw.length ? Math.round(kw.reduce((a,b)=>a+b,0)/kw.length*100)/100 : null,
       cvKw, cvHr, khongDeu, teNhat,
@@ -16437,7 +16638,7 @@ function rpViewHieuQua_(){
         + '<td style="text-align:right;font-family:var(--mono)">'+rpN_(x.actualHr)+' / '+rpN_(x.designHr)+' h</td>'
         + '<td style="text-align:right;font-family:var(--mono)">'
         +   (x.streak ? '<b'+(x.needCheck?' style="color:var(--red)"':'')+'>'+x.streak+' ngày</b>' : '—')+'</td>'
-        + '<td style="font-size:11px">'+(x.teNhat ? 'Ngày '+x.teNhat.day+' — '+Math.round(x.teNhat.pct)+'%' : '—')+'</td>'
+        + '<td style="font-size:11px">'+(x.teNhat ? 'Ngày '+(x.teNhat.nhan||x.teNhat.day)+' — '+Math.round(x.teNhat.pct)+'%' : '—')+'</td>'
         + '</tr>').join('')
       + '</tbody></table></div></div></div>';
   }
@@ -16464,7 +16665,7 @@ function rpViewHieuQua_(){
         + '<td style="text-align:right;font-family:var(--mono)">'+(x.cvHr!=null?x.cvHr+'%':'—')+'</td>'
         + '<td style="text-align:right;font-family:var(--mono)">'+rpN_(x.tbKw)+' kWh</td>'
         + '<td style="text-align:right;font-family:var(--mono)">'+x.soNgayKw+'</td>'
-        + '<td style="font-size:11px">'+(x.teNhat ? 'Ngày '+x.teNhat.day+' — '+Math.round(x.teNhat.pct)+'%' : '—')+'</td>'
+        + '<td style="font-size:11px">'+(x.teNhat ? 'Ngày '+(x.teNhat.nhan||x.teNhat.day)+' — '+Math.round(x.teNhat.pct)+'%' : '—')+'</td>'
         + '</tr>').join('')
       + '</tbody></table></div></div></div>';
   }
@@ -16593,7 +16794,7 @@ function rpNhanXetTong_(d){
 function rpBangNgay_(x){
   const de = (x.dayEvals||[]);
   if (!de.length) return '';
-  const cols = [{t:'Chỉ tiêu', w:'16%'}].concat(de.map(dv => ({ t:'N'+dv.day, a:'right' })));
+  const cols = [{t:'Chỉ tiêu', w:'16%'}].concat(de.map(dv => ({ t:'N'+(dv.nhan || dv.day), a:'right' })));
   const hang = (ten, f) => ({ c: ['<b>'+rpE_(ten)+'</b>'].concat(de.map(f)) });
   return wTB_(cols, [
     hang('Điện phát (kWh)', dv => dv.valKw!=null ? rpN_(dv.valKw,0) : '—'),
@@ -16697,7 +16898,7 @@ function rpXuatHieuQua(){
             x.pctKw!=null ? '<b>'+Math.round(x.pctKw)+'%</b>' : '—',
             rpN_(x.actualHr)+' / '+rpN_(x.designHr)+' h',
             x.streak ? '<b>'+x.streak+'</b>' : '—',
-            x.teNhat ? ('N'+x.teNhat.day+' — '+Math.round(x.teNhat.pct)+'%') : '—'],
+            x.teNhat ? ('N'+(x.teNhat.nhan||x.teNhat.day)+' — '+Math.round(x.teNhat.pct)+'%') : '—'],
       })));
   }
 
@@ -16722,7 +16923,7 @@ function rpXuatHieuQua(){
       d.phapPhu.map((x,i) => ({ _bg:'#f3eefc',
         c:[String(i+1), '<b>'+rpE_(x.code)+'</b>', rpE_(x.site||'—'),
            '<b>'+x.cvKw+'%</b>', x.cvHr!=null?x.cvHr+'%':'—', rpN_(x.tbKw,0)+' kWh',
-           String(x.soNgayKw), x.teNhat ? ('N'+x.teNhat.day+' — '+Math.round(x.teNhat.pct)+'%') : '—'] })));
+           String(x.soNgayKw), x.teNhat ? ('N'+(x.teNhat.nhan||x.teNhat.day)+' — '+Math.round(x.teNhat.pct)+'%') : '—'] })));
   }
 
   /* ---- V. SO SÁNH GIỮA CÁC THÁNG ---- */
