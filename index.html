@@ -979,10 +979,15 @@ function navEfficiencyToCode(code){
   S.filters.eff.type.clear();
   // Mở hết mọi phân loại — nếu không, máy cần xem có thể nằm ngoài bộ lọc đang bật và không tìm thấy
   S.filters.eff.status = new Set(EFF_STATUS_KEYS);
+  /* ĐẶT LUÔN Ô TÌM KIẾM = mã máy. Trước đây chỉ xoá bộ lọc rồi cuộn: nếu ô tìm đang
+   * bật sẵn một mã khác thì máy cần xem bị lọc mất, cuộn tới không có gì. Đặt q thì
+   * trang chỉ còn đúng máy đó — chắc chắn thấy, và chip "✕ đang tìm" có sẵn để quay lại. */
+  S.filters.eff.q = String(code||'').trim();
   nav('efficiency');
   setTimeout(() => {
-    const el = [...document.querySelectorAll('#pg-efficiency .mm')].find(x => x.textContent.trim() === code);
-    const card = el && el.closest('.card');
+    /* Thẻ máy mang class "effcard", KHÔNG phải "card" — closest('.card') khớp theo
+     * từng token class nên bản cũ không bao giờ tìm thấy thẻ và lặng lẽ không cuộn. */
+    const card = document.querySelector(`.effcard[data-code="${CSS.escape(String(code||'').trim())}"]`);
     if (card){
       card.scrollIntoView({ behavior:'smooth', block:'center' });
       card.style.transition = 'box-shadow .3s';
@@ -6447,27 +6452,51 @@ function computeEfficiencyPageList_(filteredMasterRows){
                 || ((a.pctKw ?? 999) - (b.pctKw ?? 999)));
 }
 
-function viewEfficiency(){
-  const m = S.master.rows;
-  // Chỉ tính máy đủ điều kiện: HĐ bình thường, loại Thuê/Hợp tác/Bán
-  const base = m.filter(r => statusKey(r)==='active' && ['Thuê','Hợp tác','Bán'].includes(typeOf(r)));
-
-  // Áp dụng bộ lọc đa chọn
+/* ============================================================================
+ *  NGUỒN DUY NHẤT của tập máy trang Hiệu quả vận hành — lọc khu vực, loại hình VÀ
+ *  ô tìm kiếm. Mọi nơi cần danh sách máy của trang này PHẢI gọi hàm này.
+ * ----------------------------------------------------------------------------
+ *  LỖI ĐÃ XẢY RA, VÀ VÌ SAO PHẢI GỘP VỀ MỘT HÀM:
+ *  Ô tìm mã máy được thêm vào sau, và chỉ được thêm ở viewEfficiency() (nơi dựng
+ *  thẻ) mà quên afterEfficiency() (nơi vẽ biểu đồ vào canvas "eff_<i>_chart").
+ *  Hậu quả: gõ "ns100kva8" → trang hiện đúng 1 thẻ NS100KVA8, nhưng afterEfficiency
+ *  vẫn dựng danh sách KHÔNG qua ô tìm kiếm, nên phần tử thứ 0 của nó là một máy
+ *  khác → canvas "eff_0_chart" được vẽ bằng dữ liệu máy đó. Thẻ ghi NS100KVA8 mà
+ *  biểu đồ bên trong (kể cả tiêu đề) là của NS200KVA15.
+ *
+ *  Ghi chú chống lệch đã có sẵn ở computeEfficiencyPageList_, nhưng nó chỉ nói về
+ *  SẮP XẾP — lần này lệch ở khâu LỌC nên vẫn lọt. Đây là lỗi kiến trúc tự gây ra:
+ *  hai bên cùng tự dựng lại một danh sách thì sớm muộn cũng lệch. Nay cả tập lọc
+ *  lẫn thứ tự đều nằm trong một đường duy nhất:
+ *      efficiencyFilteredMaster_()  →  computeEfficiencyPageList_()
+ *  Thêm bộ lọc mới về sau chỉ sửa ở đây, không còn chỗ thứ hai để quên.
+ * ========================================================================== */
+function efficiencyFilteredMaster_(){
   const rSet = S.filters.eff.region;
   const tSet = S.filters.eff.type;
   /* Ô TÌM MÃ MÁY. Trang này là danh sách thẻ dài, mỗi thẻ kèm 1 biểu đồ — cuộn tay tìm
    * một mã máy cụ thể vừa chậm vừa dễ trượt. Khớp cả mã máy, đơn vị và tên trại vì
    * người dùng nhớ trại nhiều hơn nhớ mã. */
   const effQ = (S.filters.eff.q || '').trim().toLowerCase();
-  const filtered = base.filter(r => {
-    const okR = !rSet.size || rSet.has(regionOf(r));
-    const okT = !tSet.size || tSet.has(typeOf(r));
+  return S.master.rows.filter(r => {
+    // Chỉ tính máy đủ điều kiện: HĐ bình thường, loại Thuê/Hợp tác/Bán
+    if (statusKey(r)!=='active' || !['Thuê','Hợp tác','Bán'].includes(typeOf(r))) return false;
+    if (rSet.size && !rSet.has(regionOf(r))) return false;
+    if (tSet.size && !tSet.has(typeOf(r))) return false;
+    if (!effQ) return true;
     const hay = `${r._byLetter[COL.MA]||''} ${r._byLetter[COL.DONVI]||''} ${r._byLetter[COL.TRAI]||''} ${r._byLetter[COL.TINH]||''}`.toLowerCase();
-    const okQ = !effQ || hay.includes(effQ);
-    return okR && okT && okQ;
+    return hay.includes(effQ);
   });
+}
 
-  /* Đếm theo TOÀN BỘ máy sau lọc khu vực/loại hình — KHÔNG đếm trên danh sách đã lọc
+function viewEfficiency(){
+  const m = S.master.rows;
+  // Mẫu số để đối chiếu: toàn bộ máy đủ điều kiện, chưa qua bất kỳ bộ lọc nào
+  const base = m.filter(r => statusKey(r)==='active' && ['Thuê','Hợp tác','Bán'].includes(typeOf(r)));
+  // Tập máy của trang — PHẢI lấy từ hàm dùng chung, không tự lọc lại tại chỗ
+  const filtered = efficiencyFilteredMaster_();
+
+  /* Đếm theo TOÀN BỘ máy sau lọc khu vực/loại hình/tìm kiếm — KHÔNG đếm trên danh sách đã lọc
    * phân loại, nếu không con số trên chip sẽ tự thay đổi mỗi lần bấm chính nó. */
   const allEval = computeEfficiencyAll_(filtered);
   const countBy = k => allEval.filter(x => x.effStatus === k).length;
@@ -6497,7 +6526,7 @@ function viewEfficiency(){
   return `
     <div class="ph">
       <h1>Theo dõi hiệu quả vận hành</h1>
-      <p>${base.length} máy đủ điều kiện · ${filtered.length} máy sau lọc khu vực/loại hình · đang hiện ${allMachineCards.length} thẻ ·
+      <p>${base.length} máy đủ điều kiện · ${filtered.length} máy sau lọc${(S.filters.eff.q||'').trim()?` (đang tìm “${esc(S.filters.eff.q)}”)`:''} · đang hiện ${allMachineCards.length} thẻ ·
         <span style="color:var(--red);font-weight:700">${nIneffective} không hiệu quả</span> (giờ hoặc CS &lt; ${SEVERE_THRESHOLD_PCT}%, hoặc đủ giờ mà CS &lt; ${BAD_THRESHOLD_PCT}%) ·
         <span style="color:var(--amb);font-weight:700">${nBad} kém hiệu quả</span> (giờ chạy và công suất cùng &lt; ${BAD_THRESHOLD_PCT}%) ·
         <span style="color:var(--g);font-weight:700">${nOk + nOver} ổn định trở lên</span>
@@ -6835,18 +6864,25 @@ async function saveEfficiencyModal(rowId){
 }
 
 function afterEfficiency(){
-  const m = S.master.rows;
-  const rSet = S.filters.eff.region;
-  const tSet = S.filters.eff.type;
-  const filtered = m.filter(r =>
-    statusKey(r)==='active' && ['Thuê','Hợp tác','Bán'].includes(typeOf(r)) &&
-    (!rSet.size || rSet.has(regionOf(r))) &&
-    (!tSet.size || tSet.has(typeOf(r)))
-  );
-  // PHẢI dùng đúng computeEfficiencyPageList_() — cùng hàm, cùng thứ tự với viewEfficiency()
-  // dựng thẻ HTML, nếu không canvas thứ i sẽ vẽ nhầm biểu đồ của máy khác (xem ghi chú ở hàm đó).
-  const list = computeEfficiencyPageList_(filtered);
+  /* PHẢI đi đúng một đường với viewEfficiency():
+   *   efficiencyFilteredMaster_()  (lọc khu vực + loại hình + Ô TÌM KIẾM)
+   *   → computeEfficiencyPageList_() (lọc phân loại + sắp xếp)
+   * Tự lọc lại tại chỗ ở đây chính là nguyên nhân canvas thứ i vẽ biểu đồ của SAI máy
+   * so với tiêu đề thẻ — xem ghi chú đầy đủ ở efficiencyFilteredMaster_(). */
+  const list = computeEfficiencyPageList_(efficiencyFilteredMaster_());
   list.forEach((x,i)=>drawEfficiencyChart('eff_'+i+'_chart', x));
+
+  /* CHỐT AN TOÀN — rẻ, chạy 1 lần sau mỗi lần render, và nói thẳng khi lệch thay vì
+   * để người dùng tự phát hiện bằng mắt. Mã máy in trên thẻ phải trùng mã máy mà biểu
+   * đồ trong thẻ đó đang vẽ; lệch nghĩa là có ai đó lại tách danh sách ra lần nữa. */
+  list.forEach((x,i)=>{
+    const card = document.getElementById('eff_'+i);
+    const shown = card ? (card.getAttribute('data-code') || '').trim() : '';
+    if (shown && shown !== x.code){
+      console.error(`[hiệu quả vận hành] Lệch thẻ/biểu đồ: thẻ #${i} ghi "${shown}" nhưng biểu đồ vẽ "${x.code}". `
+        + 'Nguyên nhân luôn là có nơi dựng lại danh sách máy thay vì gọi efficiencyFilteredMaster_().');
+    }
+  });
 }
 
 function viewSpec(){
@@ -8939,6 +8975,10 @@ const ANOMALY_CFG = {
   OVER_DESIGN_RATIO: 1.5,     // Số liệu ngày vượt >150% thiết kế/ngày → cảnh báo "cao bất thường"
   SPIKE_RATIO: 2.5,           // Lệch > 2.5x so với TB 3 ngày liền trước → nghi ngờ đột biến
   MIN_BASE_FOR_SPIKE: 1,      // TB nền tối thiểu mới xét đột biến (tránh chia cho số quá nhỏ)
+  /* Quy trách nhiệm cho vế nào của phép chia (xem overCapacityCause_). Một vế phải kéo
+   * tỉ số mạnh hơn vế kia ít nhất ngần này lần thì mới dám kết luận; chênh ít hơn thì
+   * cảnh báo CẢ HAI ô — thà bắt KTV nhìn 2 ô còn hơn chỉ thẳng vào ô đúng. */
+  CAUSE_MARGIN: 1.25,
 };
 
 /* Nhóm lỗi bất thường — dùng cho ô thống kê ở trang Tổng quan.
@@ -8950,9 +8990,45 @@ const ANOMALY_CATS = [
   { id:'power-no-hours', label:'Có kWh · MẤT số giờ chạy',      hint:'Ngày có điện phát nhưng ô giờ chạy = 0 hoặc bỏ trống — hầu hết là Smartgen/LIXISE ghi nhận thiếu, KTV vào sửa lại ô giờ' },
   { id:'hours-no-power', label:'Có giờ chạy · MẤT số kWh',      hint:'Ngày có giờ chạy nhưng ô điện phát = 0 hoặc bỏ trống — hầu hết là Smartgen/LIXISE ghi nhận thiếu, KTV vào sửa lại ô kWh' },
   { id:'over-design',    label:'Vượt 150% thiết kế',            hint:'Giờ chạy hoặc điện phát vượt 1.5 lần định mức thiết kế/ngày' },
-  { id:'over-capacity',  label:'Vượt công suất định mức máy',   hint:'Công suất trung bình mỗi giờ vượt quá công suất máy' },
+  { id:'over-capacity',  label:'Vượt công suất · nghi ô kWh',   hint:'Công suất TB/giờ vượt định mức máy, và vế điện phát là vế lệch nhiều hơn so với thiết kế → nghi ô kWh ghi thừa' },
+  { id:'low-hours',      label:'Vượt công suất · nghi ô giờ chạy', hint:'Công suất TB/giờ vượt định mức máy nhưng điện phát vẫn trong định mức → giờ chạy thấp bất thường, nghi ô giờ ghi thiếu' },
   { id:'spike',          label:'Đột biến so với ngày trước',    hint:'Lệch quá 2.5 lần so với trung bình 3 ngày liền trước' },
 ];
+
+/* ============================================================================
+ *  "CÔNG SUẤT TB VƯỢT ĐỊNH MỨC MÁY" LÀ CẢNH BÁO VỀ MỘT PHÉP CHIA, KHÔNG PHẢI VỀ MỘT Ô
+ * ----------------------------------------------------------------------------
+ *      công suất TB (kW) = điện phát (kWh) ÷ số giờ chạy (h)
+ *  Tỉ số này cao bất thường thì chỉ có đúng hai nguyên nhân:
+ *      (1) TỬ SỐ cao bất thường  — ô kWh ghi thừa
+ *      (2) MẪU SỐ thấp bất thường — ô giờ chạy ghi thiếu
+ *
+ *  LỖI CỦA BẢN CŨ: luôn đổ cho (1) — cảnh báo gắn cứng vào metric 'power'. Nên bảng
+ *  cảnh báo đưa cho KTV ô kWh để sửa, mà phần lớn ca thì ô kWh ĐANG ĐÚNG. KTV bấm
+ *  "✓ Đúng" là hợp lý và cảnh báo tắt — trong khi ô giờ chạy sai vẫn nằm nguyên đó,
+ *  không ai nhìn, và chính nó mới là thứ làm hỏng mọi phép tính hiệu quả vận hành.
+ *  Ví dụ thật: NS100KVA8 ngày 20 — 409 kWh với 0,08 h → "công suất TB 5.112 kW vượt
+ *  10.225% định mức 50kW". 409 kWh là con số bình thường; 0,08 h mới là con số hỏng.
+ *
+ *  CÁCH PHÂN XỬ: so TỪNG VẾ với định mức thiết kế của chính máy đó:
+ *      rP = kWh thực / kWh thiết kế/ngày   → rP > 1 nghĩa là tử số đang kéo tỉ số LÊN
+ *      rH = giờ thực / giờ thiết kế/ngày   → rH < 1 nghĩa là mẫu số đang kéo tỉ số LÊN
+ *  Mức "kéo lên" của mỗi vế: liftP = rP, liftH = 1/rH. Vế nào kéo mạnh hơn vế kia từ
+ *  CAUSE_MARGIN lần trở lên là nguyên nhân gốc; chênh nhau không đáng kể → 'both'.
+ *  Thiếu định mức thiết kế thì không có căn cứ để quy trách nhiệm → cũng 'both'.
+ *
+ *  Vì sao dùng tỉ lệ so với thiết kế chứ không dùng "h < kWh/công suất định mức":
+ *  bất đẳng thức đó luôn đúng khi đã lọt vào nhánh này (nó chính là điều kiện cảnh
+ *  báo viết lại), nên nó không phân biệt được vế nào — dùng nó là tự lừa mình.
+ * ========================================================================== */
+function overCapacityCause_(p, h, designKwDay, designHrDay){
+  if (!(designKwDay > 0) || !(designHrDay > 0) || !(h > 0)) return 'both';
+  const liftP = p / designKwDay;          // >1: điện phát vượt thiết kế → tử số có lỗi
+  const liftH = designHrDay / h;           // >1: giờ chạy dưới thiết kế → mẫu số có lỗi
+  if (liftH >= liftP * ANOMALY_CFG.CAUSE_MARGIN) return 'hours';
+  if (liftP >= liftH * ANOMALY_CFG.CAUSE_MARGIN) return 'power';
+  return 'both';
+}
 
 /**
  * opts.includeApproved = true → trả CẢ những điểm đã được xác nhận đúng thực tế.
@@ -9000,6 +9076,9 @@ function computeDataAnomalies(opts){
       hoursVals.push(num(effRow[hoursCols[i].header]));
     }
 
+    /* TRẢ VỀ true nếu cảnh báo được bật, false nếu bị chặn vì ô đó ĐÃ được xác nhận
+     * đúng. Giá trị trả về này là mấu chốt của chuỗi xử lý "vượt công suất": duyệt
+     * một vế không làm mâu thuẫn biến mất, nó chỉ đẩy nghi vấn sang vế còn lại. */
     const flag = (day, metric, message, severity, cat) => {
       /* Bỏ điểm đã được xác nhận là đúng thực tế. Khoá gồm cả GIÁ TRỊ, nên nếu ai sửa
        * ô đó về sau thì khoá đổi, không khớp nữa và cảnh báo bật lại — đúng như mong
@@ -9007,12 +9086,13 @@ function computeDataAnomalies(opts){
       if (okKeys){
         const col = (metric==='power' ? powerCols : hoursCols)[day-1];
         const val = col ? effRow[col.header] : '';
-        if (okKeys.has(anomalyKey_(code, effMonthKey_(), day, metric, val))) return;
+        if (okKeys.has(anomalyKey_(code, effMonthKey_(), day, metric, val))) return false;
       }
       alerts.push({
         type:'data-anomaly', kind:'efficiency', maCode:code, region, site, operator:oper, phone,
         field:'Dữ liệu ngày '+day, message, severity, row: effRow._row, day, metric, cat
       });
+      return true;
     };
 
     for (let i=0;i<n;i++){
@@ -9062,7 +9142,65 @@ function computeDataAnomalies(opts){
       if (coH && coP && ratedKw > 0){
         const avgKw = p / h;
         if (avgKw > ratedKw * ANOMALY_CFG.OVER_CAPACITY_RATIO){
-          flag(day, 'power', `Ngày ${day}: công suất TB ${nfd_(avgKw)}kW vượt ${pfmt_(avgKw/ratedKw*100)} định mức máy (${nfd_(ratedKw)}kW)`, 'high', 'over-capacity');
+          /* hMin : để phát ra p kWh, kể cả khi máy gồng đúng 100% công suất định mức,
+           *        vẫn phải chạy ít nhất ngần này giờ. Giờ chạy đang ghi mà nhỏ hơn
+           *        hMin thì về mặt vật lý là không thể — đây là con số KTV cần thấy.
+           * pMax  : ngược lại, trong h giờ máy chỉ có thể phát ra tối đa ngần này kWh. */
+          const hMin = p / ratedKw;
+          const pMax = h * ratedKw;
+          const chung = `Ngày ${day}: công suất TB ${nfd_(avgKw)} kW/h = ${nfd_(p)} kWh ÷ ${nfd_(h)} h`
+                      + `, vượt ${pfmt_(avgKw/ratedKw*100)} định mức máy (${nfd_(ratedKw)} kW)`;
+          const msgHours = `${chung}. Nghi Ô GIỜ CHẠY ghi thiếu: để phát ${nfd_(p)} kWh máy phải chạy tối thiểu `
+                         + `${nfd_(hMin)} h, đang ghi ${nfd_(h)} h`
+                         + (designHrDay>0 ? ` (thiết kế ${nfd_(designHrDay)} h/ngày)` : '')
+                         + ` — KTV kiểm tra và bổ sung số giờ`;
+          const msgPower = `${chung}. Nghi Ô ĐIỆN PHÁT ghi thừa: chạy ${nfd_(h)} h thì máy chỉ phát được tối đa `
+                         + `${nfd_(pMax)} kWh, đang ghi ${nfd_(p)} kWh`
+                         + (designKwDay>0 ? ` (thiết kế ${nfd_(designKwDay)} kWh/ngày)` : '')
+                         + ` — KTV kiểm tra lại số điện phát`;
+          const cause = overCapacityCause_(p, h, designKwDay, designHrDay);
+
+          /* KHI NÀO LIỆT KÊ CẢ 2 VẾ THAY VÌ CHẠY CHUỖI — hai trường hợp, và trường hợp
+           * thứ hai là bắt buộc về mặt kỹ thuật chứ không phải lựa chọn:
+           *
+           *  (a) cause === 'both' : không đủ căn cứ chỉ mặt vế nào (thiếu định mức, hoặc
+           *      hai vế lệch tương đương). Thà bắt KTV nhìn 2 ô còn hơn chỉ sai 1 ô.
+           *
+           *  (b) opts.includeApproved (okKeys === null) : đây là bản THÔ dùng cho bảng
+           *      "Xem ô đã xác nhận" VÀ cho anomalySubmit() khi ghi/bỏ duyệt. Ở bản thô
+           *      không có gì bị chặn nên flag() luôn trả true → chuỗi sẽ không bao giờ
+           *      sinh ra vế thứ hai. Hậu quả nếu để nguyên: KTV duyệt vế 1, cảnh báo
+           *      chuyển sang vế 2, bấm "✓ Đúng" ở vế 2 → anomalySubmit dò trong bản thô
+           *      không thấy dòng nào khớp khoá và báo "các dòng đã chọn không còn khớp".
+           *      Nút duyệt chết đúng ở bước thứ hai của chuỗi. Vậy nên bản thô phải chứa
+           *      ĐẦY ĐỦ mọi dòng mà chuỗi có thể sinh ra. */
+          const chayChuoi = (okKeys !== null) && cause !== 'both';
+
+          if (!chayChuoi){
+            flag(day, 'hours', msgHours + (cause==='both' ? ' (cả 2 vế đều đáng ngờ — kiểm tra kèm ô điện phát)' : ''), 'high', 'low-hours');
+            flag(day, 'power', msgPower + (cause==='both' ? ' (cả 2 vế đều đáng ngờ — kiểm tra kèm ô giờ chạy)' : ''), 'high', 'over-capacity');
+          } else {
+            /* CHUỖI XỬ LÝ 2 BƯỚC — "xử lý đến lúc hoàn thành".
+             * Báo vế nghi ngờ chính trước. Nếu vế đó đã bị chặn vì KTV từng bấm "✓ Đúng"
+             * (flag trả false) thì mâu thuẫn CHƯA được giải quyết: con số kia đã được
+             * khẳng định là thật, nên lỗi chỉ còn có thể nằm ở vế còn lại → cảnh báo tự
+             * chuyển sang đó, kèm câu nói rõ vì sao nó vừa xuất hiện.
+             * Cảnh báo chỉ thực sự tắt khi: (a) ai đó sửa một ô cho tỉ số về đúng định
+             * mức, hoặc (b) CẢ HAI ô đều được xác nhận đúng — lúc đó không còn gì để
+             * sửa trên số liệu, vấn đề nằm ở máy/đồng hồ chứ không ở bảng tính. */
+            const chinh = cause === 'hours'
+              ? { metric:'hours', msg:msgHours, cat:'low-hours',     ten:'giờ chạy' }
+              : { metric:'power', msg:msgPower, cat:'over-capacity', ten:'điện phát' };
+            const con   = cause === 'hours'
+              ? { metric:'power', msg:msgPower, cat:'over-capacity', ten:'điện phát' }
+              : { metric:'hours', msg:msgHours, cat:'low-hours',     ten:'giờ chạy' };
+            if (!flag(day, chinh.metric, chinh.msg, 'high', chinh.cat)){
+              flag(day, con.metric,
+                `${con.msg}. (Ô ${chinh.ten} ngày ${day} đã được xác nhận là đúng thực tế, `
+                + `mà công suất TB vẫn vượt định mức → lỗi buộc phải nằm ở ô này.)`,
+                'high', con.cat);
+            }
+          }
         }
       }
       // Số liệu thực tế cao bất thường so với THIẾT KẾ/NGÀY (khác với vượt công suất định mức máy ở trên)
@@ -9213,7 +9351,7 @@ function ineffCardHtml(x, uid){
     : `<div style="margin:0 16px 12px;font-size:11px;color:var(--mu)">Chưa có ngày nào trong ${EVAL_WINDOW_DAYS} ngày gần nhất đủ dữ liệu để chấm điểm.</div>`;
 
   return `
-    <div class="effcard ${(x.isIneffective||x.isBad)?'bad':''}">
+    <div class="effcard ${(x.isIneffective||x.isBad)?'bad':''}" id="${uid}" data-code="${esc(x.code)}">
       <div class="effhd">
         <div>
           <div class="effttl">
