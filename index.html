@@ -15841,6 +15841,12 @@ function rpHieuQua_(){
   try { eff = computeEfficiencyAll_(S.master.rows) || []; } catch(e){ eff = []; }
   eff = eff.filter(x => x && x.code && !rpBoQua_(x.code));
 
+  /* BỘ LỌC ②/③ (RP.g, khối BAOCAO-LOC-CHITIET) — LỌC TẠI NGUỒN, không lọc ở chỗ vẽ: hàm này là nguồn chung
+   * của bảng trên màn hình, các ô KPI, biểu đồ, nhận xét VÀ tờ Word nên bốn thứ đó không thể nói khác nhau.
+   * effAll giữ lại để biết "lọc ra bao nhiêu trên tổng số" (tongMay). */
+  const effAll = eff;
+  eff = effAll.filter(x => rpQua_(rpMay_(x.code), RP.g));
+
   const may = eff.map(x => {
     const m = rpMay_(x.code);
     /* Dãy ngày dùng để đo độ đều: lấy khối ĐIỆN PHÁT theo ngày (powerArr) vì đó là
@@ -15874,6 +15880,9 @@ function rpHieuQua_(){
       soNgayKw: kw.length, tbKw: kw.length ? Math.round(kw.reduce((a,b)=>a+b,0)/kw.length*100)/100 : null,
       cvKw, cvHr, khongDeu, teNhat,
       dayEvals: x.dayEvals || [],
+      /* Số THÔ theo ngày + chuỗi ngày kém — để bảng phụ (bấm cột/mã máy) cho thấy đúng các con số đứng sau nhận xét. */
+      powerArr: x.powerArr || [], hoursArr: x.hoursArr || [], daily: x.daily || { power: [], hours: [] },
+      streakDays: x.streakDays || [],
     };
   });
 
@@ -15887,7 +15896,7 @@ function rpHieuQua_(){
   try {
     const mm = buildMonthlyModel_();
     thang.months = mm.months || [];
-    thang.machines = (mm.machines || []).filter(x => x && !rpBoQua_(x.code));
+    thang.machines = (mm.machines || []).filter(x => x && !rpBoQua_(x.code) && rpQua_(rpMay_(x.code), RP.g));
     /* Tổng theo tháng — tự cộng từ machines để không phụ thuộc hàm nội bộ nào khác. */
     thang.totals = thang.months.map(mo => {
       let power = 0, hours = 0, n = 0;
@@ -15931,9 +15940,12 @@ function rpHieuQua_(){
   /* ---- Tổng kết tháng (% đạt thiết kế) ---- */
   let tongKet = null;
   try { tongKet = computeMonthlyReport(S.master.rows); } catch(e){ tongKet = null; }
+  /* Sao chép rồi lọc hàng — không sửa đối tượng mà computeMonthlyReport trả về. */
+  if (tongKet && tongKet.rows)
+    tongKet = Object.assign({}, tongKet, { rows: tongKet.rows.filter(r => r && rpQua_(rpMay_(r.code), RP.g)) });
 
   return { may, khong, kem, keoDai, phapPhu, thang, tongKet,
-           soMay: may.length,
+           soMay: may.length, tongMay: effAll.length,
            tbPctKw: (function(){
              const a = may.map(x=>x.pctKw).filter(v=>v!=null);
              return a.length ? Math.round(a.reduce((s,v)=>s+v,0)/a.length) : null;
@@ -16013,15 +16025,21 @@ function rpChiPhi_(){
     t.viSao = t.theoVt.slice(0,3).map(v => v.ten+' '+rpN_(v.sl)+' '+(v.dvt||'')+
       (v.gt ? ' ('+rpN_(v.gt,0)+' đ)' : '')).join(' · ');
   });
-  const tonCaoSl = ton.filter(t => t.devSl != null && t.devSl > RP_CFG.TON_CAO_PCT)
+  /* BỘ LỌC ②/③ (RP.g) — chỉ chọn máy nào được HIỆN, KHÔNG chọn máy nào được dùng làm thước đo: trung bình
+   * dòng máy ở trên đã tính xong trên TOÀN đội máy cùng dòng. Lọc rồi mới tính trung bình thì cùng một máy đổi
+   * "vượt / không vượt" tuỳ ai đang bấm lọc gì — một con số, hai kết luận. */
+  const tonAll = ton;
+  const tonF = tonAll.filter(t => rpQua_(rpMay_(t.code), RP.g));
+  const tonCaoSl = tonF.filter(t => t.devSl != null && t.devSl > RP_CFG.TON_CAO_PCT)
                       .sort((a,b) => b.devSl - a.devSl);
-  const tonCaoGt = ton.filter(t => t.devGt != null && t.devGt > RP_CFG.TON_CAO_PCT)
+  const tonCaoGt = tonF.filter(t => t.devGt != null && t.devGt > RP_CFG.TON_CAO_PCT)
                       .sort((a,b) => b.devGt - a.devGt);
 
   /* ---- (c)(d) đ/kWh: so trung bình dòng máy và so tháng trước ---- */
-  let kwhCao = [], momCao = [], cpRows = [];
+  let kwhCao = [], momCao = [], cpRows = [], cpRowsAll = [];
   if (cp && cp.ok){
-    cpRows = (cp.rows || []).filter(r => r && r.code && !rpBoQua_(r.code));
+    cpRowsAll = (cp.rows || []).filter(r => r && r.code && !rpBoQua_(r.code));
+    cpRows = cpRowsAll.filter(r => rpQua_(rpMay_(r.code), RP.g));
     kwhCao = cpRows.filter(r => r.devPct != null && r.devPct > (cp.deviationPct || 30))
                    .sort((a,b) => b.devPct - a.devPct);
     momCao = cpRows.filter(r => r.momPct != null && r.momPct > RP_CFG.MOM_PCT)
@@ -16030,7 +16048,7 @@ function rpChiPhi_(){
      * phiếu, phần bù kiểm kê). Lấy 3 khoản tốn nhất và nói rõ phần nào là bù kiểm kê:
      * bù kiểm kê nghĩa là "phát hiện thêm khi đếm kho", khác hẳn tiêu hao thường ngày
      * và cách xử lý cũng khác. */
-    cpRows.forEach(r => {
+    cpRowsAll.forEach(r => {
       const it = (r.items || []).slice(0, 3);
       r.viSao = it.map(v => v.ten + ' ' + rpN_(v.tien, 0) + ' đ'
         + (v.bu ? ' (trong đó bù kiểm kê ' + rpN_(v.bu,0) + ' đ)' : '')).join(' · ');
@@ -16038,7 +16056,22 @@ function rpChiPhi_(){
     });
   }
 
-  return { cp, thang: RP.cpThang, ton, tonCaoSl, tonCaoGt, kwhCao, momCao, cpRows,
+  /* Tổng của KPI/Word phải là tổng của đúng các máy đang hiện. Không lọc thì giữ nguyên gói của server. */
+  let cpOut = cp;
+  if (cp && cp.ok && rpGSoLoc_()){
+    cpOut = Object.assign({}, cp, {
+      totalCost: Math.round(cpRows.reduce((t, r) => t + (r.cost || 0), 0) * 100) / 100,
+      totalKwh:  Math.round(cpRows.reduce((t, r) => t + (r.kwh  || 0), 0) * 100) / 100,
+    });
+  }
+  /* Số máy của tab ③ trước/sau lọc — hợp của máy có chi phí và máy có tồn kho. */
+  const maAll = new Set(), maLoc = new Set();
+  cpRowsAll.forEach(r => maAll.add(String(r.code).toUpperCase()));
+  tonAll.forEach(t => maAll.add(t.code));
+  maAll.forEach(k => { if (rpQua_(rpMay_(k), RP.g)) maLoc.add(k); });
+
+  return { cp: cpOut, thang: RP.cpThang, ton: tonF, tonAll, tonCaoSl, tonCaoGt, kwhCao, momCao, cpRows, cpRowsAll,
+           tongMay: maAll.size, soMay: maLoc.size,
            tbModel: [...tbModel.entries()].map(([k,v]) => ({ model:k, n:v.n,
              tbSl:Math.round(v.tbSl*100)/100, tbGt:Math.round(v.tbGt) })) };
 }
@@ -16074,8 +16107,9 @@ async function rpTaiChiPhi(thang){
  * ========================================================================== */
 function rpTab(t){ RP.tab = t; renderPage('report'); }
 
-function rpKpi_(nhan, so, mau, ghi){
-  return '<div class="card" style="flex:1;min-width:132px;border-left:3px solid '+mau+'">'
+/* ct = [loại, khoá, phụ] → ô bấm được, mở bảng phụ chi tiết (khối BAOCAO-LOC-CHITIET). Không ct = như cũ. */
+function rpKpi_(nhan, so, mau, ghi, ct){
+  return '<div'+(ct && ct[0] ? rpCtAttr_(ct, 'card') : ' class="card"')+' style="flex:1;min-width:132px;border-left:3px solid '+mau+'">'
     + '<div class="cb" style="padding:9px 12px">'
     + '<div style="font-size:11px;color:var(--mu)">'+rpE_(nhan)+'</div>'
     + '<div style="font-size:23px;font-weight:700;font-family:var(--mono);color:'+mau+'">'+so+'</div>'
@@ -16089,7 +16123,7 @@ function rpBar_(data, mauMac){
   const max = Math.max(1, ...data.map(d => Math.abs(d.v)));
   return '<div style="display:flex;flex-direction:column;gap:4px">' + data.map(d => {
     const pct = Math.max(2, Math.round(Math.abs(d.v)/max*100));
-    return '<div style="display:flex;align-items:center;gap:8px;font-size:12px">'
+    return '<div'+rpCtAttr_(d.ct)+' style="display:flex;align-items:center;gap:8px;font-size:12px">'
       + '<div style="width:31%;text-align:right;color:var(--mu)">'+rpE_(d.t)+'</div>'
       + '<div style="flex:1;background:var(--bg2,#eef1f0);border-radius:3px;overflow:hidden;height:16px">'
       +   '<div style="width:'+pct+'%;height:100%;background:'+(d.mau||mauMac||'var(--g)')+'"></div></div>'
@@ -16332,7 +16366,7 @@ function rpViewVatTu_(){
       + '<th>Hạng mục đang chờ</th><th style="text-align:right">Thiếu vật tư</th>'
       + '<th>Việc phải làm</th></tr></thead><tbody>'
       + list.slice(0, 40).map(g => '<tr>'
-        + '<td><span class="mm">'+rpE_(g.code)+'</span></td>'
+        + '<td>'+rpMa_(g.code, 'vt-may')+'</td>'
         + '<td style="font-size:11px">'+rpE_(g.site||'—')+(g.khu?'<br><span style="color:var(--mu)">'+rpE_(g.khu)+'</span>':'')+'</td>'
         + '<td style="text-align:right;font-family:var(--mono);font-weight:600">'+g.muc.length+'</td>'
         + '<td style="font-size:11px;white-space:normal">'+rpMucHtml_(g.muc, 5)+'</td>'
@@ -16593,17 +16627,24 @@ function rpXuatVatTu(){
 /* ---------------------------------------------------------------------------
  *  TAB 2 · HIỆU QUẢ VẬN HÀNH + PHÂN TÍCH + TỔNG KẾT THÁNG
  * ------------------------------------------------------------------------- */
-function rpViewHieuQua_(){
+/* Thanh lọc (RP.g) đứng ĐẦU trang, trên thân báo cáo — giống trang ① Kho vật tư. Khối BAOCAO-CHON-THANG bọc lại
+ * hàm này để xếp thêm ô chọn tháng; bản đơn giản dưới đây chạy được khi thiếu khối đó. */
+function rpViewHieuQua_(){ return rpThanhLocG_(rpMaHQ_()) + rpViewHieuQuaThan_(); }
+
+function rpViewHieuQuaThan_(){
   const d = rpHieuQua_();
   if (!d.soMay)
-    return '<div class="empty">Chưa có dữ liệu hiệu quả — mở trang Hiệu quả vận hành một lần rồi quay lại.</div>';
+    return (d.tongMay > 0 && rpGSoLoc_())
+      ? '<div class="empty">Không máy nào khớp bộ lọc đang chọn — đang theo dõi <b>' + d.tongMay
+        + '</b> máy.<br><span style="font-size:11px">Bỏ bớt bộ lọc ở đầu trang để xem.</span></div>'
+      : '<div class="empty">Chưa có dữ liệu hiệu quả — mở trang Hiệu quả vận hành một lần rồi quay lại.</div>';
 
   let h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
-    + rpKpi_('Không hiệu quả', d.khong.length, '#7f1d1d', 'dưới mức nghiêm trọng')
-    + rpKpi_('Kém hiệu quả', d.kem.length, '#b45309', 'dưới ngưỡng đạt')
-    + rpKpi_('Kém kéo dài', d.keoDai.length, '#b91c1c', 'chuỗi ngày liên tiếp')
-    + rpKpi_('Chạy không đều', d.phapPhu.length, '#6d28d9', 'biến thiên >'+RP_CFG.DEU_CV_PCT+'%')
-    + rpKpi_('TB đạt thiết kế', (d.tbPctKw!=null?d.tbPctKw+'%':'—'), '#0d6e3f', d.soMay+' tổ máy')
+    + rpKpi_('Không hiệu quả', d.khong.length, '#7f1d1d', 'dưới mức nghiêm trọng', ['hq-ds', 'khong'])
+    + rpKpi_('Kém hiệu quả', d.kem.length, '#b45309', 'dưới ngưỡng đạt', ['hq-ds', 'kem'])
+    + rpKpi_('Kém kéo dài', d.keoDai.length, '#b91c1c', 'chuỗi ngày liên tiếp', ['hq-ds', 'keo'])
+    + rpKpi_('Chạy không đều', d.phapPhu.length, '#6d28d9', 'biến thiên >'+RP_CFG.DEU_CV_PCT+'%', ['hq-ds', 'deu'])
+    + rpKpi_('TB đạt thiết kế', (d.tbPctKw!=null?d.tbPctKw+'%':'—'), '#0d6e3f', d.soMay+' tổ máy', ['hq-ds', 'tb'])
     + '</div>';
 
   h += '<button class="btn bg-b" onclick="rpXuatHieuQua()">📄 Xuất báo cáo Word — Hiệu quả vận hành &amp; Tổng kết tháng</button>';
@@ -16618,7 +16659,7 @@ function rpViewHieuQua_(){
       + rpBar_(xau.slice(0,12).map(x => ({
           t: x.code, v: x.pctKw != null ? x.pctKw : (x.pctHr||0),
           nhan: (x.pctKw!=null?Math.round(x.pctKw):'—')+'%',
-          mau: x.trangThai==='ineffective' ? '#7f1d1d' : '#b45309' })))
+          mau: x.trangThai==='ineffective' ? '#7f1d1d' : '#b45309', ct: ['hq-may', x.code, 'xau'] })))
       + '</div>'
       + '<div class="tw" style="margin-top:8px;max-height:320px"><table><thead><tr>'
       + '<th>Mã máy</th><th>Trang trại · Khu vực</th><th>Trạng thái</th>'
@@ -16626,7 +16667,7 @@ function rpViewHieuQua_(){
       + '<th style="text-align:right">Giờ chạy</th><th style="text-align:right">Chuỗi ngày</th>'
       + '<th>Ngày tệ nhất</th></tr></thead><tbody>'
       + xau.slice(0,60).map(x => '<tr>'
-        + '<td><span class="mm">'+rpE_(x.code)+'</span></td>'
+        + '<td>'+rpMa_(x.code, 'hq-may', 'xau')+'</td>'
         + '<td style="font-size:11px">'+rpE_(x.site||'—')+(x.khu?'<br><span style="color:var(--mu)">'+rpE_(x.khu)+'</span>':'')+'</td>'
         + '<td><span class="b '+(x.trangThai==='ineffective'?'br':'ba')+'">'
         +   (x.trangThai==='ineffective'?'Không hiệu quả':'Kém hiệu quả')+'</span></td>'
@@ -16652,14 +16693,14 @@ function rpViewHieuQua_(){
       + '<div style="font-size:11px;color:var(--mu);margin-top:4px">Hệ số biến thiên = độ lệch chuẩn ÷ trung bình. '
       + 'Chia cho trung bình nên máy 300 kVA và máy 100 kVA so được với nhau.</div>'
       + '<div style="margin-top:8px">'
-      + rpBar_(d.phapPhu.slice(0,12).map(x => ({ t:x.code, v:x.cvKw, nhan:x.cvKw+'%' })), '#6d28d9')
+      + rpBar_(d.phapPhu.slice(0,12).map(x => ({ t:x.code, v:x.cvKw, nhan:x.cvKw+'%', ct:['hq-may', x.code, 'deu'] })), '#6d28d9')
       + '</div>'
       + '<div class="tw" style="margin-top:8px;max-height:280px"><table><thead><tr>'
       + '<th>Mã máy</th><th>Trang trại</th><th style="text-align:right">Biến thiên điện</th>'
       + '<th style="text-align:right">Biến thiên giờ</th><th style="text-align:right">TB điện/ngày</th>'
       + '<th style="text-align:right">Số ngày có số</th><th>Ngày tệ nhất</th></tr></thead><tbody>'
       + d.phapPhu.slice(0,40).map(x => '<tr>'
-        + '<td><span class="mm">'+rpE_(x.code)+'</span></td>'
+        + '<td>'+rpMa_(x.code, 'hq-may', 'deu')+'</td>'
         + '<td style="font-size:11px">'+rpE_(x.site||'—')+'</td>'
         + '<td style="text-align:right;font-family:var(--mono);font-weight:600;color:#6d28d9">'+x.cvKw+'%</td>'
         + '<td style="text-align:right;font-family:var(--mono)">'+(x.cvHr!=null?x.cvHr+'%':'—')+'</td>'
@@ -16675,20 +16716,21 @@ function rpViewHieuQua_(){
   if (co.length){
     const cuoi = co[co.length-1];
     h += '<div class="card" style="margin-top:12px;border-left:3px solid #0d6e3f"><div class="cb" style="padding:10px 12px">'
-      + '<b style="font-size:12px">So sánh giữa các tháng — tổng điện phát toàn hệ thống</b>'
+      + '<b style="font-size:12px">So sánh giữa các tháng — tổng điện phát '+rpPhamViChu_()+'</b>'
       + '<div style="margin-top:8px">'
       + rpBar_(co.map(t => ({ t:t.label, v:t.power, nhan:rpN_(t.power,0)+' kWh',
           mau: (t.devPct!=null && t.devPct < -MONTHLY_TREND_PCT) ? '#b91c1c'
-             : ((t.devPct!=null && t.devPct > MONTHLY_TREND_PCT) ? '#0d6e3f' : '#64748b') })))
+             : ((t.devPct!=null && t.devPct > MONTHLY_TREND_PCT) ? '#0d6e3f' : '#64748b'),
+          ct: ['hq-thang', t.label] })))
       + '</div>';
     if (cuoi && cuoi.top && cuoi.top.length){
       h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">'
         + '<div style="flex:1;min-width:230px"><div style="font-size:11px;font-weight:600;color:#0d6e3f;margin-bottom:4px">'
         +   'Tăng mạnh nhất — '+rpE_(cuoi.label)+' so '+rpE_(cuoi.prevLabel||'—')+'</div>'
-        + rpBar_(cuoi.top.map(x=>({t:x.code,v:x.delta,nhan:'+'+rpN_(x.delta,0)})), '#0d6e3f')+'</div>'
+        + rpBar_(cuoi.top.map(x=>({t:x.code,v:x.delta,nhan:'+'+rpN_(x.delta,0),ct:['hq-may',x.code,'mom|'+cuoi.label]})), '#0d6e3f')+'</div>'
         + '<div style="flex:1;min-width:230px"><div style="font-size:11px;font-weight:600;color:#b91c1c;margin-bottom:4px">'
         +   'Giảm mạnh nhất</div>'
-        + rpBar_((cuoi.bottom||[]).map(x=>({t:x.code,v:x.delta,nhan:rpN_(x.delta,0)})), '#b91c1c')+'</div>'
+        + rpBar_((cuoi.bottom||[]).map(x=>({t:x.code,v:x.delta,nhan:rpN_(x.delta,0),ct:['hq-may',x.code,'mom|'+cuoi.label]})), '#b91c1c')+'</div>'
         + '</div>';
     }
     h += '</div></div>';
@@ -16705,9 +16747,9 @@ function rpViewHieuQua_(){
       + '<span class="b '+(TK.isComplete?'bg':'ba')+'">'
       +   (TK.isComplete?'Tháng đã đủ ngày':'Đang tính đến ngày '+TK.daysWithDataMax+'/'+TK.daysInMonth)+'</span>'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
-      +   rpKpi_('Điện phát TB đạt', (aKw!=null?aKw+'%':'—'), '#0d6e3f', 'so với thiết kế cả tháng')
-      +   rpKpi_('Giờ chạy TB đạt', (aHr!=null?aHr+'%':'—'), '#0d6e3f', 'so với thiết kế cả tháng')
-      +   rpKpi_('Máy dưới 90% chỉ tiêu', duoi.length+'/'+TK.rows.length, duoi.length?'#b91c1c':'#0d6e3f', '')
+      +   rpKpi_('Điện phát TB đạt', (aKw!=null?aKw+'%':'—'), '#0d6e3f', 'so với thiết kế cả tháng', ['hq-tk', 'kw'])
+      +   rpKpi_('Giờ chạy TB đạt', (aHr!=null?aHr+'%':'—'), '#0d6e3f', 'so với thiết kế cả tháng', ['hq-tk', 'hr'])
+      +   rpKpi_('Máy dưới 90% chỉ tiêu', duoi.length+'/'+TK.rows.length, duoi.length?'#b91c1c':'#0d6e3f', '', ['hq-tk', 'duoi'])
       + '</div></div></div>';
   }
 
@@ -16823,6 +16865,8 @@ function rpXuatHieuQua(){
   const dauKhu = khuArr[0] || null;
 
   let b = '';
+  /* Tờ đã lọc không được đọc nhầm thành toàn hệ thống → nói rõ phạm vi ngay đầu trang. */
+  b += rpPhamViG_(d.soMay, d.tongMay);
   b += wH_(1, 'I. Tóm tắt điều hành (5W1H)');
   b += w5W1H_({
     what: rpE_('Đánh giá hiệu quả vận hành ' + d.soMay + ' tổ máy: ' + d.khong.length + ' máy không hiệu quả, '
@@ -16931,7 +16975,7 @@ function rpXuatHieuQua(){
   if (co.length < 2){
     b += wP_('Chưa đủ hai tháng có số liệu để so sánh (bảng Tổng kết hiệu quả tháng — Sheet 9).');
   } else {
-    b += wChart_(BD('Tổng điện phát toàn hệ thống theo tháng (kWh)'),
+    b += wChart_(BD('Tổng điện phát ' + rpPhamViChu_() + ' theo tháng (kWh)'),
       co.map(t => ({ t:t.label, v:t.power, nhan:rpN_(t.power,0),
         mau: (t.devPct!=null && t.devPct < -MONTHLY_TREND_PCT) ? '#b91c1c'
            : ((t.devPct!=null && t.devPct > MONTHLY_TREND_PCT) ? '#0d6e3f' : '#64748b') })));
@@ -17047,8 +17091,9 @@ function rpXuatHieuQua(){
       })));
   }
 
-  wXuat_('BaoCao-HieuQuaVanHanh', 'BÁO CÁO HIỆU QUẢ VẬN HÀNH & TỔNG KẾT THÁNG',
-    'Phân tích hiệu quả, độ đều giữa các ngày và so sánh giữa các tháng · số liệu lúc ' + RP.at, b);
+  wXuat_('BaoCao-HieuQuaVanHanh' + rpHauToG_(), 'BÁO CÁO HIỆU QUẢ VẬN HÀNH & TỔNG KẾT THÁNG',
+    'Phân tích hiệu quả, độ đều giữa các ngày và so sánh giữa các tháng · số liệu lúc ' + RP.at
+      + (rpGSoLoc_() ? ' · phạm vi lọc: ' + rpMoTaLocG_() : ''), b);
 }
 
 /* ---------------------------------------------------------------------------
@@ -17064,7 +17109,10 @@ function rpDsThang_(){
   return out;
 }
 
-function rpViewChiPhi_(){
+/* Thanh lọc (RP.g) đứng ĐẦU trang, trên thân báo cáo — dùng chung bộ lọc với ②. */
+function rpViewChiPhi_(){ return rpThanhLocG_(rpMaCP_()) + rpViewChiPhiThan_(); }
+
+function rpViewChiPhiThan_(){
   const thang = RP.cpThang || rpThangMacDinh_();
   let h = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
     + '<label style="font-size:12px;color:var(--mu)">Tháng</label>'
@@ -17078,10 +17126,14 @@ function rpViewChiPhi_(){
 
   const d = rpChiPhi_();
   const cp = d.cp;
+  if (!d.soMay && d.tongMay > 0 && rpGSoLoc_())
+    return h + '</div><div class="empty">Không máy nào khớp bộ lọc đang chọn — tháng này có số liệu của <b>' + d.tongMay
+      + '</b> máy.<br><span style="font-size:11px">Bỏ bớt bộ lọc ở đầu trang để xem.</span></div>';
   h += '<button class="btn bg-b" onclick="rpXuatChiPhi()">📄 Xuất báo cáo Word — Chi phí vật tư</button></div>';
 
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
-    + rpKpi_('Tổng chi phí vật tư', rpN_(cp.totalCost,0)+' đ', '#0d6e3f', 'tháng '+rpE_(cp.monthLabel))
+    + rpKpi_('Tổng chi phí vật tư', rpN_(cp.totalCost,0)+' đ', '#0d6e3f', 'tháng '+rpE_(cp.monthLabel)
+        + (rpGSoLoc_() ? ' · ' + d.soMay + '/' + d.tongMay + ' máy đang lọc' : ''))
     + rpKpi_('Tổng kWh', rpN_(cp.totalKwh,0), '#0f766e', '')
     + rpKpi_('Chi phí bình quân', (cp.totalKwh>0 ? rpN_(cp.totalCost/cp.totalKwh,2)+' đ/kWh' : '—'), '#334155', '')
     + rpKpi_('Tồn SL cao bất thường', d.tonCaoSl.length, '#b45309', '>'+RP_CFG.TON_CAO_PCT+'% TB dòng máy')
@@ -17125,14 +17177,15 @@ function rpBangCP_(tieuDe, mau, list, khoa, cot, rong){
     + '<span style="font-size:11px;color:var(--mu)"> — '+list.length+' máy, xếp từ cao xuống thấp</span>';
   if (!list.length) return h + '<div class="empty" style="padding:12px 0">'+rpE_(rong)+'</div></div></div>';
   h += '<div style="margin-top:8px">'
-    + rpBar_(list.slice(0,12).map(r => ({ t:r.code, v:Math.abs(r[khoa]), nhan:rpPct_(r[khoa]) })), mau)
+    + rpBar_(list.slice(0,12).map(r => ({ t:r.code, v:Math.abs(r[khoa]), nhan:rpPct_(r[khoa]),
+      ct:['cp-may', r.code, khoa==='momPct'?'mom':'kwh'] })), mau)
     + '</div>';
   h += '<div class="tw" style="margin-top:8px;max-height:340px"><table><thead><tr>'
     + '<th>Mã máy</th><th>Trang trại</th>'
     + cot.map(c => '<th style="text-align:'+(c.a||'left')+'">'+rpE_(c.t)+'</th>').join('')
     + '<th>Khoản nào đẩy chỉ số lên</th></tr></thead><tbody>'
     + list.slice(0,50).map(r => '<tr>'
-      + '<td><span class="mm">'+rpE_(r.code)+'</span></td>'
+      + '<td>'+rpMa_(r.code, 'cp-may', khoa==='momPct'?'mom':'kwh')+'</td>'
       + '<td style="font-size:11px">'+rpE_(r.site||'—')+'</td>'
       + cot.map(c => '<td style="text-align:'+(c.a||'left')+';font-family:var(--mono)'
           + (c.b?';font-weight:600;color:'+mau:'')+'">'+c.f(r)+'</td>').join('')
@@ -17155,7 +17208,8 @@ function rpBangTon_(tieuDe, mau, list, kieu){
     + RP_CFG.TON_CAO_PCT + '%.</div></div></div>';
   const khoa = laSl ? 'devSl' : 'devGt';
   h += '<div style="margin-top:8px">'
-    + rpBar_(list.slice(0,12).map(r => ({ t:r.code, v:Math.abs(r[khoa]), nhan:rpPct_(r[khoa]) })), mau)
+    + rpBar_(list.slice(0,12).map(r => ({ t:r.code, v:Math.abs(r[khoa]), nhan:rpPct_(r[khoa]),
+      ct:['cp-may', r.code, laSl?'sl':'gt'] })), mau)
     + '</div>'
     + '<div class="tw" style="margin-top:8px;max-height:300px"><table><thead><tr>'
     + '<th>Mã máy</th><th>Dòng máy</th><th>Trang trại</th>'
@@ -17163,7 +17217,7 @@ function rpBangTon_(tieuDe, mau, list, kieu){
     + '<th style="text-align:right">TB dòng máy</th><th style="text-align:right">Vượt</th>'
     + '<th>Khoản nào chiếm nhiều nhất</th></tr></thead><tbody>'
     + list.slice(0,50).map(r => '<tr>'
-      + '<td><span class="mm">'+rpE_(r.code)+'</span></td>'
+      + '<td>'+rpMa_(r.code, 'cp-may', laSl?'sl':'gt')+'</td>'
       + '<td style="font-size:11px">'+rpE_(r.model)+'</td>'
       + '<td style="font-size:11px">'+rpE_(r.site||'—')+'</td>'
       + '<td style="text-align:right;font-family:var(--mono);font-weight:600">'
@@ -17191,6 +17245,7 @@ function rpXuatChiPhi(){
   const soBu = d.cpRows.filter(r => r.coBu).length;
 
   let b = '';
+  b += rpPhamViG_(d.soMay, d.tongMay, 'Trung bình của dòng máy vẫn tính trên TOÀN đội máy cùng dòng — không đổi theo bộ lọc.');
   b += wH_(1, 'I. Tóm tắt điều hành (5W1H)');
   b += w5W1H_({
     what: rpE_('Phân tích chi phí vật tư tháng ' + cp.monthLabel + ': tổng ' + rpN_(cp.totalCost,0) + ' đ cho '
@@ -17304,7 +17359,7 @@ function rpXuatChiPhi(){
   /* ---- V. Nhận xét tổng ---- */
   b += wH_(1, 'V. Nhận xét tổng và kiến nghị');
   const nx = [];
-  nx.push('Tháng <b>' + rpE_(cp.monthLabel) + '</b>, toàn hệ thống chi <b>' + rpN_(cp.totalCost,0)
+  nx.push('Tháng <b>' + rpE_(cp.monthLabel) + '</b>, ' + rpPhamViChu_() + ' chi <b>' + rpN_(cp.totalCost,0)
     + ' đ</b> vật tư cho <b>' + rpN_(cp.totalKwh,0) + ' kWh</b>, bình quân <b>'
     + (tbChung!=null ? rpN_(tbChung,2) : '—') + ' đ/kWh</b>.');
   if (d.kwhCao.length){
@@ -17371,8 +17426,9 @@ function rpXuatChiPhi(){
           r.thieu ? '<b>'+r.thieu+'</b>' : '0', r.devGt!=null ? rpPct_(r.devGt) : '—'],
     })), { sz:'10.0pt' });
 
-  wXuat_('BaoCao-ChiPhiVatTu', 'BÁO CÁO CHI PHÍ VẬT TƯ',
-    'Tháng ' + cp.monthLabel + ' · so sánh với trung bình dòng máy và với tháng trước · số liệu lúc ' + RP.at, b);
+  wXuat_('BaoCao-ChiPhiVatTu' + rpHauToG_(), 'BÁO CÁO CHI PHÍ VẬT TƯ',
+    'Tháng ' + cp.monthLabel + ' · so sánh với trung bình dòng máy và với tháng trước · số liệu lúc ' + RP.at
+      + (rpGSoLoc_() ? ' · phạm vi lọc: ' + rpMoTaLocG_() : ''), b);
 }
 
 /* ############################################################################
@@ -17728,28 +17784,694 @@ function kkTheCanhBao_(){
     + '</tbody></table></div></div></div>';
 }
 
+
+
+/* ############################################################################ */
 /* ############################################################################
- *  BÁO CÁO TỔNG HỢP · CHỌN THÁNG ĐỂ XEM LẠI   (tab "② Hiệu quả vận hành")
- *  Khối này nằm ở CUỐI thẻ script duy nhất của index.html (đã ghép sẵn trong bản index.html giao kèm).
- *  KHÔNG sửa dòng nào khác trong index.html — xem "HAI HÀM BỊ BỌC" bên dưới.
- *  Cẩn thận khi sửa: trong khối này TUYỆT ĐỐI không được có chuỗi đóng thẻ script, kể cả trong
- *  chú thích hay chuỗi văn bản — trình duyệt cắt thẻ script ở đó và cả trang chết.
- *  Phía server: BAOCAOTHANG.gs + 2 điểm sửa Code.gs (đã ghép sẵn trong Code.gs giao kèm).
+ *  BÁO CÁO TỔNG HỢP · BỘ LỌC CHO ②/③  +  BẤM CỘT / MÃ MÁY ĐỂ XEM CHI TIẾT
+ *  Khối này nằm ở CUỐI thẻ script duy nhất của index.html, TRƯỚC khối "chọn tháng"
+ *  (BAOCAO-CHON-THANG). Đã ghép sẵn trong index.html giao kèm.
+ *  Cẩn thận khi sửa: trong khối này TUYỆT ĐỐI không được có chuỗi đóng thẻ script hay mở
+ *  chú thích HTML, kể cả trong chú thích/chuỗi văn bản — trình duyệt cắt thẻ script ở đó và cả trang chết.
+ * ----------------------------------------------------------------------------
+ *  HAI VIỆC, MỘT KHỐI VÌ CHÚNG DÍNH VÀO CÙNG CÁC HÀM CỦA BÁO CÁO
+ *
+ *  1 · BỘ LỌC ĐẶT Ở ĐẦU TRANG ②/③ (giống trang ① Kho vật tư & Bảo dưỡng)
+ *      Trước đây báo cáo hiệu quả chỉ tính cứng ba loại hình Thuê/Hợp tác/Bán trong
+ *      computeEfficiencyAll_ và không có chỗ nào để chọn. Nay có thanh lọc ở trên cùng:
+ *      khu vực · tỉnh · loại hình · đơn vị · từ khoá. MẶC ĐỊNH là Thuê + Hợp tác (đúng phạm vi
+ *      báo cáo vận hành được yêu cầu); bấm chip "Bán" để thêm, bấm "Tất cả" để bỏ lọc loại hình.
+ *
+ *      LỌC TẠI NGUỒN — rpHieuQua_() và rpChiPhi_() lọc ngay lúc dựng dữ liệu, KHÔNG lọc ở chỗ vẽ.
+ *      Hai hàm đó là nguồn chung của bảng trên màn hình, các ô KPI, biểu đồ VÀ tờ Word; lọc tại
+ *      nguồn thì bốn thứ này không thể nói khác nhau. Tờ Word ghi rõ phạm vi lọc ở đầu trang và
+ *      mang hậu tố bộ lọc trong tên file, để tờ đã lọc không bị đọc nhầm là toàn hệ thống.
+ *
+ *      MỘT BỘ LỌC DÙNG CHUNG CHO ② VÀ ③ (RP.g), tách hẳn bộ lọc của ① (RP.f). Tách để hành vi
+ *      của trang ① không đổi một dấu phẩy; dùng chung ②/③ vì đó là cùng một tập máy.
+ *
+ *      "TRUNG BÌNH DÒNG MÁY" KHÔNG ĐỔI THEO BỘ LỌC. Bảng chi phí và tồn kho so từng máy với trung
+ *      bình cùng dòng máy tính trên TOÀN đội máy. Lọc xong mới tính trung bình thì cùng một máy
+ *      đổi "vượt/không vượt" tuỳ ai đang bấm lọc gì — cùng một con số, hai kết luận.
+ *      Bộ lọc chỉ chọn máy nào được HIỆN, không chọn máy nào được dùng làm thước đo.
+ *
+ *  2 · BẤM VÀO CỘT BIỂU ĐỒ / MÃ MÁY / Ô KPI → BẢNG PHỤ CHI TIẾT (chỉ đọc)
+ *      Nhận xét nào cũng dựng từ con số; bảng phụ cho thấy chính các con số đó để người đọc tự
+ *      kiểm tra thay vì tin vào câu chữ: ngày nào, bao nhiêu kWh, bao nhiêu % thiết kế, luật nào
+ *      đã chấm máy vào nhóm này, ngưỡng là bao nhiêu.
+ *      Mọi bảng phụ dựng LẠI từ rpHieuQua_()/rpChiPhi_()/rpVatTu_() tại lúc bấm — cùng nguồn với
+ *      bảng đang nhìn — nên không có đường thứ hai tới cùng một con số.
+ *      rpCtBoc_ là chỗ móc: khi đang xem một THÁNG ĐÃ DỰNG LẠI, khối chọn tháng bọc nó để bảng phụ
+ *      chạy đúng trên dữ liệu của tháng đó chứ không phải của tháng đang chạy.
+ * ######################################################################### */
+
+/* ===========================================================================
+ *  1 · TRẠNG THÁI BỘ LỌC
+ * ========================================================================= */
+const RP_G_MACDINH = ['Thuê', 'Hợp tác'];
+RP.g = { khu: new Set(), tinh: new Set(), loai: new Set(RP_G_MACDINH), donVi: new Set(), q: '' };
+RP.gTinh = [];        // danh sách tỉnh của lần vẽ thanh lọc gần nhất — để ô gõ tỉnh khớp được
+
+function rpGSoLoc_(){
+  const F = RP.g;
+  return F.khu.size + F.tinh.size + F.loai.size + F.donVi.size + (F.q ? 1 : 0);
+}
+function rpGLaMacDinh_(){
+  const F = RP.g;
+  return !F.khu.size && !F.tinh.size && !F.donVi.size && !F.q
+    && F.loai.size === RP_G_MACDINH.length && RP_G_MACDINH.every(v => F.loai.has(v));
+}
+function rpMoTaLocG_(){
+  const F = RP.g, p = [];
+  const g = (nhan, set) => { if (set.size) p.push(nhan + ': ' + [...set].join(', ')); };
+  g('Khu vực', F.khu); g('Tỉnh', F.tinh); g('Loại hình', F.loai); g('Đơn vị', F.donVi);
+  if (F.q) p.push('Từ khoá: "' + F.q + '"');
+  return p.join(' · ');
+}
+/** Cụm từ thay cho "toàn hệ thống" trong lời văn của báo cáo. */
+function rpPhamViChu_(){ return rpGSoLoc_() ? 'các máy đang lọc' : 'toàn hệ thống'; }
+/** Hậu tố tên file mang theo cụm đang lọc — xuất nhiều tờ trong một buổi thì mở ra mới biết tờ nào của ai. */
+function rpHauToG_(){
+  const F = RP.g;
+  const p = [...F.khu, ...F.tinh, ...F.loai, ...F.donVi];
+  return p.length ? '-' + rpSlug_(p.join('-')) : '';
+}
+/** Khung "PHẠM VI BÁO CÁO" đứng đầu tờ Word. soMay = số máy sau lọc, tongMay = số máy trước lọc. */
+function rpPhamViG_(soMay, tongMay, ghiThem){
+  const them = ghiThem ? ' ' + ghiThem : '';
+  if (rpGSoLoc_())
+    return wP_('<b>PHẠM VI BÁO CÁO:</b> ' + rpE_(rpMoTaLocG_()) + '. Tờ này chỉ gồm <b>' + soMay + '/' + tongMay
+      + '</b> tổ máy của toàn hệ thống.' + them,
+      'border:1px solid #b45309;background:#fdf6e7;padding:6pt 8pt');
+  return wP_('<b>PHẠM VI BÁO CÁO:</b> toàn hệ thống — ' + tongMay + ' tổ máy, không áp bộ lọc nào.' + them,
+    'border:1px solid #0d6e3f;background:#eaf5ef;padding:6pt 8pt');
+}
+
+/* ===========================================================================
+ *  2 · THAO TÁC LỌC
+ * ========================================================================= */
+function rpLocG(khoa, gt){
+  if (khoa === 'q'){ RP.g.q = gt; }
+  else { const s = RP.g[khoa]; if (!s || !(s instanceof Set)) return; if (s.has(gt)) s.delete(gt); else s.add(gt); }
+  renderPage('report');
+}
+function rpXoaLocG(khoa){
+  if (khoa){ if (khoa === 'q') RP.g.q = ''; else if (RP.g[khoa] instanceof Set) RP.g[khoa].clear(); }
+  else { RP.g.khu.clear(); RP.g.tinh.clear(); RP.g.loai.clear(); RP.g.donVi.clear(); RP.g.q = ''; }
+  renderPage('report');
+}
+function rpMacDinhG(){
+  RP.g.khu.clear(); RP.g.tinh.clear(); RP.g.donVi.clear(); RP.g.q = '';
+  RP.g.loai.clear(); RP_G_MACDINH.forEach(v => RP.g.loai.add(v));
+  renderPage('report');
+}
+
+/** Một hàng chip. Chip "Tất cả" = bỏ lọc riêng hàng này (hàng rỗng nghĩa là KHÔNG lọc). */
+function rpHangLocG_(nhan, khoa, ds){
+  if (!ds || !ds.length) return '';
+  const set = RP.g[khoa];
+  const chip = (on, ten, n) => '<button class="fchip ' + (on ? 'on' : '') + '" '
+    + 'onclick="rpLocG(\'' + khoa + '\',\'' + rpAttrJs_(ten) + '\')">'
+    + rpE_(ten) + (n != null ? ' <span style="opacity:.65">' + n + '</span>' : '') + '</button>';
+  /* Giá trị ĐANG CHỌN mà không còn máy nào mang nó (n = 0) vẫn phải hiện để còn bỏ chọn được. */
+  const co = new Set(ds.map(x => x.ten));
+  const them = [...set].filter(v => !co.has(v)).map(v => ({ ten: v, n: 0 }));
+  return '<div class="fbar"><span class="mslbl">' + rpE_(nhan) + '</span>'
+    + '<button class="fchip ' + (set.size ? '' : 'on') + '" onclick="rpXoaLocG(\'' + khoa + '\')">Tất cả</button>'
+    + ds.concat(them).map(x => chip(set.has(x.ten), x.ten, x.n)).join('')
+    + '</div>';
+}
+
+/** Hàng lọc tỉnh: gõ tên, có gợi ý, chọn nhiều tỉnh. Cùng cách làm với trang ① (xem rpHangTinh_). */
+function rpHangTinhG_(ds){
+  if (!ds || !ds.length) return '';
+  const set = RP.g.tinh;
+  const conLai = ds.filter(x => !set.has(x.ten));
+  const daChon = [...set];
+  return '<div class="fbar" style="align-items:flex-start">'
+    + '<span class="mslbl" style="margin-top:6px">Tỉnh thành</span>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;flex:1">'
+    +   (daChon.length
+          ? daChon.map(t => '<button class="fchip on" title="Bấm để bỏ tỉnh này"'
+              + ' onclick="rpLocG(\'tinh\',\'' + rpAttrJs_(t) + '\')">' + rpE_(t) + ' ✕</button>').join('')
+          : '<span class="fchip on">Tất cả</span>')
+    +   '<input class="si" id="rpTinhInputG" list="rpTinhDSG" autocomplete="off"'
+    +     ' style="max-width:230px" placeholder="Gõ tên tỉnh rồi Enter…"'
+    +     ' onchange="rpThemTinhG(this.value)"'
+    +     ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();rpThemTinhG(this.value);}">'
+    +   '<datalist id="rpTinhDSG">'
+    +     conLai.map(x => '<option value="' + rpE_(x.ten) + '">' + x.n + ' máy</option>').join('')
+    +   '</datalist>'
+    +   (daChon.length ? '<button class="fchip" onclick="rpXoaLocG(\'tinh\')">✕ bỏ hết tỉnh</button>' : '')
+    + '</div></div>';
+}
+
+/** Thêm một tỉnh từ ô gõ — khớp KHÔNG DẤU; nhiều tỉnh cùng khớp thì KHÔNG đoán (xem rpThemTinh). */
+function rpThemTinhG(val){
+  const s = rpKhongDau_(val);
+  const el = document.getElementById('rpTinhInputG');
+  if (!s){ if (el) el.value = ''; return; }
+  const chuaChon = (RP.gTinh || []).filter(t => !RP.g.tinh.has(t));
+  let hit = chuaChon.find(t => rpKhongDau_(t) === s);
+  if (!hit){
+    const gan = chuaChon.filter(t => rpKhongDau_(t).indexOf(s) >= 0);
+    if (gan.length === 1) hit = gan[0];
+    else if (gan.length > 1){
+      if (el) el.value = '';
+      toast('"' + val + '" khớp ' + gan.length + ' tỉnh: ' + gan.slice(0, 5).join(', ') + (gan.length > 5 ? '…' : '') + ' — gõ rõ hơn', 'info');
+      return;
+    }
+  }
+  if (!hit){
+    if (el) el.value = '';
+    toast(RP.g.tinh.has(String(val).trim()) ? 'Đã chọn tỉnh này rồi' : 'Không có tỉnh nào tên "' + val + '" trong danh sách máy', 'info');
+    return;
+  }
+  if (el) el.value = '';
+  RP.g.tinh.add(hit);
+  renderPage('report');
+  setTimeout(() => { const n = document.getElementById('rpTinhInputG'); if (n) n.focus(); }, 0);
+}
+
+/**
+ * THANH LỌC ĐẦY ĐỦ của ②/③.
+ * @param codes  tập máy mà tab đang xét (TRƯỚC khi lọc) — dùng để đếm số trên chip và "n/N máy".
+ * Đếm cho chip của một hàng áp MỌI hàng lọc KHÁC (trừ chính nó), đúng cách trang ① làm — đếm trên
+ * toàn bộ thì số không đổi khi bấm lọc, đếm trên tập đã lọc hết thì mọi chip chưa chọn về 0.
+ * Thanh lọc luôn được dựng kể cả khi lọc ra 0 máy: không có nó thì không còn cách nào bỏ lọc.
+ */
+function rpThanhLocG_(codes){
+  const F = RP.g;
+  const uni = [], seen = new Set();
+  (codes || []).forEach(c => {
+    const k = String(c || '').trim().toUpperCase();
+    if (!k || seen.has(k) || rpBoQua_(k)) return;
+    seen.add(k); uni.push(rpMay_(k));
+  });
+  const dem = (khoa, lay) => {
+    const m = new Map();
+    uni.forEach(r => {
+      if (!rpQua_(r, F, khoa)) return;
+      const v = lay(r); if (!v) return;
+      m.set(v, (m.get(v) || 0) + 1);
+    });
+    return [...m.entries()].map(([ten, n]) => ({ ten, n }))
+      .sort((a, b) => b.n - a.n || a.ten.localeCompare(b.ten, 'vi'));
+  };
+  const facet = {
+    khu:   dem('khu',   r => r.khu),
+    tinh:  dem('tinh',  r => r.tinh),
+    loai:  dem('loai',  r => r.loaiHinh),
+    donVi: dem('donVi', r => r.donVi),
+  };
+  RP.gTinh = facet.tinh.map(x => x.ten);
+  const nKhop = uni.filter(r => rpQua_(r, F)).length;
+
+  let h = '<div class="card" style="margin-bottom:10px"><div class="cb" style="padding:10px 12px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">'
+    + '<b style="font-size:12px">Bộ lọc báo cáo vận hành</b>'
+    + '<span style="font-size:11px;color:var(--mu)">Mặc định chỉ tính máy <b>Thuê</b> và <b>Hợp tác</b> — bấm “Bán” để thêm, '
+    +   '“Tất cả” để bỏ lọc loại hình. <b>Dùng chung cho ② và ③; file Word xuất ra đúng bằng phần đang lọc.</b></span></div>';
+
+  h += '<div class="msg" style="margin-bottom:6px">'
+    + '<input class="si" id="rpTimInputG" autocomplete="off" style="flex:1"'
+    +   ' placeholder="🔍 Mã máy · trại · tỉnh — gõ &quot;NS250&quot; để lấy cả dòng máy"'
+    +   ' value="' + rpE_(F.q) + '" oninput="rpLocG(\'q\',this.value)">'
+    + (rpGSoLoc_() && !rpGLaMacDinh_() ? '<button class="btn bg-gr sm" onclick="rpMacDinhG()">↺ Về mặc định (Thuê + Hợp tác)</button>' : '')
+    + (rpGSoLoc_() ? '<button class="btn bg-gr sm" onclick="rpXoaLocG()">✕ Bỏ hết bộ lọc</button>' : '')
+    + '</div>';
+
+  h += rpHangLocG_('Loại hình', 'loai', facet.loai);
+  h += rpHangLocG_('Khu vực', 'khu', facet.khu);
+  h += rpHangTinhG_(facet.tinh);
+  h += rpHangLocG_('Đơn vị', 'donVi', facet.donVi);
+
+  h += '<div style="font-size:11px;color:' + (rpGSoLoc_() ? 'var(--amb)' : 'var(--mu)') + ';margin-top:6px">'
+    + (rpGSoLoc_()
+        ? '⧗ Đang lọc: <b>' + rpE_(rpMoTaLocG_()) + '</b> — hiện <b>' + nKhop + '/' + uni.length + '</b> tổ máy.'
+        : 'Không lọc — hiện toàn bộ <b>' + uni.length + '</b> tổ máy.')
+    + '</div>';
+  return h + '</div></div>';
+}
+
+/** Tập máy của tab ② (trước lọc) — danh sách máy đủ điều kiện của chính phép chấm điểm. */
+function rpMaHQ_(){
+  let eff = [];
+  try { eff = computeEfficiencyAll_(S.master.rows) || []; } catch (e){ eff = []; }
+  return eff.filter(x => x && x.code).map(x => x.code);
+}
+/** Tập máy của tab ③ (trước lọc) — máy có số chi phí hoặc có tồn kho đang chạy. */
+function rpMaCP_(){
+  const out = [];
+  try { ((RP.cp && RP.cp.ok && RP.cp.rows) || []).forEach(r => { if (r && r.code) out.push(r.code); }); } catch (e){}
+  try {
+    ((Q.stock && Q.stock.rows) || []).forEach(r => {
+      const c = String(r['Mã máy'] || '').trim();
+      if (c && qDangChay_(r)) out.push(c);
+    });
+  } catch (e){}
+  return out;
+}
+
+/* ===========================================================================
+ *  3 · TIỆN ÍCH CHO PHẦN BẤM-XEM-CHI-TIẾT
+ * ========================================================================= */
+const RP_CT = {};      // bảng tra: loại → hàm (khoá, phụ) → { tieuDe, phuDe, html, nut }
+
+/** Chuỗi an toàn để nhét vào onclick="..." trong dấu nháy đơn. */
+function rpAttrJs_(s){
+  return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+    .replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/\r?\n/g, ' ');
+}
+/** Thuộc tính HTML để một phần tử bấm được. ct = [loại, khoá, phụ]. Không có ct → chuỗi rỗng.
+ *  lop = lớp CSS sẵn có của phần tử (ví dụ 'card'): thuộc tính class chỉ được xuất hiện MỘT lần. */
+function rpCtAttr_(ct, lop){
+  if (!ct || !ct[0]) return '';
+  return ' class="' + (lop ? lop + ' ' : '') + 'rp-ct" onclick="rpCt(\'' + rpAttrJs_(ct[0]) + '\',\'' + rpAttrJs_(ct[1]) + '\',\'' + rpAttrJs_(ct[2]) + '\')"'
+    + ' title="Bấm để xem chi tiết và kiểm tra"';
+}
+/** Mã máy bấm được. */
+function rpMa_(code, loai, phu){
+  return '<span class="mm rp-ct" onclick="rpCt(\'' + rpAttrJs_(loai || 'hq-may') + '\',\'' + rpAttrJs_(code) + '\',\'' + rpAttrJs_(phu) + '\')"'
+    + ' title="Bấm để xem chi tiết và kiểm tra">' + rpE_(code) + '</span>';
+}
+
+/** Móc để khối chọn tháng đặt bảng phụ vào đúng ngữ cảnh tháng. Mặc định: chạy thẳng. */
+function rpCtBoc_(fn){ return fn(); }
+
+function rpCt(loai, khoa, phu){
+  let spec;
+  try {
+    const f = RP_CT[loai];
+    if (!f){ toast('Chưa có bảng chi tiết cho mục này', 'err'); return; }
+    spec = rpCtBoc_(function (){ return f(String(khoa == null ? '' : khoa), String(phu == null ? '' : phu)); });
+  } catch (e){
+    toast('Không mở được chi tiết: ' + e.message, 'err');
+    return;
+  }
+  if (!spec){ toast('Không có số liệu chi tiết cho mục này (máy có thể không còn trong bộ lọc).', 'info'); return; }
+  openOv(rpCtKhung_(spec));
+}
+function rpCtKhung_(s){
+  return '<div class="mh"><div><h2>' + rpE_(s.tieuDe) + '</h2><p>' + (s.phuDe || '') + '</p></div>'
+    + '<button class="mcl" onclick="closeOv()">✕</button></div>'
+    + '<div class="mb">' + s.html + '</div>'
+    + '<div class="mf">' + (s.nut || '') + '<button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>';
+}
+
+function rpTieuMuc_(t, ghi){
+  return '<div style="font-size:12px;font-weight:700;margin:16px 0 4px">' + rpE_(t)
+    + (ghi ? ' <span style="font-weight:400;color:var(--mu)">— ' + ghi + '</span>' : '') + '</div>';
+}
+function rpGhiChuCt_(html, mau){
+  return '<div style="font-size:12px;line-height:1.7;padding:9px 12px;border-left:3px solid ' + (mau || '#0d6e3f')
+    + ';background:#f8fafc;border-radius:4px;margin-bottom:6px">' + html + '</div>';
+}
+/**
+ * Bảng nhỏ trong bảng phụ.
+ * cols: [{t, a:'right'|'left'|'center', m:true → chữ số}]   rows: [{c:[html…], bg:'#…'}]
+ * Ô là HTML ĐÃ thoát — người gọi tự rpE_ phần chữ.
+ */
+function rpTblCt_(cols, rows, maxH){
+  if (!rows.length) return '<div class="empty" style="padding:14px 0">Không có dòng nào.</div>';
+  return '<div class="tw" style="margin-top:6px;max-height:' + (maxH || 320) + 'px"><table><thead><tr>'
+    + cols.map(c => '<th style="text-align:' + (c.a || 'left') + '">' + rpE_(c.t) + '</th>').join('')
+    + '</tr></thead><tbody>'
+    + rows.map(r => '<tr' + (r.bg ? ' style="background:' + r.bg + '"' : '') + '>'
+        + r.c.map((v, i) => { const c = cols[i] || {};
+            return '<td style="text-align:' + (c.a || 'left') + (c.m ? ';font-family:var(--mono)' : '') + '">' + v + '</td>'; }).join('')
+        + '</tr>').join('')
+    + '</tbody></table></div>';
+}
+function rpMayDong_(code){
+  const m = rpMay_(code);
+  return '<b>' + rpE_(m.code || code) + '</b>' + (m.site ? ' · ' + rpE_(m.site) : '')
+    + (m.khu ? ' · ' + rpE_(m.khu) : '') + (m.loaiHinh ? ' · ' + rpE_(m.loaiHinh) : '')
+    + (m.vanHanh ? '<br>Người vận hành: ' + rpE_(m.vanHanh) + (m.sdt ? ' · ' + rpE_(m.sdt) : '') : '');
+}
+/** Đang xem THÁNG ĐANG CHẠY (không phải bản dựng lại / xem nhanh)? Chỉ lúc đó mới cho nút sửa số. */
+function rpCtDangChay_(){
+  try { return !HQ.swapped && rpHqThang_() === rpHqThangNay_(); } catch (e){ return true; }
+}
+function rpCtNutSua_(code){
+  if (!rpCtDangChay_()) return '';
+  try { if (!(S.perm && S.perm.editData)) return ''; } catch (e){ return ''; }
+  return '<button class="btn bg-b" onclick="closeOv();openEfficiencyEditByCode(\'' + rpAttrJs_(code) + '\')">✎ Sửa số liệu ngày của máy này</button>';
+}
+const rpSo_ = (v, d) => (v == null || !isFinite(Number(v))) ? '—' : rpN_(v, d);
+const rpPc_ = v => (v == null || !isFinite(Number(v))) ? '—' : Math.round(Number(v)) + '%';
+
+/** Luật chấm một ngày, nói bằng lời + đúng số của ngày đó. Rẽ nhánh theo effDayStatus_ (nguồn duy nhất của luật). */
+function rpLyDoTT_(pctHr, pctKw){
+  const tt = effDayStatus_(pctHr, pctKw);
+  const B = BAD_THRESHOLD_PCT, V = SEVERE_THRESHOLD_PCT;
+  const f = v => v == null ? '—' : Math.round(v) + '%';
+  if (tt === 'nodata') return 'Chưa có số của ngày này nên không chấm điểm.';
+  if (tt === 'ineffective'){
+    if ((pctKw != null && pctKw < V) || (pctHr != null && pctHr < V))
+      return 'Điện ' + f(pctKw) + ' · giờ ' + f(pctHr) + ': có chỉ số dưới ' + V + '% thiết kế → <b>Không hiệu quả</b> ngay, bất kể chỉ số kia.';
+    return 'Chạy đủ giờ (' + f(pctHr) + ' ≥ ' + B + '%) mà điện chỉ ' + f(pctKw) + ' (< ' + B + '%) → nghi máy hỏng / không ra điện → <b>Không hiệu quả</b>.';
+  }
+  if (tt === 'bad')
+    return 'Điện ' + f(pctKw) + ' và giờ ' + f(pctHr) + ' cùng dưới ' + B + '% → ít được huy động → <b>Kém hiệu quả</b>.';
+  if (tt === 'over') return 'Điện ' + f(pctKw) + ' — vượt thiết kế (> ' + CAPACITY_OVER_PCT + '%).';
+  return 'Điện ' + f(pctKw) + ' · giờ ' + f(pctHr) + ' — đạt ngưỡng (điện ≥ ' + B + '% thiết kế), không vào danh sách.';
+}
+function rpBadgeTT_(tt){
+  const m = EFF_DAY_META[tt] || EFF_DAY_META.nodata;
+  return '<span class="b ' + m.badge + '">' + rpE_(m.label) + '</span>';
+}
+
+/* ===========================================================================
+ *  4 · ② HIỆU QUẢ VẬN HÀNH — BẢNG PHỤ
+ * ========================================================================= */
+
+/** Thẻ máy: mọi con số đứng sau một nhận xét về MỘT máy. phu = 'xau' | 'keo' | 'deu' | 'mom|MM/yyyy' | ''. */
+RP_CT['hq-may'] = function (code, phu){
+  const d = rpHieuQua_();
+  const key = String(code).toUpperCase();
+  const x = d.may.find(m => String(m.code).toUpperCase() === key) || null;
+  const tm = ((d.thang && d.thang.machines) || []).find(z => String(z.code).toUpperCase() === key) || null;
+  if (!x && !tm) return null;
+  const pp = String(phu || '').split('|'), sub = pp[0] || '', nhanThang = pp[1] || '';
+
+  /* ---- 1 · VÌ SAO MÁY NÀY CÓ MẶT Ở MỤC ĐÓ — cơ sở của nhận xét ---- */
+  let co = '';
+  if (x){
+    if (sub === 'keo'){
+      co = 'Máy <b>kém hiệu quả ' + x.streak + ' ngày liên tiếp</b> tính lùi từ ngày đánh giá ' + rpE_(x.evalNhan || '—')
+        + ' (ngưỡng nêu tên: từ ' + STREAK_ALERT_DAYS + ' ngày). '
+        + (x.streakDays && x.streakDays.length ? 'Các ngày trong chuỗi: <b>' + x.streakDays.join(', ') + '</b>. ' : '')
+        + 'Chuỗi dừng ngay khi gặp một ngày đạt; ngày không có số bị bỏ qua chứ không nối chuỗi. Bảng “Cửa sổ đánh giá” bên dưới là chính các ngày đó.';
+    } else if (sub === 'deu'){
+      const sd = (x.cvKw != null && x.tbKw > 0) ? x.cvKw / 100 * x.tbKw : null;
+      co = 'Hệ số biến thiên điện phát = <b>' + (x.cvKw != null ? x.cvKw + '%' : '—') + '</b> (ngưỡng ' + RP_CFG.DEU_CV_PCT + '%) = độ lệch chuẩn ÷ trung bình, '
+        + 'tính trên <b>' + x.soNgayKw + '</b> ngày có điện > 0, trung bình <b>' + rpSo_(x.tbKw) + ' kWh/ngày</b>'
+        + (sd != null ? ' → độ lệch chuẩn ≈ ' + rpSo_(sd) + ' kWh' : '') + '. '
+        + 'Các dòng tô tím trong bảng theo ngày là những ngày lệch quá ' + RP_CFG.DEU_CV_PCT + '% so với trung bình. Ngày không có số bị bỏ qua, không tính là 0.';
+    } else if (sub === 'mom' && tm){
+      const cur = (tm.byMonth || {})[nhanThang];
+      const T = (d.thang.totals || []).find(z => z.label === nhanThang);
+      const prv = (T && T.prevLabel) ? (tm.byMonth || {})[T.prevLabel] : null;
+      co = 'Tháng <b>' + rpE_(nhanThang) + '</b>: ' + rpSo_(cur && cur.power, 0) + ' kWh'
+        + (prv ? ', tháng ' + rpE_(T.prevLabel) + ': ' + rpSo_(prv.power, 0) + ' kWh → chênh <b>'
+          + ((cur && cur.power != null && prv.power != null) ? (cur.power - prv.power >= 0 ? '+' : '') + rpN_(cur.power - prv.power, 0) + ' kWh' : '—') + '</b>' : '')
+        + '. Số theo tháng lấy từ Sheet 9 (số đã chốt).';
+    } else {
+      co = rpLyDoTT_(x.pctHr, x.pctKw) + ' <span style="color:var(--mu)">(ngày đánh giá ' + rpE_(x.evalNhan || '—') + ')</span>';
+    }
+  } else {
+    co = 'Máy có số theo tháng ở Sheet 9 nhưng không có số theo ngày trong phạm vi đang xem.';
+  }
+  let h = rpGhiChuCt_('<b>Cơ sở của nhận xét.</b> ' + co);
+
+  if (x){
+    /* ---- 2 · NGÀY ĐÁNH GIÁ ---- */
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+      + rpKpi_('Điện phát ngày ' + rpE_(x.evalNhan || '—'), rpSo_(x.actualKw, 0), '#0d6e3f', 'thiết kế ' + rpSo_(x.designKw, 0) + ' kWh · ' + rpPc_(x.pctKw))
+      + rpKpi_('Giờ chạy', rpSo_(x.actualHr, 1), '#0f766e', 'thiết kế ' + rpSo_(x.designHr, 1) + ' h · ' + rpPc_(x.pctHr))
+      + rpKpi_('Chuỗi kém', x.streak ? x.streak + ' ngày' : '—', x.needCheck ? '#b91c1c' : '#64748b', x.needCheck ? 'đã tới ngưỡng đi kiểm tra' : 'chưa tới ngưỡng ' + STREAK_ALERT_DAYS + ' ngày')
+      + rpKpi_('Biến thiên điện', x.cvKw != null ? x.cvKw + '%' : '—', x.khongDeu ? '#6d28d9' : '#64748b', 'ngưỡng ' + RP_CFG.DEU_CV_PCT + '%')
+      + '</div>';
+
+    /* ---- 3 · CỬA SỔ ĐÁNH GIÁ ---- */
+    h += rpTieuMuc_('Cửa sổ đánh giá', EVAL_WINDOW_DAYS + ' ngày gần nhất có số — mỗi ngày chấm riêng, so với ngày được chấm liền trước');
+    h += rpTblCt_(
+      [{ t: 'Ngày' }, { t: 'Điện (kWh)', a: 'right', m: 1 }, { t: '% thiết kế', a: 'right', m: 1 }, { t: 'Giờ (h)', a: 'right', m: 1 },
+       { t: '% thiết kế', a: 'right', m: 1 }, { t: 'So ngày trước', a: 'right', m: 1 }, { t: 'Kết luận' }],
+      (x.dayEvals || []).map(e => ({
+        bg: (e.status === 'ineffective') ? '#fbe3e3' : (e.status === 'bad' ? '#fdf6e7' : ''),
+        c: ['<b>' + rpE_(e.nhan || e.day) + '</b>' + (e.thangTruoc ? ' <span class="b bmu">tháng trước</span>' : ''),
+            rpSo_(e.valKw, 2), rpPc_(e.pctKw), rpSo_(e.valHr, 2), rpPc_(e.pctHr),
+            e.dKw != null ? (e.dKw >= 0 ? '+' : '') + Math.round(e.dKw) + ' điểm' : '—', rpBadgeTT_(e.status)],
+      })), 240);
+
+    /* ---- 4 · TOÀN BỘ NGÀY TRONG THÁNG ---- */
+    const n = Math.max((x.powerArr || []).length, (x.hoursArr || []).length);
+    const rows = [];
+    for (let i = 0; i < n; i++){
+      const kw = (x.powerArr || [])[i], hr = (x.hoursArr || [])[i];
+      if (kw == null && hr == null) continue;
+      const pK = (kw != null && x.designKw > 0) ? kw / x.designKw * 100 : null;
+      const pH = (hr != null && x.designHr > 0) ? hr / x.designHr * 100 : null;
+      const tail = !!(x.daily && x.daily.power && x.daily.power[i] && x.daily.power[i].thangTruoc);
+      const dev = (kw != null && kw > 0 && x.tbKw > 0) ? (kw - x.tbKw) / x.tbKw * 100 : null;
+      const out = dev != null && Math.abs(dev) > RP_CFG.DEU_CV_PCT;
+      rows.push({
+        bg: out ? '#f3eefc' : '',
+        c: ['<b>' + (i + 1) + '</b>' + (tail ? ' <span class="b bmu">tháng trước</span>' : ''),
+            rpSo_(kw, 2), rpPc_(pK), rpSo_(hr, 2), rpPc_(pH),
+            dev != null ? (dev >= 0 ? '+' : '') + Math.round(dev) + '%' + (out ? ' ⚠' : '') : '—',
+            rpBadgeTT_(effDayStatus_(pH, pK))],
+      });
+    }
+    h += rpTieuMuc_('Toàn bộ số theo ngày', rows.length + ' ngày có số · trung bình điện ' + rpSo_(x.tbKw) + ' kWh/ngày (chỉ tính ngày có điện > 0)');
+    h += rpTblCt_(
+      [{ t: 'Ngày' }, { t: 'Điện (kWh)', a: 'right', m: 1 }, { t: '% thiết kế', a: 'right', m: 1 }, { t: 'Giờ (h)', a: 'right', m: 1 },
+       { t: '% thiết kế', a: 'right', m: 1 }, { t: 'Lệch so TB', a: 'right', m: 1 }, { t: 'Chấm riêng ngày' }], rows, 300);
+  }
+
+  /* ---- 5 · THEO THÁNG (Sheet 9) ---- */
+  if (tm){
+    const ms = ((d.thang && d.thang.months) || []).slice();
+    h += rpTieuMuc_('Theo tháng', 'số đã chốt ở Sheet 9');
+    h += rpTblCt_([{ t: 'Tháng' }, { t: 'Điện phát (kWh)', a: 'right', m: 1 }, { t: 'Giờ chạy (h)', a: 'right', m: 1 }],
+      ms.map(mo => { const b = (tm.byMonth || {})[mo.label]; return {
+        bg: mo.label === nhanThang ? '#eef2ff' : '',
+        c: ['<b>' + rpE_(mo.label) + '</b>', rpSo_(b && b.power, 0), rpSo_(b && b.hours, 0)] }; }), 200);
+  }
+  return { tieuDe: 'Máy ' + code, phuDe: rpMayDong_(code), html: h, nut: rpCtNutSua_(code) };
+};
+
+/** Danh sách máy của một nhóm KPI/biểu đồ — mỗi mã máy bấm tiếp ra thẻ máy. */
+RP_CT['hq-ds'] = function (nhom){
+  const d = rpHieuQua_();
+  const B = BAD_THRESHOLD_PCT, V = SEVERE_THRESHOLD_PCT;
+  const DEF = {
+    khong: { ten: 'Máy không hiệu quả', list: d.khong, sub: 'xau',
+      mo: 'Ngày đánh giá có điện hoặc giờ dưới ' + V + '% thiết kế, hoặc chạy đủ giờ (≥ ' + B + '%) mà điện dưới ' + B + '%.' },
+    kem:   { ten: 'Máy kém hiệu quả', list: d.kem, sub: 'xau',
+      mo: 'Ngày đánh giá có điện và giờ cùng dưới ' + B + '% thiết kế (ít được huy động).' },
+    keo:   { ten: 'Máy kém kéo dài', list: d.keoDai, sub: 'keo',
+      mo: 'Kém hoặc không hiệu quả liên tiếp từ ' + STREAK_ALERT_DAYS + ' ngày trở lên tính lùi từ ngày đánh giá — nhóm duy nhất được nhắn Zalo cho KTV.' },
+    deu:   { ten: 'Máy chạy không đều', list: d.phapPhu, sub: 'deu',
+      mo: 'Hệ số biến thiên điện phát (độ lệch chuẩn ÷ trung bình) vượt ' + RP_CFG.DEU_CV_PCT + '%.' },
+    tb:    { ten: 'Toàn bộ tổ máy — mức đạt thiết kế', list: d.may.slice().sort((a, b) => (a.pctKw == null ? 999 : a.pctKw) - (b.pctKw == null ? 999 : b.pctKw)), sub: '',
+      mo: 'Trung bình % điện phát đạt so thiết kế của ngày đánh giá = ' + (d.tbPctKw != null ? d.tbPctKw + '%' : '—') + ' (cộng % của từng máy rồi chia số máy có số).' },
+  };
+  const D = DEF[nhom];
+  if (!D) return null;
+  const rows = D.list.map(x => ({
+    bg: x.trangThai === 'ineffective' ? '#fbe3e3' : (x.trangThai === 'bad' ? '#fdf6e7' : ''),
+    c: [rpMa_(x.code, 'hq-may', D.sub), '<span style="font-size:11px">' + rpE_(x.site || '—') + '</span>',
+        rpSo_(x.actualKw, 0) + ' / ' + rpSo_(x.designKw, 0), rpPc_(x.pctKw),
+        rpSo_(x.actualHr, 1) + ' / ' + rpSo_(x.designHr, 1), rpPc_(x.pctHr),
+        x.streak ? x.streak + ' ngày' : '—', x.cvKw != null ? x.cvKw + '%' : '—',
+        x.teNhat ? 'Ngày ' + rpE_(x.teNhat.nhan || x.teNhat.day) + ' — ' + Math.round(x.teNhat.pct) + '%' : '—'],
+  }));
+  const h = rpGhiChuCt_('<b>Cơ sở.</b> ' + rpE_(D.mo)) + rpTblCt_(
+    [{ t: 'Mã máy' }, { t: 'Trang trại' }, { t: 'Điện ngày (thực / TK)', a: 'right', m: 1 }, { t: '% TK', a: 'right', m: 1 },
+     { t: 'Giờ (thực / TK)', a: 'right', m: 1 }, { t: '% TK', a: 'right', m: 1 }, { t: 'Chuỗi', a: 'right', m: 1 },
+     { t: 'Biến thiên điện', a: 'right', m: 1 }, { t: 'Ngày tệ nhất' }], rows, 420);
+  return { tieuDe: D.ten, phuDe: rows.length + ' máy' + (rpGSoLoc_() ? ' · đang lọc: ' + rpE_(rpMoTaLocG_()) : '') + ' — bấm mã máy để xem từng ngày', html: h };
+};
+
+/** Một tháng trong biểu đồ "So sánh giữa các tháng": máy nào tạo nên con số của tháng đó. */
+RP_CT['hq-thang'] = function (label){
+  const d = rpHieuQua_();
+  const T = d.thang || {};
+  const t = (T.totals || []).find(z => z.label === label);
+  if (!t) return null;
+  const pl = t.prevLabel;
+  const rows = (T.machines || []).map(x => {
+    const cur = (x.byMonth || {})[label], prv = pl ? (x.byMonth || {})[pl] : null;
+    return { code: x.code, cur: cur ? cur.power : null, curH: cur ? cur.hours : null, prv: prv ? prv.power : null };
+  }).filter(r => r.cur != null || r.prv != null);
+  rows.forEach(r => { r.delta = (r.cur != null && r.prv != null) ? Math.round((r.cur - r.prv) * 100) / 100 : null; });
+  rows.sort((a, b) => pl ? (Math.abs(b.delta == null ? 0 : b.delta) - Math.abs(a.delta == null ? 0 : a.delta)) : ((b.cur || 0) - (a.cur || 0)));
+  const co = 'Tổng điện phát tháng <b>' + rpE_(label) + '</b> = cộng <b>' + t.n + '</b> máy có số = <b>' + rpN_(t.power, 0) + ' kWh</b>'
+    + (t.devPct != null ? ' — lệch <b>' + rpPct_(t.devPct) + '</b> so với mức trung bình của cả chuỗi tháng'
+        + (T.mean != null ? ' (' + rpN_(T.mean, 0) + ' kWh)' : '') + ' (ngưỡng tô màu ±' + MONTHLY_TREND_PCT + '%)' : '')
+    + '. Mọi số theo tháng lấy từ Sheet 9 — số đã chốt, cộng từ Sheet 5 sau mỗi lần sửa.'
+    + (rpGSoLoc_() ? ' Chỉ gồm các máy đang lọc: ' + rpE_(rpMoTaLocG_()) + '.' : '');
+  const h = rpGhiChuCt_('<b>Cơ sở của nhận xét.</b> ' + co) + rpTblCt_(
+    [{ t: 'Mã máy' }, { t: 'Điện ' + label + ' (kWh)', a: 'right', m: 1 }, { t: pl ? 'Điện ' + pl + ' (kWh)' : 'Tháng trước', a: 'right', m: 1 },
+     { t: 'Chênh', a: 'right', m: 1 }, { t: 'Giờ chạy (h)', a: 'right', m: 1 }],
+    rows.map(r => ({
+      bg: (r.delta != null && r.delta < 0) ? '#fdecec' : ((r.delta != null && r.delta > 0) ? '#eaf5ef' : ''),
+      c: [rpMa_(r.code, 'hq-may', 'mom|' + label), rpSo_(r.cur, 0), rpSo_(r.prv, 0),
+          r.delta == null ? '—' : '<b>' + (r.delta >= 0 ? '+' : '') + rpN_(r.delta, 0) + '</b>', rpSo_(r.curH, 0)],
+    })), 420);
+  return { tieuDe: 'Tháng ' + label + ' — máy nào tạo nên tổng điện phát', phuDe: rows.length + ' máy' + (pl ? ' · so với tháng ' + rpE_(pl) : ''), html: h };
+};
+
+/** Ô "Tổng kết tháng": % đạt thiết kế cả tháng của từng máy. sub: 'duoi' | 'kw' | 'hr'. */
+RP_CT['hq-tk'] = function (sub){
+  const d = rpHieuQua_();
+  const TK = d.tongKet;
+  if (!TK || !TK.rows || !TK.rows.length) return null;
+  const duoi = r => (r.pctKwh != null && r.pctKwh < 90) || (r.pctHr != null && r.pctHr < 90);
+  let list = TK.rows.slice(), tieu = 'Tổng kết tháng ' + TK.monthLabel + ' — toàn bộ tổ máy';
+  let co = 'Mỗi máy: điện phát cả tháng ÷ (thiết kế/ngày × số ngày của tháng). '
+    + (TK.isComplete ? 'Tháng đã đủ ngày.' : 'Mới tính đến ngày ' + TK.daysWithDataMax + '/' + TK.daysInMonth + ' — số còn tạm. ')
+    + 'Chỉ cộng các ngày có số.';
+  if (sub === 'duoi'){ list = list.filter(duoi); tieu = 'Máy dưới 90% chỉ tiêu tháng ' + TK.monthLabel; co += ' Danh sách này là máy có % điện HOẶC % giờ dưới 90%.'; }
+  const kP = sub === 'hr' ? 'pctHr' : 'pctKwh';
+  list.sort((a, b) => (a[kP] == null ? 999 : a[kP]) - (b[kP] == null ? 999 : b[kP]));
+  const h = rpGhiChuCt_('<b>Cơ sở.</b> ' + rpE_(co)) + rpTblCt_(
+    [{ t: 'Mã máy' }, { t: 'Điện cả tháng (kWh)', a: 'right', m: 1 }, { t: 'Chỉ tiêu tháng', a: 'right', m: 1 }, { t: '% điện', a: 'right', m: 1 },
+     { t: 'Giờ cả tháng (h)', a: 'right', m: 1 }, { t: 'Chỉ tiêu giờ', a: 'right', m: 1 }, { t: '% giờ', a: 'right', m: 1 }],
+    list.map(r => ({
+      bg: duoi(r) ? '#fdecec' : '',
+      c: [rpMa_(r.code, 'hq-may', 'tk'), rpSo_(r.sumKwh, 0), rpSo_(r.targetKwh, 0), rpPc_(r.pctKwh),
+          rpSo_(r.sumHr, 1), rpSo_(r.targetHr, 1), rpPc_(r.pctHr)],
+    })), 420);
+  return { tieuDe: tieu, phuDe: list.length + ' máy', html: h };
+};
+
+/* ===========================================================================
+ *  5 · ③ CHI PHÍ VẬT TƯ — BẢNG PHỤ
+ * ========================================================================= */
+/** sub: 'kwh' (đ/kWh vượt TB dòng) | 'mom' (cao hơn tháng trước) | 'sl' | 'gt' (tồn kho). */
+RP_CT['cp-may'] = function (code, sub){
+  const d = rpChiPhi_();
+  const key = String(code).toUpperCase();
+  const r = (d.cpRowsAll || []).find(z => String(z.code).toUpperCase() === key) || null;
+  const t = (d.tonAll || []).find(z => String(z.code).toUpperCase() === key) || null;
+  if (!r && !t) return null;
+  const cp = d.cp || {};
+  let co = '';
+  if (sub === 'kwh' && r){
+    co = 'đ/kWh = chi phí vật tư tháng ÷ kWh phát = ' + rpN_(r.cost, 0) + ' ÷ ' + rpN_(r.kwh, 0) + ' = <b>' + rpN_(r.costPerKwh, 2) + ' đ/kWh</b>. '
+      + 'Trung bình dòng máy <b>' + rpE_(r.model) + '</b> = ' + rpN_(r.modelAvg, 2) + ' đ/kWh (tính trên TOÀN đội máy cùng dòng, không đổi theo bộ lọc) → vượt <b>' + rpPct_(r.devPct)
+      + '</b> (ngưỡng nêu tên: ' + (cp.deviationPct || 30) + '%).';
+  } else if (sub === 'mom' && r){
+    co = 'đ/kWh tháng ' + rpE_(cp.monthLabel || '') + ' = <b>' + rpN_(r.costPerKwh, 2) + '</b>, tháng ' + rpE_(cp.prevMonthLabel || 'trước') + ' = <b>'
+      + rpN_(r.prevPerKwh, 2) + '</b> → tăng <b>' + rpPct_(r.momPct) + '</b> (ngưỡng nêu tên: ' + RP_CFG.MOM_PCT + '%). '
+      + 'Tăng so tháng trước chưa chắc là lãng phí — một lần thay vật tư có chu kỳ dài rơi đúng vào tháng này cũng đẩy chỉ số lên; bảng khoản chi bên dưới cho biết đó là khoản nào.';
+  } else if ((sub === 'sl' || sub === 'gt') && t){
+    co = (sub === 'sl'
+      ? 'Tồn số lượng <b>' + rpN_(t.sl) + '</b> so với trung bình dòng máy ' + rpE_(t.model) + ' = ' + rpN_(t.tbSl) + ' → vượt <b>' + rpPct_(t.devSl) + '</b>'
+      : 'Giá trị tồn <b>' + rpN_(t.giaTri, 0) + ' đ</b> so với trung bình dòng máy ' + rpE_(t.model) + ' = ' + rpN_(t.tbGt, 0) + ' đ → vượt <b>' + rpPct_(t.devGt) + '</b>')
+      + ' (ngưỡng nêu tên: ' + RP_CFG.TON_CAO_PCT + '%). Trung bình tính trên toàn đội máy đang chạy cùng dòng, không đổi theo bộ lọc.';
+  } else {
+    co = 'Số liệu chi phí / tồn kho của máy trong phạm vi báo cáo.';
+  }
+  let h = rpGhiChuCt_('<b>Cơ sở của nhận xét.</b> ' + co);
+
+  if (r){
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+      + rpKpi_('Chi phí vật tư tháng ' + rpE_(cp.monthLabel || ''), rpN_(r.cost, 0) + ' đ', '#0d6e3f', rpN_(r.kwh, 0) + ' kWh phát')
+      + rpKpi_('đ/kWh', rpSo_(r.costPerKwh, 2), '#b91c1c', 'TB dòng ' + rpSo_(r.modelAvg, 2) + ' · ' + (r.devPct != null ? rpPct_(r.devPct) : '—'))
+      + rpKpi_('Tháng trước', rpSo_(r.prevPerKwh, 2), '#7f1d1d', r.momPct != null ? rpPct_(r.momPct) + ' so tháng này' : 'chưa có số')
+      + (r.coBu ? rpKpi_('Bù kiểm kê', rpN_(r.costBu, 0) + ' đ', '#b45309', 'chênh lệch phát hiện khi đếm kho') : '')
+      + '</div>';
+    const tongTien = (r.items || []).reduce((s, v) => s + (v.tien || 0), 0) || r.cost || 0;
+    h += rpTieuMuc_('Khoản chi vật tư trong tháng', 'xếp từ nhiều tiền xuống ít — đây là chỗ mở phiếu ra đối chiếu');
+    h += rpTblCt_(
+      [{ t: 'Vật tư' }, { t: 'Số lượng', a: 'right', m: 1 }, { t: 'Thành tiền (đ)', a: 'right', m: 1 }, { t: '% chi phí máy', a: 'right', m: 1 },
+       { t: 'Đơn giá TB', a: 'right', m: 1 }, { t: 'Số phiếu', a: 'right', m: 1 }, { t: 'Lần cuối' }, { t: 'Trong đó bù kiểm kê', a: 'right', m: 1 }],
+      (r.items || []).map(v => ({
+        bg: v.bu ? '#fdf6e7' : '',
+        c: ['<b>' + rpE_(v.ten) + '</b>', rpN_(v.sl) + ' ' + rpE_(v.dvt || ''), rpN_(v.tien, 0),
+            tongTien > 0 ? Math.round((v.tien || 0) / tongTien * 100) + '%' : '—',
+            v.donGiaTB != null ? rpN_(v.donGiaTB, 0) : '—', String(v.phieu || 0), rpE_(v.lanCuoi || '—'),
+            v.bu ? '<b>' + rpN_(v.bu, 0) + '</b>' : '—'],
+      })), 260);
+
+    /* Cơ sở của "trung bình dòng máy": các máy cùng dòng trên TOÀN đội máy. */
+    const peers = (d.cpRowsAll || []).filter(z => z.model === r.model && z.costPerKwh != null)
+      .sort((a, b) => b.costPerKwh - a.costPerKwh);
+    h += rpTieuMuc_('Các máy cùng dòng ' + r.model, peers.length + ' máy có số — đây là tập tạo nên trung bình dòng máy');
+    h += rpTblCt_([{ t: 'Mã máy' }, { t: 'đ/kWh', a: 'right', m: 1 }, { t: 'So TB dòng', a: 'right', m: 1 }, { t: 'Chi phí (đ)', a: 'right', m: 1 }, { t: 'kWh', a: 'right', m: 1 }],
+      peers.map(z => ({
+        bg: String(z.code).toUpperCase() === key ? '#eef2ff' : '',
+        c: [rpMa_(z.code, 'cp-may', sub), rpN_(z.costPerKwh, 2), z.devPct != null ? rpPct_(z.devPct) : '—', rpN_(z.cost, 0), rpN_(z.kwh, 0)],
+      })), 240);
+  }
+
+  if (t){
+    h += rpTieuMuc_('Tồn kho tại trại', 'số lượng ' + rpN_(t.sl) + ' · giá trị ' + rpN_(t.giaTri, 0) + ' đ · thiếu ' + (t.thieu || 0) + ' loại');
+    h += rpTblCt_([{ t: 'Vật tư' }, { t: 'Tồn', a: 'right', m: 1 }, { t: 'Giá trị (đ)', a: 'right', m: 1 }],
+      (t.theoVt || []).map(v => ({ c: ['<b>' + rpE_(v.ten) + '</b>', rpN_(v.sl) + ' ' + rpE_(v.dvt || ''), v.gt ? rpN_(v.gt, 0) : '—'] })), 240);
+    const peersT = (d.tonAll || []).filter(z => z.model === t.model).sort((a, b) => b.giaTri - a.giaTri);
+    h += rpTieuMuc_('Các máy cùng dòng ' + t.model, peersT.length + ' máy đang chạy — tập tạo nên trung bình tồn');
+    h += rpTblCt_([{ t: 'Mã máy' }, { t: 'Tồn (SL)', a: 'right', m: 1 }, { t: 'Giá trị tồn (đ)', a: 'right', m: 1 }],
+      peersT.map(z => ({
+        bg: String(z.code).toUpperCase() === key ? '#eef2ff' : '',
+        c: [rpMa_(z.code, 'cp-may', sub), rpN_(z.sl), rpN_(z.giaTri, 0)],
+      })), 240);
+  }
+  return { tieuDe: 'Máy ' + code + ' — chi phí vật tư', phuDe: rpMayDong_(code), html: h };
+};
+
+/* ===========================================================================
+ *  6 · ① KHO VẬT TƯ — BẢNG PHỤ CỦA MỘT MÁY
+ * ========================================================================= */
+RP_CT['vt-may'] = function (code){
+  const d = rpVatTu_();
+  const g = (d.theoMay || []).find(z => String(z.code).toUpperCase() === String(code).toUpperCase());
+  if (!g) return null;
+  const co = 'Máy xếp vào nhóm <b>' + rpE_((RP_NHOM[g.nhom] || {}).ten || g.nhom) + '</b> theo hạng mục NẶNG NHẤT của nó. '
+    + 'Nhóm quá hạn kéo dài: vượt hơn ' + RP_CFG.KEO_DAI_PCT + '% chu kỳ; quá hạn: đã qua mốc thay; sắp đến hạn: đã vào vùng cảnh báo trước.';
+  const h = rpGhiChuCt_('<b>Cơ sở.</b> ' + co) + rpTblCt_(
+    [{ t: 'Hạng mục' }, { t: 'Nhóm' }, { t: 'Đã chạy / Chu kỳ', a: 'right', m: 1 }, { t: 'Vượt / Còn', a: 'right', m: 1 },
+     { t: 'Tồn / Cần', a: 'right', m: 1 }, { t: 'Thiếu', a: 'right', m: 1 }, { t: 'Việc phải làm' }],
+    g.muc.map(r => ({
+      bg: r.nhom === 'keodai' ? '#fbe3e3' : (r.nhom === 'quahan' ? '#fdecec' : (r.nhom === 'sapden' ? '#fdf6e7' : '#eef7f5')),
+      c: ['<b>' + rpE_(r.hangMuc) + '</b>', rpE_((RP_NHOM[r.nhom] || {}).ten || r.nhom),
+          r.cycle ? rpN_(r.used, 0) + ' / ' + rpN_(r.cycle, 0) + ' h' : '—',
+          r.qua ? '<b>+' + rpN_(r.qua, 0) + ' h (' + r.vuotPct + '%)</b>' : (r.remain != null ? 'còn ' + rpN_(r.remain, 0) + ' h' : '—'),
+          rpN_(r.have) + ' / ' + (r.need != null ? rpN_(r.need) : '—'),
+          r.thieu > 0 ? '<b style="color:var(--red)">' + rpN_(r.thieu) + ' ' + rpE_(r.dvt || '') + '</b>' : '—',
+          '<span style="white-space:normal;font-size:11px">' + rpE_(rpDeXuat_(r)) + '</span>'],
+    })), 420);
+  return { tieuDe: 'Máy ' + code + ' — hạng mục đang chờ', phuDe: rpMayDong_(code), html: h };
+};
+
+/* ===========================================================================
+ *  7 · GIAO DIỆN PHỤ TRỢ + TỰ CÀI
+ * ========================================================================= */
+(function rpCtInstall_(){
+  if (window.__rpCtInstalled) return;                // dán khối này hai lần thì không cài hai lớp
+  window.__rpCtInstalled = true;
+  try {
+    const st = document.createElement('style');
+    st.id = 'rpCtCss';
+    st.textContent = '.rp-ct{cursor:pointer}'
+      + '.mm.rp-ct{text-decoration:underline dotted;text-underline-offset:2px}'
+      + '.mm.rp-ct:hover{background:#ede9fe;box-shadow:0 0 0 1px #7c3aed}'
+      + 'div.rp-ct:hover{background:rgba(13,110,63,.07)}'
+      + '.card.rp-ct:hover{box-shadow:0 0 0 2px rgba(13,110,63,.35)}';
+    document.head.appendChild(st);
+  } catch (e){ /* thiếu CSS chỉ mất hiệu ứng rê chuột, bấm vẫn chạy */ }
+})();
+
+/* ############################################################################
+ *  BÁO CÁO TỔNG HỢP · CHỌN THÁNG ĐỂ XEM LẠI + KIỂM TRA SỐ LIỆU   (tab "② Hiệu quả vận hành")
+ *  Khối này nằm ở CUỐI thẻ script duy nhất của index.html, SAU khối BAOCAO-LOC-CHITIET (bộ lọc +
+ *  bảng chi tiết) — nó dùng rpMa_, rpTblCt_, RP_CT… của khối đó. Đã ghép sẵn trong index.html giao kèm.
+ *  Cẩn thận khi sửa: trong khối này TUYỆT ĐỐI không được có chuỗi đóng thẻ script hay mở chú thích
+ *  HTML, kể cả trong chú thích hay chuỗi văn bản — trình duyệt cắt thẻ script ở đó và cả trang chết.
+ *  Phía server: BAOCAOTHANG.gs + các điểm sửa Code.gs (đã ghép sẵn trong Code.gs giao kèm).
  * ----------------------------------------------------------------------------
  *  BÀI TOÁN
  *    Sheet 5 chỉ giữ MỘT tháng: dải 62 cột ngày được dùng lại, sang tháng là chốt tổng vào
  *    Sheet 9 rồi xoá. Người dùng muốn mở lại tháng cũ và được phân tích y như tháng đang chạy.
  *
- *  CÁCH LÀM (không lưu thêm dữ liệu — SmartGen/LIXiSE đã là kho gốc)
- *    · Tháng đang chạy        → đúng như trước, không đổi gì.
- *    · Tháng cũ, chưa dựng    → bản xem nhanh từ Sheet 9 (chỉ có số tổng) + nút DỰNG BÁO CÁO
- *                               CHI TIẾT. Chọn tháng là được hỏi dựng luôn.
+ *  CÁCH LÀM (không lưu thêm dữ liệu ngày — SmartGen/LIXiSE đã là kho gốc)
+ *    · Tháng đang chạy        → đúng như trước (kèm bộ lọc ở đầu trang và nút KIỂM TRA SỐ LIỆU).
+ *    · Tháng cũ, chưa dựng    → báo cáo từ SHEET 9 hiện NGAY khi chọn tháng (số tổng đã chốt: đủ cho
+ *                               xếp loại cả tháng, % đạt thiết kế, so tháng trước, xu hướng) + một thẻ
+ *                               TUỲ CHỌN "lấy lại số từng ngày". Chọn tháng KHÔNG còn tự hỏi lấy lại từ
+ *                               SmartGen/LIXiSE: người dùng chỉ ra rằng Sheet 9 đã có đủ tổng mỗi máy mỗi
+ *                               tháng nên không cần đăng nhập nguồn chỉ để xem số cả tháng.
  *    · Tháng cũ, đang dựng    → thanh tiến độ. Server chạy ngầm (BAOCAOTHANG.gs), web chỉ hỏi
  *                               tiến độ bằng action chỉ-đọc, nên kỹ thuật viên vẫn sửa số, xem
  *                               trang khác bình thường. Có chip góc phải + dấu ⏳ trên tab.
  *    · Tháng cũ, đã dựng xong → số theo ngày nằm ở sheet "5R. Báo cáo tháng dựng lại". Web đọc
  *                               nó về và chạy NGUYÊN các phân tích hiện có (rpHieuQua_,
- *                               rpViewHieuQua_, rpXuatHieuQua…) — không viết lại phân tích nào.
+ *                               rpViewHieuQuaThan_, rpXuatHieuQua…) — không viết lại phân tích nào.
  *
  *  VÌ SAO "TRÁO TẠM" MÀ KHÔNG VIẾT BỘ PHÂN TÍCH THỨ HAI
  *    Mọi phân tích của web là hàm thuần của S.efficiency + dataCtx_() (+ S.master, S.monthly,
@@ -17757,6 +18479,7 @@ function kkTheCanhBao_(){
  *    rồi trả lại trong finally. Toàn bộ chạy ĐỒNG BỘ, không có await ở giữa, nên không đoạn
  *    mã nào khác của trang kịp nhìn thấy trạng thái tạm. Viết bộ phân tích thứ hai cho tháng
  *    cũ thì sớm muộn hai bộ lệch nhau, và lúc đó không ai biết bên nào đúng.
+ *    Bảng phụ khi bấm cột/mã máy (rpCt) cũng đi qua cùng đường này nhờ móc rpCtBoc_.
  *
  *  HAI "ĐƯỜNG ĐI TỚI MỘT CON SỐ" ĐÃ ĐƯỢC CHẶN — đừng gỡ
  *    Tổng tháng chính thức của từng máy là số ĐÃ CHỐT ở Sheet 9 (qua mọi lần sửa tay). Số theo
@@ -17766,21 +18489,26 @@ function kkTheCanhBao_(){
  *        tới tháng đang xem — để "so sánh giữa các tháng" lấy tháng đang xem làm tháng cuối;
  *      · computeMonthlyReport lấy tổng từng máy từ chính mô hình đó.
  *    Số theo ngày chỉ dùng cho phân tích CẤP NGÀY (chuỗi ngày kém, độ đều, phụ lục). Chỗ nào
- *    hai nguồn lệch nhau, thẻ "Đối chiếu với số đã chốt" nói thẳng, không lặng lẽ chọn một bên.
+ *    hai nguồn lệch nhau, thẻ "Đối chiếu với số đã chốt" nói thẳng — kèm BẰNG CHỨNG từng máy
+ *    (ngày nghi vấn, số ô đã áp từ sổ, có khai cả hai nguồn không) — không lặng lẽ chọn một bên.
  *
- *  HAI HÀM BỊ BỌC (khối này tự cài lúc nạp trang)
- *    rpViewHieuQua_  — thêm ô chọn tháng; tháng đang chạy gọi lại ĐÚNG hàm gốc.
- *    rpXuatHieuQua   — tháng cũ đã dựng thì xuất Word bằng dữ liệu của tháng đó, thay vì dữ
- *                      liệu đang chạy (nút Word nằm trong HTML của hàm gốc nên phải chặn ở đây,
- *                      không vá chuỗi HTML — vá chuỗi hỏng im lặng là xuất nhầm tháng).
- *  Tạm thời trong hqWithMonth_: S.efficiency, S.dataCtx, buildMonthlyModel_,
- *  computeMonthlyReport, wXuat_ — luôn được trả lại.
+ *  VÌ SAO SỐ DỰNG LẠI TỪNG LỆCH SHEET 9, VÀ CÁI GÌ ĐÃ ĐƯỢC SỬA (đọc kỹ trước khi sửa phần này)
+ *    Phép cộng của Sheet 9 KHÔNG sai: kWh và giờ chạy dùng chung MỘT hàm cộng. Chỗ lệch là
+ *    "sửa một ô thành số hợp lệ" không để lại dấu vết ở đâu cả (sheet 24 chỉ ghi việc DUYỆT
+ *    cảnh báo). Bản dựng đầu tiên còn lấy số theo thứ tự khác đường đồng bộ thật, không làm tròn,
+ *    và bỏ qua "Bỏ duyệt". Nay: (1) mọi lần sửa ô ngày trên web ghi một dòng "Đã sửa" vào sheet 24
+ *    "Xác nhận dữ liệu bất thường" (chung sổ với duyệt/bỏ duyệt); (2) dựng lại phát lại sheet 24 theo
+ *    thứ tự thời gian; (3) lấy số cùng thứ
+ *    tự/làm tròn như đường live; (4) nút KIỂM TRA so số nguồn với Sheet 5 đang chạy và PHÂN LOẠI
+ *    từng chỗ lệch kèm bằng chứng — đó là cách chứng minh trên số thật.
  *
  *  GIỚI HẠN — nói thẳng để không ai hiểu nhầm
  *    · Định mức thiết kế và danh sách máy là của HIỆN TẠI (Sheet 5/Sheet 1 bây giờ).
  *    · Ngày đánh giá của tháng cũ là NGÀY CUỐI THÁNG (không phải "hôm qua").
- *    · Điều chỉnh tay một ô ngày không để lại dấu vết riêng; số đã DUYỆT (Sheet 24) được áp
- *      lại, còn lại chỉ phát hiện được qua thẻ đối chiếu với Sheet 9.
+ *    · Nhật ký sửa số chỉ ghi từ lúc triển khai: tháng đã qua TRƯỚC thời điểm đó không khôi phục được
+ *      từng ngày chính xác; tổng tháng vẫn là số chính thức của Sheet 9.
+ *    · Sửa TRỰC TIẾP trên Google Sheet (không qua web) không để lại dấu vết — kiểm tra sẽ xếp
+ *      các lệch đó vào nhóm "không dấu vết", không thể nói ai sửa.
  *    · Chỉ giữ MỘT tháng đã dựng; SmartGen chỉ còn số của ~13 tháng gần nhất.
  * ######################################################################### */
 
@@ -17795,6 +18523,9 @@ const HQ = {
   loadErr: '',        // lỗi tải dữ liệu (chặn tự thử lại vô hạn)
   startErr: '',       // lỗi khi bấm dựng
   timer: null, polling: false, fails: 0, started: false, swapped: false,
+  chk: null,          // kết quả KIỂM TRA đã tải về: báo cáo { done, mode:'check', ym, totals, rows, cells… }
+  chkOpen: false,     // người dùng đã mở thẻ kết quả kiểm tra chưa (chưa mở thì chỉ hiện một dòng tóm tắt)
+  chkLoading: '', chkErr: '',
 };
 /* Hàm gốc — chụp lúc nạp trang, TRƯỚC khi bị bọc. */
 const HQ_ORIG = { view: null, xuat: null };
@@ -17876,7 +18607,9 @@ async function hqPoll_(){
 function hqSig_(){
   const j = HQ.st && HQ.st.job, c = HQ.st && HQ.st.cache;
   return [rpHqThang_(), j ? (j.id + ':' + j.phase + ':' + (j.cancelling ? 1 : 0)) : '-',
-          c ? (c.ym + ':' + c.builtAt) : '-', HQ.data ? HQ.data.ym : '-', HQ.loadingYm, HQ.loadErr].join('|');
+          c ? (c.ym + ':' + c.builtAt) : '-', HQ.data ? HQ.data.ym : '-', HQ.loadingYm, HQ.loadErr,
+          (HQ.st && HQ.st.chk) ? HQ.st.chk.builtAt : '-', HQ.chk ? HQ.chk.builtAt : '-',
+          HQ.chkOpen ? 1 : 0, HQ.chkLoading, HQ.chkErr].join('|');
 }
 
 function hqApply_(d){
@@ -17887,6 +18620,8 @@ function hqApply_(d){
 
   /* Bản dựng trên web không còn khớp bản của server (bị dựng lại / bị thay bằng tháng khác). */
   if (HQ.data && (!cache || cache.ym !== HQ.data.ym || cache.builtAt !== HQ.data.built.builtAt)) HQ.data = null;
+  /* Kết quả kiểm tra đã tải về mà server đã có lần kiểm tra mới hơn (hoặc không còn) → bỏ, tải lại khi cần. */
+  if (HQ.chk && (!d.chk || d.chk.builtAt !== HQ.chk.builtAt)){ HQ.chk = null; HQ.chkErr = ''; }
 
   if (job){
     if (prev && prev.id === job.id && prev.live && !job.live){
@@ -17898,16 +18633,20 @@ function hqApply_(d){
   }
   hqPaint_();
   hqEnsureData_();
+  hqEnsureChk_();
   if (hqSig_() !== before) hqRefreshView_();
 }
 
 function hqOnEnd_(job){
-  if (job.phase === 'done')
-    toast('✅ Báo cáo tháng ' + job.label + ' đã dựng xong — bấm thanh ở góc phải để xem', 'ok');
-  else if (job.phase === 'error')
-    toast('⚠ Dựng báo cáo tháng ' + job.label + ' bị lỗi: ' + (job.error || job.msg || ''), 'err');
+  const kiem = job.mode === 'check';
+  if (job.phase === 'done'){
+    if (kiem){ HQ.chkOpen = true; HQ.chkErr = ''; }        // vừa xong trước mắt → mở sẵn kết quả
+    toast(kiem ? '✅ Kiểm tra số liệu tháng ' + job.label + ' đã xong — bấm thanh ở góc phải để xem kết quả'
+               : '✅ Báo cáo tháng ' + job.label + ' đã dựng xong — bấm thanh ở góc phải để xem', 'ok');
+  } else if (job.phase === 'error')
+    toast('⚠ ' + (kiem ? 'Kiểm tra số liệu' : 'Dựng báo cáo') + ' tháng ' + job.label + ' bị lỗi: ' + (job.error || job.msg || ''), 'err');
   else if (job.phase === 'cancelled')
-    toast('Đã huỷ dựng báo cáo tháng ' + job.label, 'info');
+    toast('Đã huỷ ' + (kiem ? 'kiểm tra số liệu' : 'dựng báo cáo') + ' tháng ' + job.label, 'info');
 }
 
 /* ===========================================================================
@@ -17932,9 +18671,10 @@ function hqPaint_(){
       document.body.appendChild(el);
     }
     let txt, bg;
-    if (job.live){ txt = '⏳ Dựng báo cáo ' + job.label + ' · ' + job.pct + '%'; bg = '#1e6bb8'; }
-    else if (job.phase === 'done'){ txt = '✅ Báo cáo ' + job.label + ' đã sẵn sàng — xem'; bg = '#0d6e3f'; }
-    else { txt = '⚠ Dựng báo cáo ' + job.label + ' lỗi — xem'; bg = '#dc2626'; }
+    const kiem = job.mode === 'check';
+    if (job.live){ txt = '⏳ ' + (kiem ? 'Kiểm tra số liệu ' : 'Dựng báo cáo ') + job.label + ' · ' + job.pct + '%'; bg = '#1e6bb8'; }
+    else if (job.phase === 'done'){ txt = '✅ ' + (kiem ? 'Kết quả kiểm tra ' : 'Báo cáo ') + job.label + ' đã sẵn sàng — xem'; bg = '#0d6e3f'; }
+    else { txt = '⚠ ' + (kiem ? 'Kiểm tra ' : 'Dựng báo cáo ') + job.label + ' lỗi — xem'; bg = '#dc2626'; }
     el.style.background = bg;
     el.style.display = 'flex';
     el.innerHTML = '<span>' + rpE_(txt) + '</span>'
@@ -17958,17 +18698,27 @@ function hqChipClose(){
   hqPaint_();
 }
 
+/** Ẩn thẻ lỗi/huỷ của lần kiểm tra (không xoá gì ở server — chỉ đánh dấu đã xem). */
+function hqDismissJob(){
+  const job = HQ.st && HQ.st.job;
+  if (job) hqMarkSeen_(job);
+  hqPaint_();
+  hqRefreshView_();
+}
+
 /** Bấm chip: nhảy tới đúng tháng của công việc, trong đúng tab. */
 function hqGo(){
   const job = HQ.st && HQ.st.job;
   if (!job) return;
   HQ.sel = job.label;
   RP.tab = 'hq';
+  if (job.mode === 'check' && job.phase === 'done') HQ.chkOpen = true;
   if (!job.live) hqMarkSeen_(job);
   const cur = document.querySelector('.page.on');
   if (cur && cur.id === 'pg-report') renderPage('report'); else nav('report');
   hqPaint_();
   hqEnsureData_();
+  hqEnsureChk_();
 }
 
 /* ===========================================================================
@@ -18010,9 +18760,12 @@ function rpHqThang_(){
   return (HQ.sel && ds.indexOf(HQ.sel) >= 0) ? HQ.sel : rpHqThangNay_();
 }
 
-/** onchange của ô chọn. Chọn tháng cũ chưa dựng thì HỎI dựng luôn — đó là điều người dùng yêu
- *  cầu ("chọn tháng cũ thì kích hoạt lấy lại số liệu"); có hỏi một lần vì việc này đăng nhập
- *  SmartGen và thay bản đang giữ của tháng khác. */
+/** onchange của ô chọn. Chọn tháng cũ là HIỆN NGAY báo cáo từ Sheet 9 (renderPage ở trên) — KHÔNG còn tự hỏi
+ *  lấy lại số từ SmartGen/LIXiSE. Bản trước hỏi dựng ngay mỗi khi chọn tháng chưa dựng, theo yêu cầu đầu tiên
+ *  ("chọn tháng cũ thì kích hoạt lấy lại số liệu"); sau đó người dùng chỉ ra Sheet 9 đã có đủ tổng từng máy từng
+ *  tháng, nên xem số cả tháng không cần đăng nhập nguồn. Việc lấy lại số TỪNG NGÀY vẫn còn nhưng là TUỲ CHỌN:
+ *  nút ở thẻ đầu trang (hqOfferCard_), có hỏi xác nhận (hqOffer_).
+ *  Chỉ còn việc hỏi tiến độ: nếu tháng này đang được dựng hoặc đã có bản dựng thì tải bản dựng về. */
 async function rpDoiThangHQ(v){
   HQ.sel = v;
   HQ.startErr = ''; HQ.loadErr = '';
@@ -18021,8 +18774,7 @@ async function rpDoiThangHQ(v){
   await hqPoll_();
   const ym = hqYmOf_(v);
   const j = HQ.st && HQ.st.job, c = HQ.st && HQ.st.cache;
-  if ((j && j.live) || (c && c.ym === ym)){ hqEnsureData_(); return; }
-  if (hqCanEdit_()) hqOffer_(ym);
+  if ((j && j.live) || (c && c.ym === ym)) hqEnsureData_();
 }
 
 function rpHqChonThangHtml_(sel){
@@ -18032,7 +18784,7 @@ function rpHqChonThangHtml_(sel){
     const ym = hqYmOf_(l);
     let tag = '';
     if (l === nay) tag = ' — đang chạy';
-    else if (j && j.live && j.ym === ym) tag = ' — đang dựng…';
+    else if (j && j.live && j.mode !== 'check' && j.ym === ym) tag = ' — đang dựng…';
     else if (c && c.ym === ym) tag = ' — đã dựng chi tiết';
     return '<option value="' + rpE_(l) + '"' + (l === sel ? ' selected' : '') + '>' + rpE_(l + tag) + '</option>';
   }).join('');
@@ -18045,13 +18797,22 @@ function rpHqChonThangHtml_(sel){
     badge = '<span class="b bg" title="Số theo ngày đã được lấy lại từ SmartGen/LIXiSE">'
           + 'Tháng đã dựng lại · đủ phân tích theo ngày</span>';
   else
-    badge = '<span class="b ba" title="Sheet 5 đã được dùng cho tháng mới — số theo ngày nằm ở SmartGen/LIXiSE">'
-          + 'Tháng đã chốt · chưa dựng chi tiết theo ngày</span>';
+    badge = '<span class="b bmu" title="Sheet 5 đã được dùng cho tháng mới — báo cáo dùng số tổng đã chốt ở Sheet 9; số theo ngày nằm ở SmartGen/LIXiSE">'
+          + 'Tháng đã chốt · số liệu từ Sheet 9</span>';
+
+  /* NÚT KIỂM TRA chỉ có ở THÁNG ĐANG CHẠY: nó so số nguồn với từng ô đang nằm ở Sheet 5. */
+  let kt = '';
+  if (sel === nay){
+    if (hqCanEdit_())
+      kt += '<button class="btn bg-gr sm" ' + (j && j.live ? 'disabled title="Đang có một việc chạy ngầm — chờ xong hoặc huỷ"' : 'onclick="hqCheckStart()"')
+          + ' title="So số SmartGen/LIXiSE với từng ô ngày ở Sheet 5 và với Sheet 9, phân loại từng chỗ lệch kèm bằng chứng. Không ghi gì.">'
+          + '🔎 Kiểm tra số liệu tháng ' + rpE_(nay) + '</button>';
+  }
 
   return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
     + '<label style="font-size:12px;color:var(--mu)">Tháng báo cáo</label>'
     + '<select class="sel" style="width:auto" onchange="rpDoiThangHQ(this.value)">' + opt + '</select>'
-    + badge
+    + badge + kt
     + '<span style="font-size:11px;color:var(--mu)">'
     + Math.max(0, ds.length - 1) + ' tháng đã chốt sổ trong sheet “9. Tổng kết hiệu quả tháng”</span>'
     + '</div>';
@@ -18066,23 +18827,38 @@ function hqOffer_(ym){
   const thay = (c && c.ym && c.ym !== ym)
     ? '\n\nLưu ý: chỉ giữ MỘT tháng đã dựng — bản đang giữ của tháng ' + c.label + ' sẽ bị thay.' : '';
   const ok = window.confirm(
-    'Tháng ' + label + ' đã bị xoá khỏi Sheet 5.\n\n'
-    + 'Lấy lại số liệu từng ngày từ SmartGen / LIXiSE để có đủ phân tích như tháng đang chạy?\n\n'
+    'Tháng ' + label + ' đã bị xoá khỏi Sheet 5 (báo cáo đang dùng số tổng đã chốt ở Sheet 9).\n\n'
+    + 'Lấy lại số liệu TỪNG NGÀY từ SmartGen / LIXiSE để có thêm các phân tích theo ngày (chuỗi ngày kém liên tiếp, độ đều, phụ lục)?\n\n'
     + 'Việc này chạy NGẦM trên máy chủ, khoảng 5–15 phút. Trong lúc chờ vẫn dùng web bình thường '
     + '(sửa số, xem trang khác); xong sẽ có thông báo.' + thay);
   if (ok) hqStart(ym, false);
 }
 
-async function hqStart(ym, force){
+/** Bấm nút KIỂM TRA: hỏi một lần (việc này chạy ngầm vài phút và đăng nhập SmartGen/LIXiSE) rồi xếp lịch. */
+function hqCheckStart(){
+  const nay = rpHqThangNay_();
+  if (!hqCanEdit_()){ toast('Chức danh hiện tại chỉ được xem — nhờ kỹ thuật chạy kiểm tra.', 'err'); return; }
+  const ok = window.confirm(
+    'Kiểm tra số liệu tháng ' + nay + '?\n\n'
+    + 'Lấy số của SmartGen / LIXiSE cho từng máy, so với TỪNG Ô NGÀY ở Sheet 5 và với tổng ở Sheet 9, rồi phân loại '
+    + 'mọi chỗ lệch (có dấu vết sửa/duyệt trên web hay không) kèm bằng chứng.\n\n'
+    + 'Việc chạy NGẦM khoảng 5–15 phút. KHÔNG ghi gì vào Sheet 5 hay Sheet 9; vẫn dùng web bình thường.');
+  if (ok) hqStart(hqYmOf_(nay), false, 'check');
+}
+function hqOpenChk(){ HQ.chkOpen = true; HQ.chkErr = ''; hqRefreshView_(); hqEnsureChk_(); }
+
+async function hqStart(ym, force, mode){
+  const kiem = mode === 'check';
   const label = hqLabelOf_(ym);
   if (!hqCanEdit_()){
-    toast('Chức danh hiện tại chỉ được xem — nhờ kỹ thuật dựng báo cáo tháng ' + label + '.', 'err');
+    toast(kiem ? 'Chức danh hiện tại chỉ được xem — nhờ kỹ thuật chạy kiểm tra.'
+               : 'Chức danh hiện tại chỉ được xem — nhờ kỹ thuật dựng báo cáo tháng ' + label + '.', 'err');
     return;
   }
   HQ.startErr = '';
-  toast('Đang xếp lịch dựng báo cáo tháng ' + label + '…', 'info');
+  toast(kiem ? 'Đang xếp lịch kiểm tra số liệu tháng ' + label + '…' : 'Đang xếp lịch dựng báo cáo tháng ' + label + '…', 'info');
   try {
-    const d = await hqCall_({ action: 'hqJobStart', ym: ym, force: !!force });
+    const d = await hqCall_({ action: 'hqJobStart', ym: ym, force: !!force, mode: kiem ? 'check' : 'rebuild' });
     if (!d || !d.ok){
       HQ.startErr = (d && d.error) || 'Không bắt đầu được.';
       toast(HQ.startErr, 'err');
@@ -18092,6 +18868,11 @@ async function hqStart(ym, force){
     if (d.cached){
       HQ.st = Object.assign({}, HQ.st || {}, { cache: d.cache });
       toast('Tháng ' + label + ' đã dựng sẵn — đang tải về…', 'ok');
+    } else if (kiem){
+      /* Kiểm tra KHÔNG đụng vào bản dựng đang giữ (cache) — chỉ thay kết quả kiểm tra cũ. */
+      HQ.st = Object.assign({}, HQ.st || {}, { job: d.job, chk: null });
+      HQ.chk = null; HQ.chkErr = ''; HQ.chkOpen = false;
+      toast('✓ Đã bắt đầu kiểm tra số liệu tháng ' + label + ' — chạy ngầm, cứ làm việc bình thường, xong sẽ báo.', 'ok');
     } else {
       HQ.st = Object.assign({}, HQ.st || {}, { job: d.job, cache: null });
       HQ.data = null;
@@ -18117,7 +18898,9 @@ function hqRebuild(ym){
 async function hqCancel(){
   const j = HQ.st && HQ.st.job;
   if (!j || !j.live) return;
-  if (!window.confirm('Huỷ việc dựng báo cáo tháng ' + j.label + '? Số đã lấy được sẽ không dùng.')) return;
+  const kiemH = j.mode === 'check';
+  if (!window.confirm('Huỷ việc ' + (kiemH ? 'kiểm tra số liệu' : 'dựng báo cáo') + ' tháng ' + j.label + '? '
+      + (kiemH ? 'Chưa có kết quả nào được lưu.' : 'Số đã lấy được sẽ không dùng.'))) return;
   try {
     const d = await hqCall_({ action: 'hqJobCancel' });
     if (!d || !d.ok) toast((d && d.error) || 'Không huỷ được', 'err');
@@ -18162,6 +18945,29 @@ async function hqEnsureData_(){
 }
 
 function hqRetryLoad(){ HQ.loadErr = ''; hqRefreshView_(); hqEnsureData_(); }
+
+/** Tải kết quả KIỂM TRA về khi (và chỉ khi) người dùng đã mở thẻ kết quả. Báo cáo kiểm tra có thể dài
+ *  vài trăm dòng nên không kéo về nếu chưa ai xem — hỏi tiến độ chỉ mang tóm tắt một dòng (st.chk). */
+async function hqEnsureChk_(){
+  if (!HQ.chkOpen) return;
+  const m = HQ.st && HQ.st.chk;
+  if (!m || m.ym !== hqYmOf_(rpHqThangNay_())) return;
+  if (HQ.chk && HQ.chk.builtAt === m.builtAt) return;
+  if (HQ.chkLoading || HQ.chkErr) return;
+  HQ.chkLoading = m.ym;
+  try {
+    const d = await hqCall_({ action: 'hqJobData', ym: m.ym, mode: 'check' });
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Không đọc được kết quả kiểm tra');
+    HQ.chk = d.check;
+  } catch (e){
+    HQ.chkErr = e.message;
+  } finally {
+    HQ.chkLoading = '';
+    hqRefreshView_();
+  }
+}
+function hqRetryChk(){ HQ.chkErr = ''; hqRefreshView_(); hqEnsureChk_(); }
+function hqCloseChk(){ HQ.chkOpen = false; hqRefreshView_(); }
 
 function hqViewActive_(){
   const cur = document.querySelector('.page.on');
@@ -18239,7 +19045,7 @@ function hqWithMonth_(ym, fn, opt){
         const B = D.built || {};
         const ghiChu = wP_('<b>Lưu ý — đây là báo cáo của tháng đã qua, dựng lại từ nguồn.</b> '
           + 'Số theo ngày của tháng ' + rpE_(label) + ' được lấy lại từ SmartGen/LIXiSE lúc ' + rpE_(B.builtStr || '—')
-          + ' và áp lại các số đã được xác nhận ở mục “Xác nhận dữ liệu bất thường”. '
+          + ', theo cùng thứ tự và cách làm tròn như lúc đồng bộ thật, rồi phát lại lịch sử sửa số và duyệt bất thường theo thứ tự thời gian. '
           + 'Tổng điện phát/giờ chạy của tháng lấy theo số đã chốt ở Sheet 9. '
           + 'Ngày đánh giá là ngày cuối tháng (' + dim + '/' + rpE_(label.slice(0, 2)) + '), không phải hôm qua; '
           + 'định mức thiết kế và danh sách máy là của thời điểm hiện tại.');
@@ -18269,8 +19075,13 @@ function hqProgText_(j){
   return a.join(' · ');
 }
 function hqProgCnt_(j){
+  if (j.mode === 'check')
+    return 'Đã so được: <b>' + j.ok + '</b> · Không lấy được số nguồn: <b>' + j.noData + '</b> · Lỗi: <b>' + j.err
+      + '</b> · Chưa lắp đặt (bỏ qua): <b>' + j.skip + '</b> · Tổng ' + j.total + ' máy'
+      + (j.warns ? ' · Máy thiếu một nguồn: <b>' + j.warns + '</b>' : '');
   return 'Có số: <b>' + j.ok + '</b> · Không có số: <b>' + j.noData + '</b> · Lỗi: <b>' + j.err
-    + '</b> · Chưa lắp đặt (bỏ qua): <b>' + j.skip + '</b> · Tổng ' + j.total + ' máy';
+    + '</b> · Chưa lắp đặt (bỏ qua): <b>' + j.skip + '</b> · Tổng ' + j.total + ' máy'
+    + (j.warns ? ' · Máy thiếu một nguồn: <b>' + j.warns + '</b>' : '');
 }
 
 /** Cập nhật thanh tiến độ TẠI CHỖ — dựng lại cả báo cáo mỗi 6 giây là giật màn hình và đốt CPU. */
@@ -18284,10 +19095,15 @@ function hqPaintProgress_(j){
 }
 
 function hqProgressCard_(j, mine){
+  const kiem = j.mode === 'check';
+  const tieu = kiem
+    ? (mine ? 'Đang kiểm tra số liệu tháng ' + rpE_(j.label) + ' (so số nguồn với Sheet 5 và Sheet 9)'
+            : 'Đang kiểm tra số liệu tháng ' + rpE_(j.label) + ' — việc dựng tháng này phải chờ')
+    : (mine ? 'Đang dựng báo cáo chi tiết tháng ' + rpE_(j.label)
+            : 'Đang dựng báo cáo của một tháng khác (' + rpE_(j.label) + ') — tháng này phải chờ');
   return '<div class="card" id="hqProg" style="margin-bottom:12px;border-left:3px solid #1e6bb8"><div class="cb" style="padding:12px 14px">'
     + '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
-    +   '<b style="font-size:13px">⏳ ' + (mine ? 'Đang dựng báo cáo chi tiết tháng ' + rpE_(j.label)
-          : 'Đang dựng báo cáo của một tháng khác (' + rpE_(j.label) + ') — tháng này phải chờ') + '</b>'
+    +   '<b style="font-size:13px">⏳ ' + tieu + '</b>'
     +   '<span id="hqProgPct" style="font-family:var(--mono);font-weight:700;color:#1e6bb8">' + j.pct + '%</span></div>'
     + '<div style="background:var(--bg2,#eef1f0);border-radius:4px;overflow:hidden;height:10px;margin:8px 0">'
     +   '<div id="hqProgBar" style="width:' + j.pct + '%;height:100%;background:#1e6bb8;transition:width .6s"></div></div>'
@@ -18295,34 +19111,41 @@ function hqProgressCard_(j, mine){
     + '<div id="hqProgCnt" style="font-size:11px;color:var(--mu);margin-top:2px">' + hqProgCnt_(j) + '</div>'
     + '<div style="font-size:11px;color:var(--mu);margin-top:8px;line-height:1.6">'
     +   'Việc này chạy ngầm trên máy chủ — <b>cứ làm việc bình thường</b> (sửa số, xem trang khác); đóng trình duyệt cũng không dừng. '
-    +   'Xong sẽ có thông báo ở góc phải. Trong lúc chờ, phần bên dưới là bản xem nhanh từ số đã chốt.</div>'
+    +   'Xong sẽ có thông báo ở góc phải. '
+    +   (kiem ? 'Kiểm tra <b>không ghi gì</b> vào Sheet 5 hay Sheet 9; báo cáo bên dưới vẫn là số đang chạy.'
+                : 'Trong lúc chờ, phần bên dưới là bản xem nhanh từ số đã chốt.') + '</div>'
     + (hqCanEdit_()
-        ? '<button class="btn bg-gr sm" style="margin-top:8px" onclick="hqCancel()">' + (j.cancelling ? 'Đang huỷ…' : 'Huỷ dựng') + '</button>' : '')
+        ? '<button class="btn bg-gr sm" style="margin-top:8px" onclick="hqCancel()">'
+          + (j.cancelling ? 'Đang huỷ…' : (kiem ? 'Huỷ kiểm tra' : 'Huỷ dựng')) + '</button>' : '')
     + '</div></div>';
 }
 
 function hqFailCard_(j){
   const huy = j.phase === 'cancelled';
+  const kiem = j.mode === 'check';
   return '<div class="card" style="margin-bottom:12px;border-left:3px solid ' + (huy ? '#64748b' : '#dc2626') + '"><div class="cb" style="padding:12px 14px">'
-    + '<b style="font-size:13px">' + (huy ? 'Đã huỷ dựng' : '⚠ Dựng báo cáo bị lỗi') + ' · tháng ' + rpE_(j.label) + '</b>'
+    + '<b style="font-size:13px">' + (huy ? 'Đã huỷ ' + (kiem ? 'kiểm tra' : 'dựng') : '⚠ ' + (kiem ? 'Kiểm tra số liệu' : 'Dựng báo cáo') + ' bị lỗi') + ' · tháng ' + rpE_(j.label) + '</b>'
     + (huy ? '' : '<div style="font-size:12px;margin-top:6px;color:#7f1d1d;line-height:1.6">' + rpE_(j.error || j.msg || 'Không rõ nguyên nhân.') + '</div>')
-    + (hqCanEdit_() ? '<button class="btn bg-b sm" style="margin-top:8px" onclick="hqStart(\'' + rpE_(j.ym) + '\', true)">Dựng lại</button>' : '')
+    + (hqCanEdit_() ? '<button class="btn bg-b sm" style="margin-top:8px" onclick="hqStart(\'' + rpE_(j.ym) + '\', true' + (kiem ? ', \'check\'' : '') + ')">'
+        + (kiem ? 'Chạy lại kiểm tra' : 'Dựng lại') + '</button>' : '')
+    + (kiem ? ' <button class="btn bg-gr sm" style="margin-top:8px" onclick="hqDismissJob()">Ẩn</button>' : '')
     + '</div></div>';
 }
 
 function hqOfferCard_(ym){
   const label = hqLabelOf_(ym);
   const c = HQ.st && HQ.st.cache;
-  return '<div class="card" style="margin-bottom:12px;border-left:3px solid #b45309"><div class="cb" style="padding:12px 14px">'
-    + '<b style="font-size:13px">Tháng ' + rpE_(label) + ' đã bị xoá khỏi Sheet 5 — chưa có phân tích theo ngày</b>'
+  return '<div class="card" style="margin-bottom:12px;border-left:3px solid #0f766e"><div class="cb" style="padding:12px 14px">'
+    + '<b style="font-size:13px">Tháng ' + rpE_(label) + ' · báo cáo từ số tổng đã chốt (Sheet 9)</b>'
     + '<div style="font-size:12px;margin-top:6px;line-height:1.7">'
-    + 'Số từng ngày vẫn nằm ở SmartGen/LIXiSE. Bấm dựng để lấy lại và có đủ phân tích như tháng đang chạy: '
-    + 'chuỗi ngày kém liên tiếp, độ đều giữa các ngày, phụ lục diễn biến theo ngày, xuất Word đầy đủ. '
+    + 'Bên dưới đã đủ xếp loại cả tháng, % đạt thiết kế, so sánh giữa các tháng. '
+    + '<b>Tuỳ chọn:</b> muốn thêm các phân tích theo ngày — chuỗi ngày kém liên tiếp, độ đều giữa các ngày, phụ lục diễn biến theo ngày, '
+    + 'xuất Word đầy đủ — thì lấy lại số từng ngày từ SmartGen/LIXiSE (Sheet 9 không giữ số từng ngày). '
     + 'Việc chạy ngầm khoảng 5–15 phút, trong lúc chờ vẫn dùng web bình thường.</div>'
     + (HQ.startErr ? '<div style="font-size:12px;margin-top:6px;color:#b91c1c">' + rpE_(HQ.startErr) + '</div>' : '')
     + (hqCanEdit_()
-        ? '<button class="btn bg-b" style="margin-top:8px" onclick="hqStart(\'' + rpE_(ym) + '\', false)">▶ Dựng báo cáo chi tiết tháng ' + rpE_(label) + '</button>'
-        : '<div style="font-size:11px;color:var(--mu);margin-top:8px">Chức danh hiện tại chỉ được xem — nhờ kỹ thuật bấm dựng.</div>')
+        ? '<button class="btn bg-gr" style="margin-top:8px" onclick="hqOffer_(\'' + rpE_(ym) + '\')">▶ Lấy lại số từng ngày tháng ' + rpE_(label) + ' (tuỳ chọn)</button>'
+        : '<div style="font-size:11px;color:var(--mu);margin-top:8px">Chức danh hiện tại chỉ được xem — nhờ kỹ thuật bấm lấy lại số từng ngày.</div>')
     + (c && c.ym ? '<div style="font-size:11px;color:var(--mu);margin-top:6px">Chỉ giữ MỘT tháng đã dựng: dựng tháng này thì bản đang giữ của tháng ' + rpE_(c.label) + ' bị thay.</div>' : '')
     + '</div></div>';
 }
@@ -18368,6 +19191,7 @@ function hqViewRebuilt_(ym){
   catch (e){ body = '<div class="empty">Không dựng được màn hình từ bản dựng: ' + rpE_(e.message) + '</div>'; }
 
   const n = B.n || {};
+  const E = R.events || {}, P = R.replay || {};
   const nguon = Object.keys(R.src || {}).map(k => k + ' ' + R.src[k] + ' máy').join(' · ') || '—';
   const tot = R.totals || {};
   const inModel = (rpHqModel_().months || []).some(m => m.label === label);
@@ -18379,10 +19203,13 @@ function hqViewRebuilt_(ym){
     +   ' · mất ' + hqDur_(B.durationSec) + '</span></div>'
     + '<div style="font-size:12px;line-height:1.75;margin-top:6px">'
     +   '• Có số <b>' + (n.ok || 0) + '</b> máy (' + rpE_(nguon) + ') · không có số <b>' + (n.noData || 0) + '</b> · lỗi <b>' + (n.err || 0)
-    +   '</b> · chưa lắp đặt <b>' + (n.skip || 0) + '</b>.<br>'
-    +   '• Đã áp lại <b>' + (B.approvalsApplied || 0) + '</b> ô số <b>đã duyệt</b> ở “Xác nhận dữ liệu bất thường” (ghi chú nằm trong ô ở sheet “5R”).<br>'
+    +   '</b> · chưa lắp đặt <b>' + (n.skip || 0) + '</b>'
+    +   (R.warns ? ' · <b style="color:#b45309">' + R.warns + ' máy chỉ lấy được một nguồn</b>' : '') + '.<br>'
+    +   '• Đã <b>phát lại lịch sử sửa/duyệt theo thứ tự thời gian</b> (sheet “24. Xác nhận dữ liệu bất thường” — dòng Đã sửa / Đã duyệt / Bỏ duyệt): '
+    +   '<b>' + (E.edit || 0) + '</b> lần sửa, <b>' + (E.approve || 0) + '</b> lần duyệt, <b>' + (E.unapprove || 0) + '</b> lần bỏ duyệt '
+    +   '→ <b>' + (B.replayChanged || 0) + '</b> ô được ghi đè lên số của mây (ô nào cũng có ghi chú trong sheet “5R”).<br>'
     +   '• Tổng tháng dùng <b>số đã chốt ở Sheet 9</b>; số theo ngày chỉ dùng cho phân tích cấp ngày. '
-    +   ((B.reconN || 0) ? '<b style="color:#b45309">' + B.reconN + ' máy</b> có tổng dựng lại khác Sheet 9 — xem thẻ “Đối chiếu” bên dưới.'
+    +   ((B.reconN || 0) ? '<b style="color:#b45309">' + B.reconN + ' máy</b> có tổng dựng lại khác Sheet 9 — xem thẻ “Đối chiếu” bên dưới, mỗi máy có kèm bằng chứng.'
                          : 'Tổng dựng lại <b style="color:#0d6e3f">khớp</b> số đã chốt.') + '<br>'
     +   '• Ngày đánh giá là <b>ngày cuối tháng</b>; định mức thiết kế và danh sách máy là của hiện tại.'
     + (inModel ? '' : '<br>• <b style="color:#b45309">Tháng này chưa có khối cột ở Sheet 9</b> — phần so sánh giữa các tháng dừng ở tháng gần nhất có số.')
@@ -18393,36 +19220,78 @@ function hqViewRebuilt_(ym){
   return top + body + hqExtraCards_(ym, B, R, tot);
 }
 
-/** Thẻ phụ: đối chiếu Sheet 9 · số đã duyệt áp lại · bất thường còn lại · máy thiếu số. */
+/** Nhãn loại dòng sổ — khớp hqKindName_ ở server. */
+const HQ_KIND = { edit: 'SỬA trên web', approve: 'ĐÃ DUYỆT', unapprove: 'lúc BỎ DUYỆT' };
+
+/**
+ * LỜI GIẢI THÍCH CHO MỘT MÁY LỆCH SHEET 9 — dựng từ chính các con số bằng chứng của máy đó.
+ * r = [mã, kWh dựng lại, kWh Sheet 9, lệch kWh (dựng lại − Sheet 9), giờ dựng lại, giờ Sheet 9, lệch giờ,
+ *      ngày nghi vấn, số ô đã phát lại, khai 2 nguồn, số dòng sổ của máy]
+ * Chỉ nêu điều con số chứng minh được; không đoán người sửa.
+ */
+function hqWhyRecon_(r, E){
+  const sg = v => (Number(v) > 0 ? '+' : '') + rpN_(v, 2);
+  const dk = r[3], dh = r[6];
+  const tolK = Math.max(0.5, 0.005 * Math.abs(r[2])), tolH = Math.max(0.05, 0.005 * Math.abs(r[5]));
+  const kBad = Math.abs(dk) > tolK, hBad = Math.abs(dh) > tolH;
+  const cand = r[7] || [], nChg = r[8] || 0, dual = r[9], nEv = r[10] || 0;
+  const w = [];
+  if (kBad && !hBad) w.push('Giờ chạy KHỚP Sheet 9, chỉ kWh lệch (' + sg(dk) + ') → lệch nằm ở các ô kWh.');
+  else if (!kBad && hBad) w.push('kWh KHỚP Sheet 9, chỉ giờ chạy lệch (' + sg(dh) + ') → lệch nằm ở các ô giờ.');
+  else w.push('Cả kWh (' + sg(dk) + ') lẫn giờ (' + sg(dh) + ') đều lệch.');
+  const chieu = kBad ? dk : dh;
+  w.push(chieu < 0
+    ? 'Sheet 9 CAO hơn số dựng lại: lúc chốt, Sheet 5 có ô cao hơn số nguồn + sổ — thường là nhập/sửa tay lên.'
+    : 'Sheet 9 THẤP hơn số dựng lại: lúc chốt, Sheet 5 có ô thấp hơn số nguồn + sổ — sửa giảm/xoá tay, hoặc nguồn bổ sung số sau khi đã đồng bộ (ca chạy vắt qua nửa đêm).');
+  w.push(nEv ? 'Sổ có ' + nEv + ' dòng cho máy này, đã phát lại ' + nChg + ' ô (phần còn lại trùng số của mây).'
+             : 'Sổ KHÔNG có dòng nào cho máy này → chênh lệch không đến từ lần sửa/duyệt nào được ghi lại.');
+  if (cand.length)
+    w.push('Ngày đáng nghi: ' + cand.map(c => 'ngày ' + c[0] + (c[1] === 'k' ? ' (chạy ' + c[2] + ' h mà kWh trống/0)' : ' (có ' + c[2] + ' kWh mà giờ trống/0)')).join('; ') + '.');
+  if (dual) w.push('Máy khai cả SmartGen lẫn LIXiSE: lúc đồng bộ thật mỗi ô lấy theo thứ tự LIXiSE → SmartGen nên chênh nhỏ giữa hai nguồn cũng có thể gây lệch.');
+  if (E && E.firstEditAt) w.push('Nhật ký sửa số (sheet 24) bắt đầu ghi từ ' + E.firstEditAt + ' — sửa tay trước mốc này không còn dấu vết.');
+  else if (E && !E.logExists) w.push('Nhật ký sửa số chưa có dòng “Đã sửa” nào — mọi lần sửa tay từ trước tới nay đều không có dấu vết.');
+  return w;
+}
+
+/** Thẻ phụ: đối chiếu Sheet 9 (có bằng chứng) · lịch sử sửa/duyệt đã phát lại · bất thường còn lại · máy thiếu số. */
 function hqExtraCards_(ym, B, R, tot){
   const num = (v, d) => rpN_(v, d === undefined ? 2 : d);
   const sg = v => (Number(v) > 0 ? '+' : '') + num(v);
+  const E = R.events || {}, P = R.replay || {};
   let h = '';
 
   /* ---- Đối chiếu với Sheet 9 ---- */
   const recon = (R.recon || []).slice().sort((a, b) => Math.abs(b[3]) - Math.abs(a[3]));
-  h += '<div class="card" style="margin-top:12px;border-left:3px solid ' + (recon.length ? '#b45309' : '#0d6e3f') + '"><div class="cb" style="padding:10px 12px">'
+  const reconN = R.reconN || recon.length;
+  h += '<div class="card" style="margin-top:12px;border-left:3px solid ' + (reconN ? '#b45309' : '#0d6e3f') + '"><div class="cb" style="padding:10px 12px">'
     + '<b style="font-size:12px">Đối chiếu số dựng lại với số đã chốt (Sheet 9)</b>'
     + '<span style="font-size:11px;color:var(--mu)"> — tổng dựng lại ' + num(tot.kwh, 0) + ' kWh / ' + num(tot.h, 0) + ' h · Sheet 9 ' + num(tot.kwh9, 0) + ' kWh / ' + num(tot.h9, 0) + ' h</span>';
-  if (!recon.length){
+  if (!reconN){
     h += '<div style="font-size:12px;margin-top:6px">Tổng dựng lại <b>khớp</b> số đã chốt ở Sheet 9 cho mọi máy có số.</div>';
   } else {
     h += '<div style="font-size:11.5px;line-height:1.65;margin-top:6px;color:#78350f">'
-      + '<b>' + recon.length + ' máy</b> có tổng dựng lại khác Sheet 9 quá dung sai. Nhiều khả năng một số ô ngày của các máy này đã được '
-      + '<b>điều chỉnh tay</b> trong tháng mà không để lại dấu vết (hệ thống chỉ ghi lại việc DUYỆT, không ghi việc SỬA). '
-      + 'Phân tích theo ngày dùng số của mây (đã áp số duyệt); tổng tháng dùng số Sheet 9. '
-      + 'Với các máy này, đừng đọc chuỗi ngày/độ đều như số cuối cùng — hãy đối chiếu với KTV phụ trách.</div>'
-      + '<div class="tw" style="margin-top:8px;max-height:320px"><table><thead><tr>'
+      + '<b>' + reconN + ' máy</b> có tổng dựng lại khác Sheet 9 quá dung sai. '
+      + '<b>Phép cộng của Sheet 9 không sai</b> — kWh và giờ chạy đi qua cùng một hàm cộng. Chỗ lệch là các <b>ô ngày</b> ở Sheet 5 lúc chốt không giống '
+      + '“số của mây + lịch sử đã ghi”: cột “Giải thích” liệt kê điều mà số liệu của TỪNG máy chứng minh được. '
+      + (E.firstEditAt ? 'Nhật ký sửa số (sheet 24) bắt đầu ghi từ <b>' + rpE_(E.firstEditAt) + '</b>; sửa tay trước mốc đó (và sửa thẳng trên Google Sheet) không còn dấu vết.'
+                       : '<b>Nhật ký sửa số chưa có dòng “Đã sửa” nào</b> — mọi lần sửa tay trước nay đều không có dấu vết.')
+      + ' Phân tích theo ngày dùng số đã phát lại; tổng tháng dùng số Sheet 9. Với các máy này, đừng đọc chuỗi ngày/độ đều như số cuối cùng — đối chiếu với KTV phụ trách. '
+      + 'Muốn biết CHÍNH XÁC từng ô lệch do đâu cho tháng đang chạy, dùng nút “Kiểm tra số liệu”.</div>'
+      + '<div class="tw" style="margin-top:8px;max-height:360px"><table><thead><tr>'
       + '<th>Mã máy</th><th style="text-align:right">kWh dựng lại</th><th style="text-align:right">kWh Sheet 9</th><th style="text-align:right">Lệch kWh</th>'
-      + '<th style="text-align:right">Giờ dựng lại</th><th style="text-align:right">Giờ Sheet 9</th><th style="text-align:right">Lệch giờ</th></tr></thead><tbody>'
-      + recon.slice(0, 80).map(r => '<tr><td><span class="mm">' + rpE_(r[0]) + '</span></td>'
+      + '<th style="text-align:right">Giờ dựng lại</th><th style="text-align:right">Giờ Sheet 9</th><th style="text-align:right">Lệch giờ</th>'
+      + '<th style="text-align:right">Ô đã phát lại</th><th>Giải thích (bằng chứng)</th></tr></thead><tbody>'
+      + recon.slice(0, 80).map(r => '<tr><td>' + rpMa_(r[0], 'hq-may') + '</td>'
         + '<td style="text-align:right;font-family:var(--mono)">' + num(r[1]) + '</td>'
         + '<td style="text-align:right;font-family:var(--mono)">' + num(r[2]) + '</td>'
         + '<td style="text-align:right;font-family:var(--mono);font-weight:600;color:' + (r[3] >= 0 ? '#0d6e3f' : '#b91c1c') + '">' + sg(r[3]) + '</td>'
         + '<td style="text-align:right;font-family:var(--mono)">' + num(r[4]) + '</td>'
         + '<td style="text-align:right;font-family:var(--mono)">' + num(r[5]) + '</td>'
-        + '<td style="text-align:right;font-family:var(--mono);font-weight:600;color:' + (r[6] >= 0 ? '#0d6e3f' : '#b91c1c') + '">' + sg(r[6]) + '</td></tr>').join('')
-      + '</tbody></table></div>';
+        + '<td style="text-align:right;font-family:var(--mono);font-weight:600;color:' + (r[6] >= 0 ? '#0d6e3f' : '#b91c1c') + '">' + sg(r[6]) + '</td>'
+        + '<td style="text-align:right;font-family:var(--mono)">' + (r[8] || 0) + '/' + (r[10] || 0) + '</td>'
+        + '<td style="font-size:11px;white-space:normal;min-width:420px;line-height:1.55">' + hqWhyRecon_(r, E).map(x => rpE_(x)).join('<br>') + '</td></tr>').join('')
+      + '</tbody></table></div>'
+      + (reconN > 80 ? '<div style="font-size:11px;color:var(--mu);margin-top:4px">Hiện 80/' + reconN + ' máy lệch nhiều nhất.</div>' : '');
   }
   const gaps = R.gaps || [];
   if (gaps.length){
@@ -18437,23 +19306,28 @@ function hqExtraCards_(ym, B, R, tot){
   }
   h += '</div></div>';
 
-  /* ---- Số đã duyệt áp lại ---- */
-  const ap = R.approvals || [];
+  /* ---- Lịch sử sửa/duyệt đã phát lại ---- */
+  const ap = P.applied || [];
   h += '<div class="card" style="margin-top:12px;border-left:3px solid #334155"><div class="cb" style="padding:10px 12px">'
-    + '<b style="font-size:12px">Số đã duyệt được áp lại</b>'
-    + '<span style="font-size:11px;color:var(--mu)"> — Sheet 24 có ' + (R.approvalsTotal || 0) + ' ô đang ở trạng thái “Đã duyệt” của tháng này: '
-    + (R.approvalsSame || 0) + ' ô trùng số mây, ' + (R.approvalsChanged || 0) + ' ô khác và đã được ghi đè bằng số duyệt'
-    + ((R.approvalsSkipped || 0) ? ', ' + R.approvalsSkipped + ' ô bỏ qua (máy chưa lắp/ngày ngoài tháng)' : '') + '</span>';
+    + '<b style="font-size:12px">Lịch sử sửa / duyệt được phát lại lên số của mây</b>'
+    + '<span style="font-size:11px;color:var(--mu)"> — đọc từ sheet 24 theo thời gian, ô nào cũng lấy lần ghi CUỐI CÙNG: '
+    + (E.edit || 0) + ' lần sửa · ' + (E.approve || 0) + ' lần duyệt · ' + (E.unapprove || 0) + ' lần bỏ duyệt'
+    + ((E.cleared || 0) ? ' · ' + E.cleared + ' ô xoá trắng (không áp, ô sẽ được đồng bộ lại từ nguồn)' : '')
+    + ' → ' + (P.cells || 0) + ' ô có số hiệu lực: ' + (P.same || 0) + ' ô trùng số mây, ' + (P.changed || 0) + ' ô khác và đã được ghi đè'
+    + ((P.skipped || 0) ? ', ' + P.skipped + ' ô bỏ qua (máy chưa có số từ mây / chưa lắp / ngày ngoài tháng)' : '') + '</span>';
   if (!ap.length){
-    h += '<div style="font-size:12px;margin-top:6px">Không ô nào phải ghi đè — số mây và số đã duyệt trùng nhau.</div>';
+    h += '<div style="font-size:12px;margin-top:6px">Không ô nào phải ghi đè — số mây và số trong sổ trùng nhau'
+      + ((E.edit || E.approve || E.unapprove) ? '' : ' (sheet 24 chưa có dòng nào của tháng này)') + '.</div>';
   } else {
     h += '<div class="tw" style="margin-top:8px;max-height:280px"><table><thead><tr>'
-      + '<th>Mã máy</th><th>Ngày</th><th>Chỉ số</th><th style="text-align:right">Số của mây</th><th style="text-align:right">Số đã duyệt</th><th>Người duyệt</th><th>Lúc</th></tr></thead><tbody>'
-      + ap.slice(0, 120).map(a => '<tr><td><span class="mm">' + rpE_(a[0]) + '</span></td><td>' + rpE_(a[1]) + '</td><td>' + rpE_(a[2]) + '</td>'
+      + '<th>Mã máy</th><th>Ngày</th><th>Chỉ số</th><th style="text-align:right">Số của mây</th><th style="text-align:right">Số hiệu lực</th><th>Loại dòng sổ</th><th>Người</th><th>Lúc</th></tr></thead><tbody>'
+      + ap.slice(0, 120).map(a => '<tr><td>' + rpMa_(a[0], 'hq-may') + '</td><td>' + rpE_(a[1]) + '</td><td>' + rpE_(a[2]) + '</td>'
         + '<td style="text-align:right;font-family:var(--mono)">' + (a[3] === '' ? '—' : num(a[3])) + '</td>'
         + '<td style="text-align:right;font-family:var(--mono);font-weight:600">' + num(a[4]) + '</td>'
+        + '<td style="font-size:11px">' + rpE_(HQ_KIND[a[7]] || a[7] || '—') + '</td>'
         + '<td style="font-size:11px">' + rpE_(a[5] || '—') + '</td><td style="font-size:11px">' + rpE_(a[6] || '—') + '</td></tr>').join('')
-      + '</tbody></table></div>';
+      + '</tbody></table></div>'
+      + (ap.length >= 120 ? '<div style="font-size:11px;color:var(--mu);margin-top:4px">Hiện 120 ô đầu.</div>' : '');
   }
   h += '</div></div>';
 
@@ -18474,7 +19348,7 @@ function hqExtraCards_(ym, B, R, tot){
       + '. Đây là số GỐC của mây; ô nào từng được KTV sửa tay mà không duyệt sẽ hiện lại ở đây — đối chiếu với thẻ trên.</div>'
       + '<div class="tw" style="margin-top:8px;max-height:300px"><table><thead><tr><th>Mã máy</th><th>Nhóm</th><th>Nội dung</th></tr></thead><tbody>'
       + an.slice().sort((a, b) => (a.severity === b.severity ? 0 : (a.severity === 'high' ? -1 : 1))).slice(0, 60).map(a =>
-        '<tr><td><span class="mm">' + rpE_(a.maCode) + '</span></td><td style="font-size:11px">' + rpE_(catName(a.cat)) + '</td>'
+        '<tr><td>' + rpMa_(a.maCode, 'hq-may') + '</td><td style="font-size:11px">' + rpE_(catName(a.cat)) + '</td>'
         + '<td style="font-size:11px">' + rpE_(a.message) + '</td></tr>').join('')
       + '</tbody></table></div>'
       + (an.length > 60 ? '<div style="font-size:11px;color:var(--mu);margin-top:4px">Hiện 60/' + an.length + ' điểm nặng nhất.</div>' : '');
@@ -18484,7 +19358,7 @@ function hqExtraCards_(ym, B, R, tot){
   /* ---- Máy không lấy được số ---- */
   const nd = R.noData || [];
   if (nd.length){
-    const ten = { n: 'Không có số', e: 'Lỗi' };
+    const ten = { n: 'Không có số', e: 'Lỗi', w: 'Thiếu một nguồn' };
     h += '<div class="card" style="margin-top:12px;border-left:3px solid #64748b"><div class="cb" style="padding:10px 12px">'
       + '<b style="font-size:12px">Máy không lấy được số theo ngày</b>'
       + '<span style="font-size:11px;color:var(--mu)"> — ' + nd.length + ' máy' + (nd.length >= 70 ? ' (hiện 70 máy đầu)' : '') + '</span>'
@@ -18494,6 +19368,307 @@ function hqExtraCards_(ym, B, R, tot){
   }
   return h;
 }
+
+/* ===========================================================================
+ *  9b · THẺ KẾT QUẢ KIỂM TRA SỐ LIỆU — CHỈ CHO THÁNG ĐANG CHẠY
+ * ----------------------------------------------------------------------------
+ *  ĐÂY LÀ CÂU TRẢ LỜI TRÊN SỐ THẬT cho "cộng lại số liệu lệch số đã cộng trước đó". Server lấy lại
+ *  số SmartGen/LIXiSE của từng máy (cùng thứ tự LIXiSE → SmartGen, cùng cách làm tròn như lúc đồng
+ *  bộ thật), đặt cạnh TỪNG Ô NGÀY của Sheet 5 và cạnh tổng ở Sheet 9, rồi xếp mỗi chỗ lệch vào một
+ *  trong 5 nhóm (HQ_CLS_INFO). Hai đẳng thức làm nên bằng chứng:
+ *
+ *      Σ Sheet 5 − Σ nguồn  =  cộng Δ của 5 nhóm        (không dư, không thiếu)
+ *      Σ Sheet 5            so với  Sheet 9              (phép cộng của Sheet 9 có đúng không)
+ *
+ *  Thẻ này KHÔNG chịu bộ lọc ② (RP.g): kiểm tra tính toàn bộ máy trên server, và một con số kiểm
+ *  tra mà đổi theo ô lọc thì không còn là bằng chứng. Thẻ nói rõ điều đó ngay ở đầu.
+ *  Mọi dòng trong thẻ chỉ ĐỌC — không có nút nào ghi vào Sheet 5 hay Sheet 9.
+ * ========================================================================= */
+
+/* Năm nhóm lệch — THỨ TỰ phải khớp HQ_CLS = ['t','ua','ub','h','x'] ở server (mảng ck/ch của mỗi máy
+ * là [số ô, tổng Δ] lần lượt cho từng nhóm theo đúng thứ tự này). */
+const HQ_CLS_INFO = [
+  { k: 't',  ten: 'Có dấu vết trên web', mau: '#0d6e3f',
+    y: 'Ô ở Sheet 5 khác số nguồn nhưng sheet 24 có dòng cho ĐÚNG ô này với ĐÚNG số đang nằm ở Sheet 5: biết người nào, lúc nào, bằng cách nào (sửa / duyệt / bỏ duyệt).' },
+  { k: 'ua', ten: 'Sheet 5 CAO hơn nguồn · không dấu vết', mau: '#b91c1c',
+    y: 'Số ở Sheet 5 lớn hơn số nguồn mà không có dòng sổ nào khớp: nhập/sửa tăng tay (kể cả sửa thẳng trên Google Sheet), hoặc nguồn đã hạ số sau khi đồng bộ.' },
+  { k: 'ub', ten: 'Sheet 5 THẤP hơn nguồn · không dấu vết', mau: '#b45309',
+    y: 'Số ở Sheet 5 nhỏ hơn số nguồn mà không có dấu vết: sửa giảm tay, hoặc nguồn bổ sung số sau khi đã đồng bộ (ca chạy vắt qua nửa đêm).' },
+  { k: 'h',  ten: 'Sheet 5 trống · nguồn có số', mau: '#6d28d9',
+    y: 'Ô ngày ở Sheet 5 không có số hợp lệ trong khi nguồn có: chưa đồng bộ tới, hoặc bị xoá tay.' },
+  { k: 'x',  ten: 'Sheet 5 có số · nguồn trống', mau: '#64748b',
+    y: 'Sheet 5 có số mà nguồn không có: nhập tay cho máy không có số từ mây, hoặc nguồn bị mất số.' },
+];
+const HQ_CLS_BY = HQ_CLS_INFO.reduce(function (o, c){ o[c.k] = c; return o; }, {});
+
+/** Cộng Δ của bốn nhóm KHÔNG dấu vết trong mảng [số ô, Δ] × 5 (vị trí lẻ: 3, 5, 7, 9). */
+function hqKhongVet_(a){ return (Number(a[3]) || 0) + (Number(a[5]) || 0) + (Number(a[7]) || 0) + (Number(a[9]) || 0); }
+/** Số ô lệch của cả năm nhóm (vị trí chẵn: 0, 2, 4, 6, 8). */
+function hqSoO_(a){ return (Number(a[0]) || 0) + (Number(a[2]) || 0) + (Number(a[4]) || 0) + (Number(a[6]) || 0) + (Number(a[8]) || 0); }
+/** Số ô lệch KHÔNG dấu vết. */
+function hqSoOKV_(a){ return hqSoO_(a) - (Number(a[0]) || 0); }
+/** Máy mà tổng Sheet 9 khác tổng các ô ngày của Sheet 5 quá dung sai — cùng dung sai với server (HQ_RECON). */
+function hqS9Lech_(r){
+  if (r[9] == null || r[10] == null) return false;
+  return Math.abs(r[2] - r[9]) > Math.max(0.5, 0.005 * Math.abs(r[9]))
+      || Math.abs(r[4] - r[10]) > Math.max(0.05, 0.005 * Math.abs(r[10]));
+}
+function hqSg_(v, d){ const n = Number(v) || 0; return (n > 0 ? '+' : '') + rpN_(n, d === undefined ? 2 : d); }
+
+/** Dòng chữ nói rõ dấu vết: ai, lúc nào, bằng cách nào, số trong sổ. t = [số trong sổ, loại, người, lúc]. */
+function hqVetText_(t){
+  if (!t || !t.length) return '';
+  return (HQ_KIND[t[1]] || t[1] || 'sổ') + (t[2] ? ' · ' + t[2] : '') + (t[3] ? ' · ' + t[3] : '')
+    + ' (số trong sổ ' + rpN_(t[0], 2) + ')';
+}
+
+/** Bảng ô lệch. Mỗi dòng: [mã, ngày, 'kWh'|'h', số Sheet 5 | null, số nguồn | null, nhóm, dấu vết | 0]. */
+function hqBangO_(cells, opt){
+  opt = opt || {};
+  const cols = (opt.khongMa ? [] : [{ t: 'Mã máy' }]).concat([
+    { t: 'Ngày', a: 'right', m: 1 }, { t: 'Chỉ số' }, { t: 'Sheet 5', a: 'right', m: 1 }, { t: 'Số nguồn', a: 'right', m: 1 },
+    { t: 'Chênh (S5 − nguồn)', a: 'right', m: 1 }, { t: 'Nhóm' }, { t: 'Dấu vết trên web' }]);
+  const rows = cells.map(c => {
+    const v5 = c[3] === null ? null : Number(c[3]), vs = c[4] === null ? null : Number(c[4]);
+    const delta = (v5 === null ? 0 : v5) - (vs === null ? 0 : vs);
+    const g = HQ_CLS_BY[c[5]] || { ten: c[5], mau: '#334155' };
+    const cell = [];
+    if (!opt.khongMa) cell.push(rpMa_(c[0], 'chk-may'));
+    cell.push(String(c[1]), c[2] === 'h' ? 'Giờ chạy' : 'Điện (kWh)',
+      v5 === null ? '—' : rpN_(v5, 2), vs === null ? '—' : rpN_(vs, 2),
+      '<b>' + hqSg_(delta) + '</b>',
+      '<span style="font-size:11px;font-weight:600;color:' + g.mau + ';white-space:normal">' + rpE_(g.ten) + '</span>',
+      c[6] ? '<span style="font-size:11px;white-space:normal">' + rpE_(hqVetText_(c[6])) + '</span>'
+           : '<span style="font-size:11px;color:var(--mu)">không có</span>');
+    return { bg: c[6] ? '' : '#fdf6e7', c: cell };
+  });
+  return rpTblCt_(cols, rows, opt.cao || 320);
+}
+
+/** Bảng năm nhóm: nhãn + nghĩa + số ô/Δ của kWh và của giờ. ck/ch = mảng 10 số. */
+function hqBangNhom_(ck, ch, chiCoSo){
+  const rows = [];
+  HQ_CLS_INFO.forEach((g, q) => {
+    const oK = Number(ck[2 * q]) || 0, dK = Number(ck[2 * q + 1]) || 0, oH = Number(ch[2 * q]) || 0, dH = Number(ch[2 * q + 1]) || 0;
+    if (chiCoSo && !oK && !oH) return;
+    rows.push({ c: [
+      '<div style="white-space:normal;min-width:340px"><b style="color:' + g.mau + '">' + rpE_(g.ten) + '</b>'
+        + '<div style="font-size:11px;color:var(--mu);line-height:1.55;margin-top:2px">' + rpE_(g.y) + '</div></div>',
+      String(oK), '<b>' + hqSg_(dK) + '</b>', String(oH), '<b>' + hqSg_(dH) + '</b>'] });
+  });
+  if (!rows.length) return '<div class="empty" style="padding:12px 0">Không ô nào lệch.</div>';
+  const tK = hqSoO_(ck), tH = hqSoO_(ch);
+  let sK = 0, sH = 0;
+  HQ_CLS_INFO.forEach((g, q) => { sK += Number(ck[2 * q + 1]) || 0; sH += Number(ch[2 * q + 1]) || 0; });
+  rows.push({ bg: '#f1f5f9', c: ['<b>Cộng</b>', '<b>' + tK + '</b>', '<b>' + hqSg_(sK) + '</b>', '<b>' + tH + '</b>', '<b>' + hqSg_(sH) + '</b>'] });
+  return rpTblCt_([{ t: 'Nhóm lệch' }, { t: 'Số ô kWh', a: 'right', m: 1 }, { t: 'Δ kWh', a: 'right', m: 1 },
+                   { t: 'Số ô giờ', a: 'right', m: 1 }, { t: 'Δ giờ', a: 'right', m: 1 }], rows, 360);
+}
+
+/** Thẻ kết quả đầy đủ. C = báo cáo kiểm tra server trả về (HQ.chk). */
+function hqChkCard_(C){
+  const T = C.totals || {}, ck = T.ck || [], ch = T.ch || [];
+  const E = C.events || {}, S9 = C.s9chk || {}, n = C.n || {};
+  const rows = C.rows || [];
+  const nM = rows.length;
+  const tol = 0.01 * (nM + 5);                          // mỗi máy cộng làm tròn 2 số lẻ → sai số cộng dồn không quá cỡ này
+  const dK = (T.s5K || 0) - (T.srcK || 0), dH = (T.s5H || 0) - (T.srcH || 0);
+  const gK = Number(ck[1]) || 0, gH = Number(ch[1]) || 0;
+  const vK = hqKhongVet_(ck), vH = hqKhongVet_(ch);
+  const oK = hqSoO_(ck), oH = hqSoO_(ch);
+  const kv = hqSoOKV_(ck) + hqSoOKV_(ch);               // số ô không dấu vết (kWh + giờ)
+  const dang = !!(HQ.st && HQ.st.job && HQ.st.job.live);
+
+  /* ---- Kết luận một câu ---- */
+  let kl;
+  if (!oK && !oH)
+    kl = '<b style="color:#0d6e3f">Sheet 5 khớp số nguồn ở mọi ô ngày</b> của ' + nM + ' máy đã so — cộng lại từ SmartGen/LIXiSE ra đúng số đang có.';
+  else if (!kv)
+    kl = '<b style="color:#0d6e3f">Mọi chỗ Sheet 5 khác số nguồn đều có dấu vết</b> (' + (oK + oH) + ' ô, đều có dòng sổ khớp đúng số hiện tại) — không có chênh lệch nào “tự nhiên xuất hiện”.';
+  else
+    kl = '<b style="color:#b45309">' + kv + ' ô ngày khác số nguồn mà KHÔNG có dấu vết sửa/duyệt nào trên web</b> — đây là phần làm cho số cộng lại từ SmartGen/LIXiSE '
+       + 'lệch số đã cộng ở Sheet 5. Hệ thống không thể biết ai sửa hay nguồn tự đổi số: hai trường hợp đó chỉ phân biệt được bằng cách hỏi KTV phụ trách máy (bảng máy bên dưới, xếp từ lệch nhiều nhất).';
+
+  /* ---- Phép cộng của Sheet 9 ---- */
+  let l9;
+  if (!S9.n) l9 = 'Không đối chiếu được với Sheet 9: chưa máy nào có tổng của tháng này ở Sheet 9.';
+  else if (!S9.bad)
+    l9 = '<b style="color:#0d6e3f">Phép cộng của Sheet 9 ĐÚNG</b>: ' + S9.n + '/' + S9.n + ' máy có tổng Sheet 9 trùng tổng các ô ngày ở Sheet 5 '
+       + '(lệch lớn nhất ' + rpN_(S9.maxK, 2) + ' kWh · ' + rpN_(S9.maxH, 2) + ' giờ).';
+  else
+    l9 = '<b style="color:#b45309">' + S9.bad + '/' + S9.n + ' máy có tổng Sheet 9 khác tổng các ô ngày ở Sheet 5</b> '
+       + '(lệch lớn nhất ' + rpN_(S9.maxK, 2) + ' kWh · ' + rpN_(S9.maxH, 2) + ' giờ). Có thể Sheet 9 chưa được tính lại sau lần sửa gần nhất — '
+       + 'bấm “↻ Tính lại tổng kết tháng” ở trang Tổng kết hiệu quả tháng rồi chạy kiểm tra lại; máy nào vẫn lệch sau đó được tô vàng ở bảng dưới.';
+
+  const dongTong = (ten, s5, src, d, g, v, soO, soKV) =>
+    '• <b>' + ten + '</b>: Sheet 5 = ' + rpN_(s5, 2) + ' · nguồn = ' + rpN_(src, 2) + ' → chênh <b>' + hqSg_(d) + '</b> '
+    + (soO ? '= có dấu vết ' + hqSg_(g) + ' + không dấu vết ' + hqSg_(v) + ' (' + soO + ' ô lệch, ' + soKV + ' ô không dấu vết)'
+              + (Math.abs(d - (g + v)) <= tol ? ' <span style="color:#0d6e3f">✓ khớp từng ô</span>'
+                  : ' <span style="color:#b45309">⚠ còn dư ' + hqSg_(d - (g + v)) + ' — do làm tròn từng máy hoặc ô lệch dưới ngưỡng 0,01</span>')
+              : '— khớp từng ô.');
+
+  let h = '<div class="card" style="margin-bottom:12px;border-left:3px solid #0f766e"><div class="cb" style="padding:12px 14px">'
+    + '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
+    +   '<b style="font-size:13px">🔎 Kết quả kiểm tra số liệu tháng ' + rpE_(C.label) + ' — các ngày 1…' + C.dataDay + '</b>'
+    +   '<span style="font-size:11px;color:var(--mu)">chạy lúc ' + rpE_(C.builtStr || '—') + ' · ' + rpE_(C.by || '—')
+    +   ' · mất ' + hqDur_(C.durationSec) + '</span></div>'
+    + '<div style="font-size:12px;line-height:1.8;margin-top:8px">'
+    +   kl + '<br>'
+    +   l9 + '<br>'
+    +   dongTong('Điện phát (kWh)', T.s5K || 0, T.srcK || 0, dK, gK, vK, oK, hqSoOKV_(ck)) + '<br>'
+    +   dongTong('Giờ chạy (h)', T.s5H || 0, T.srcH || 0, dH, gH, vH, oH, hqSoOKV_(ch)) + '<br>'
+    +   '• <b>Nhật ký sửa số (sheet 24)</b>: ' + (E.logExists
+          ? 'ghi từ ' + rpE_(E.firstEditAt || '—') + ' — tháng này có ' + (E.edit || 0) + ' lần sửa, ' + (E.approve || 0) + ' lần duyệt, ' + (E.unapprove || 0) + ' lần bỏ duyệt. '
+            + 'Sửa tay trước mốc đó, và sửa thẳng trên Google Sheet (không qua web), không để lại dấu vết.'
+          : '<b style="color:#b45309">chưa có dòng nào</b> — mọi lần sửa tay từ trước đến nay đều không có dấu vết; từ lần cài này trở đi mỗi lần sửa ô ngày trên web được ghi lại.')
+    + '<br>• <b>Đã so</b> ' + nM + ' máy' + (n.noData ? ' · ' + n.noData + ' máy không lấy được số nguồn' : '') + (n.err ? ' · ' + n.err + ' lỗi' : '')
+    +   (n.skip ? ' · ' + n.skip + ' máy chưa lắp đặt (bỏ qua)' : '') + (C.warns ? ' · ' + C.warns + ' máy chỉ lấy được một nguồn' : '') + '.'
+    + '<br><span style="color:var(--mu)">Thẻ này tính trên TOÀN BỘ máy, <b>không chịu bộ lọc</b> ở đầu trang. Đây là ảnh chụp lúc ' + rpE_(C.builtStr || '—')
+    +   ' — sửa số sau đó chưa có ở đây; chạy lại để cập nhật.</span>'
+    + '</div>'
+    + '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'
+    +   '<button class="btn bg-gr sm" onclick="hqCloseChk()">Thu gọn</button>'
+    +   (hqCanEdit_() ? '<button class="btn bg-gr sm" ' + (dang ? 'disabled title="Đang có một việc chạy ngầm"' : 'onclick="hqCheckStart()"') + '>↻ Chạy lại kiểm tra</button>' : '')
+    + '</div></div></div>';
+
+  /* ---- Năm nhóm ---- */
+  h += '<div class="card" style="margin-bottom:12px"><div class="cb" style="padding:10px 12px">'
+    + '<b style="font-size:12px">Chênh lệch giữa Sheet 5 và số nguồn, chia theo nguyên nhân có thể chứng minh</b>'
+    + '<span style="font-size:11px;color:var(--mu)"> — mỗi ô ngày lệch được xếp vào đúng MỘT nhóm; cộng Δ các nhóm bằng đúng chênh lệch tổng ở trên</span>'
+    + hqBangNhom_(ck, ch, false) + '</div></div>';
+
+  /* ---- Từng máy ---- */
+  const lech = rows.filter(r => hqSoO_(r[5] || []) + hqSoO_(r[6] || []) > 0 || hqS9Lech_(r));
+  h += '<div class="card" style="margin-bottom:12px"><div class="cb" style="padding:10px 12px">'
+    + '<b style="font-size:12px">Máy có ô lệch hoặc có tổng Sheet 9 khác Sheet 5</b>'
+    + '<span style="font-size:11px;color:var(--mu)"> — ' + lech.length + '/' + nM + ' máy, xếp từ nhiều ô KHÔNG dấu vết nhất; bấm mã máy để xem từng ô. Dòng tô vàng: tổng Sheet 9 ≠ tổng Sheet 5</span>';
+  if (!lech.length){
+    h += '<div class="empty" style="padding:12px 0">Mọi máy đều khớp.</div>';
+  } else {
+    const dm = (v, d) => v == null ? '—' : rpN_(v, d === undefined ? 2 : d);
+    h += rpTblCt_(
+      [{ t: 'Mã máy' },
+       { t: 'kWh nguồn', a: 'right', m: 1 }, { t: 'kWh Sheet 5', a: 'right', m: 1 }, { t: 'kWh Sheet 9', a: 'right', m: 1 }, { t: 'Δ kWh', a: 'right', m: 1 },
+       { t: 'có dấu vết', a: 'right', m: 1 }, { t: 'không dấu vết', a: 'right', m: 1 },
+       { t: 'Giờ nguồn', a: 'right', m: 1 }, { t: 'Giờ Sheet 5', a: 'right', m: 1 }, { t: 'Giờ Sheet 9', a: 'right', m: 1 }, { t: 'Δ giờ', a: 'right', m: 1 },
+       { t: 'có dấu vết', a: 'right', m: 1 }, { t: 'không dấu vết', a: 'right', m: 1 },
+       { t: 'Ô lệch (không dấu vết/tổng)', a: 'right', m: 1 }],
+      lech.slice(0, 100).map(r => {
+        const a = r[5] || [], b = r[6] || [];
+        return { bg: hqS9Lech_(r) ? '#fdf6e7' : '', c: [
+          rpMa_(r[0], 'chk-may'),
+          dm(r[1]), dm(r[2]), dm(r[9]), '<b>' + hqSg_(r[2] - r[1]) + '</b>', hqSg_(a[1]), hqSg_(hqKhongVet_(a)),
+          dm(r[3]), dm(r[4]), dm(r[10]), '<b>' + hqSg_(r[4] - r[3]) + '</b>', hqSg_(b[1]), hqSg_(hqKhongVet_(b)),
+          (hqSoOKV_(a) + hqSoOKV_(b)) + '/' + (hqSoO_(a) + hqSoO_(b))] };
+      }), 420)
+      + (lech.length > 100 ? '<div style="font-size:11px;color:var(--mu);margin-top:4px">Hiện 100/' + lech.length + ' máy đầu.</div>' : '');
+  }
+  h += '</div></div>';
+
+  /* ---- Ô lệch lớn nhất ---- */
+  const cells = (C.cells || []).slice(0, 150);
+  h += '<div class="card" style="margin-bottom:12px"><div class="cb" style="padding:10px 12px">'
+    + '<b style="font-size:12px">Các ô ngày lệch nhiều nhất</b>'
+    + '<span style="font-size:11px;color:var(--mu)"> — ' + cells.length + '/' + (C.cellsAll || cells.length) + ' ô'
+    + ((C.cellsAll || 0) > (C.cells || []).length ? ' (kết quả lưu ' + (C.cells || []).length + ' ô lệch lớn nhất của cả đội máy; tổng ở trên vẫn tính đủ)' : '')
+    + '. Dòng tô vàng = không có dấu vết trên web</span>'
+    + (cells.length ? hqBangO_(cells, { cao: 420 }) : '<div class="empty" style="padding:12px 0">Không ô nào lệch.</div>')
+    + '</div></div>';
+
+  /* ---- Máy không so được ---- */
+  const gaps = C.gaps || [], nd = C.noData || [];
+  if (gaps.length || nd.length){
+    h += '<div class="card" style="margin-bottom:12px;border-left:3px solid #64748b"><div class="cb" style="padding:10px 12px;font-size:11.5px;line-height:1.7">';
+    if (gaps.length)
+      h += '<div style="color:#7f1d1d"><b>' + gaps.length + ' máy KHÔNG so được</b> (không lấy được số nguồn nhưng Sheet 5 đang có số): '
+        + gaps.slice(0, 30).map(g => rpMa_(g[0], 'chk-may') + ' <span style="color:var(--mu)">(' + rpN_(g[2], 0) + ' kWh · ' + rpN_(g[3], 1) + ' h)</span>').join(', ')
+        + (gaps.length > 30 ? ' …' : '') + '. Số của các máy này ở Sheet 5 chưa được kiểm chứng.</div>';
+    if (nd.length){
+      const ten = { n: 'không có số', e: 'lỗi', w: 'thiếu một nguồn' };
+      h += '<div style="margin-top:6px"><b>' + nd.length + ' máy có ghi chú khi lấy số</b>: '
+        + nd.slice(0, 30).map(x => '<span class="mm">' + rpE_(x[0]) + '</span> ' + rpE_(ten[x[1]] || x[1]) + (x[2] ? ' — ' + rpE_(x[2]) : '')).join('; ')
+        + (nd.length > 30 ? ' …' : '') + '.</div>';
+    }
+    h += '</div></div>';
+  }
+  return h;
+}
+
+/** Vùng kết quả kiểm tra ở đầu tab ② của THÁNG ĐANG CHẠY: tiến độ / lỗi / tóm tắt một dòng / thẻ đầy đủ. */
+function hqChkArea_(){
+  const st = HQ.st || {}, job = st.job || null;
+  const ym = hqYmOf_(rpHqThangNay_());
+
+  if (job && job.live && job.mode === 'check') return hqProgressCard_(job, true);
+  if (job && job.mode === 'check' && job.ym === ym && (job.phase === 'error' || job.phase === 'cancelled') && hqSeenId_() !== job.id)
+    return hqFailCard_(job);
+
+  const m = st.chk;
+  if (!m || m.ym !== ym) return '';
+
+  if (!HQ.chkOpen){
+    return '<div class="card" style="margin-bottom:12px;border-left:3px solid ' + (m.bad ? '#b45309' : '#0d6e3f') + '"><div class="cb" style="padding:9px 14px;'
+      + 'display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;font-size:12px">'
+      + '<span>🔎 Lần kiểm tra số liệu gần nhất · ' + rpE_(m.builtStr || '') + ' · ' + rpE_(m.by || '') + ': so ' + (m.machines || 0) + ' máy — '
+      + (m.bad ? '<b style="color:#b45309">' + m.bad + ' máy có tổng Sheet 9 khác Sheet 5</b>' : '<b style="color:#0d6e3f">tổng Sheet 9 khớp Sheet 5</b>') + '</span>'
+      + '<button class="btn bg-gr sm" onclick="hqOpenChk()">Xem kết quả chi tiết</button></div></div>';
+  }
+  if (HQ.chk && HQ.chk.builtAt === m.builtAt) return hqChkCard_(HQ.chk);
+  if (HQ.chkErr){
+    return '<div class="card" style="margin-bottom:12px;border-left:3px solid #dc2626"><div class="cb" style="padding:12px 14px">'
+      + '<b style="font-size:13px">Không tải được kết quả kiểm tra</b>'
+      + '<div style="font-size:12px;margin-top:6px;color:#7f1d1d">' + rpE_(HQ.chkErr) + '</div>'
+      + '<button class="btn bg-b sm" style="margin-top:8px" onclick="hqRetryChk()">Thử tải lại</button> '
+      + '<button class="btn bg-gr sm" style="margin-top:8px" onclick="hqCloseChk()">Thu gọn</button></div></div>';
+  }
+  setTimeout(hqEnsureChk_, 0);
+  return '<div class="card" style="margin-bottom:12px;border-left:3px solid #1e6bb8"><div class="cb" style="padding:12px 14px;font-size:12px">'
+    + '⏳ Đang tải kết quả kiểm tra về máy…</div></div>';
+}
+
+/** Bấm một MÃ MÁY trong thẻ kiểm tra: số của riêng máy đó + từng ô lệch. Chỉ đọc từ HQ.chk đã tải. */
+RP_CT['chk-may'] = function (code){
+  const C = HQ.chk;
+  if (!C) return null;
+  const key = String(code).toUpperCase();
+  const r = (C.rows || []).find(x => String(x[0]).toUpperCase() === key);
+  if (!r) return null;
+  const a = r[5] || [], b = r[6] || [];
+  const dK = r[2] - r[1], dH = r[4] - r[3];
+  const lech9 = hqS9Lech_(r);
+  const soO = hqSoO_(a) + hqSoO_(b), soKV = hqSoOKV_(a) + hqSoOKV_(b);
+  const cells = (C.cells || []).filter(c => String(c[0]).toUpperCase() === key)
+    .sort((p, q) => (p[1] - q[1]) || (p[2] < q[2] ? -1 : (p[2] > q[2] ? 1 : 0)));
+
+  let co = 'Kiểm tra lúc ' + rpE_(C.builtStr || '—') + ': lấy lại số SmartGen/LIXiSE của máy này cho các ngày 1…' + C.dataDay
+    + ' (cùng thứ tự LIXiSE → SmartGen và cách làm tròn như lúc đồng bộ thật), đặt cạnh từng ô ngày ở Sheet 5. '
+    + (soO ? 'Có <b>' + soO + '</b> ô khác nhau: <b>' + (soO - soKV) + '</b> có dấu vết trên web, <b>' + soKV + '</b> không có. '
+           : '<b>Mọi ô ngày khớp số nguồn.</b> ');
+  if (r[9] == null) co += 'Sheet 9 chưa có tổng tháng này của máy. ';
+  else co += lech9 ? '<b style="color:#b45309">Tổng Sheet 9 khác tổng các ô ngày ở Sheet 5</b> — có thể chưa tính lại sau lần sửa gần nhất. '
+                   : 'Tổng Sheet 9 khớp tổng các ô ngày ở Sheet 5. ';
+  if (!r[7] && soKV) co += 'Nhật ký (sheet 24) KHÔNG có dòng nào của máy này trong tháng, nên các ô lệch không giải thích được bằng lần sửa/duyệt nào được ghi lại. ';
+
+  let h = rpGhiChuCt_('<b>Cơ sở.</b> ' + co, lech9 || soKV ? '#b45309' : '#0d6e3f');
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    + rpKpi_('kWh · Sheet 5', rpSo_(r[2], 2), '#0d6e3f', 'nguồn ' + rpSo_(r[1], 2) + ' · chênh ' + hqSg_(dK))
+    + rpKpi_('kWh · Sheet 9', rpSo_(r[9], 2), lech9 ? '#b45309' : '#64748b', r[9] == null ? 'chưa có' : (Math.abs(r[2] - r[9]) <= Math.max(0.5, 0.005 * Math.abs(r[9])) ? 'khớp Sheet 5' : 'khác Sheet 5 ' + hqSg_(r[9] - r[2])))
+    + rpKpi_('Giờ · Sheet 5', rpSo_(r[4], 2), '#0f766e', 'nguồn ' + rpSo_(r[3], 2) + ' · chênh ' + hqSg_(dH))
+    + rpKpi_('Giờ · Sheet 9', rpSo_(r[10], 2), lech9 ? '#b45309' : '#64748b', r[10] == null ? 'chưa có' : (Math.abs(r[4] - r[10]) <= Math.max(0.05, 0.005 * Math.abs(r[10])) ? 'khớp Sheet 5' : 'khác Sheet 5 ' + hqSg_(r[10] - r[4])))
+    + rpKpi_('Dòng sổ của máy', String(r[7] || 0), '#334155', r[8] ? 'khai cả SmartGen và LIXiSE' : 'một nguồn')
+    + '</div>';
+
+  h += rpTieuMuc_('Chia theo nhóm', 'chỉ liệt kê nhóm có ô lệch');
+  h += hqBangNhom_(a, b, true);
+
+  h += rpTieuMuc_('Từng ô lệch', cells.length + (cells.length < soO ? '/' + soO : '') + ' ô');
+  if (cells.length < soO)
+    h += rpGhiChuCt_('Kết quả kiểm tra chỉ lưu ' + (C.cells || []).length + ' ô lệch lớn nhất của cả đội máy, nên bảng dưới có thể thiếu các ô nhỏ của máy này — '
+      + 'các tổng ở trên vẫn tính đủ mọi ô.', '#64748b');
+  h += cells.length ? hqBangO_(cells, { khongMa: true, cao: 340 }) : '<div class="empty" style="padding:12px 0">Không có ô lệch nào được lưu cho máy này.</div>';
+
+  return { tieuDe: 'Kiểm tra số liệu — máy ' + code, phuDe: rpMayDong_(code), html: h, nut: rpCtNutSua_(code) };
+};
 
 /* ===========================================================================
  *  10 · XUẤT WORD CỦA THÁNG ĐÃ DỰNG
@@ -18521,6 +19696,10 @@ function rpHieuQuaThang_(label){
   const idx    = months.findIndex(m => m.label === label);
   const prev   = idx > 0 ? months[idx - 1] : null;
 
+  /* LỌC TẠI NGUỒN: rows và series cùng đi qua một vị từ lọc, nên bảng, ô KPI, biểu đồ, nhận xét và
+   * tờ Word của bản xem nhanh không thể nói khác nhau. tongMay = số máy có số TRƯỚC lọc (cho câu "không máy nào khớp"). */
+  const loc = rpHqLocFn_();
+  let tongMay = 0;
   const rows = [];
   (model.machines || []).forEach(x => {
     const d = (x.byMonth || {})[label];
@@ -18530,6 +19709,8 @@ function rpHieuQuaThang_(label){
     /* Máy không có cả hai số thì BỎ HẲN khỏi báo cáo, không xếp vào nhóm nào. Tô đỏ một cái
      * máy mà ta không biết gì về nó là cách nhanh nhất để người đọc mất lòng tin vào cả tờ. */
     if (power == null && hours == null) return;
+    tongMay++;
+    if (!loc(x.code)) return;
 
     const designKw = (x.designKw > 0) ? x.designKw : null;
     const designHr = (x.designHr > 0) ? x.designHr : null;
@@ -18566,7 +19747,7 @@ function rpHieuQuaThang_(label){
     let p = 0, h = 0, n = 0;
     (model.machines || []).forEach(x => {
       const d = (x.byMonth || {})[m.label];
-      if (!d) return;
+      if (!d || !loc(x.code)) return;
       if (d.power != null){ p += d.power; n++; }
       if (d.hours != null) h += d.hours;
     });
@@ -18584,7 +19765,7 @@ function rpHieuQuaThang_(label){
   return {
     label, prevLabel: prev ? prev.label : null,
     rows, khong, kem, dat, vuot,
-    soMay: rows.length, tongKwh, tongHr,
+    soMay: rows.length, tongMay, tongKwh, tongHr,
     tbKw: (tongHr > 0 ? Math.round(tongKwh / tongHr * 100) / 100 : null),
     tbPctKw: tb('pctKw'), tbPctHr: tb('pctHr'),
     series, tang, giam,
@@ -18600,6 +19781,10 @@ function rpHqMau_(tt){
 function rpViewHieuQuaLichSu_(label){
   const d = rpHieuQuaThang_(label);
 
+  if (!d.soMay && d.tongMay > 0 && rpGSoLoc_()){
+    return '<div class="empty">Không máy nào khớp bộ lọc đang chọn — tháng ' + rpE_(label) + ' có số liệu của <b>' + d.tongMay
+      + '</b> máy.<br><span style="font-size:11px">Bỏ bớt bộ lọc ở đầu trang để xem.</span></div>';
+  }
   if (!d.soMay){
     return '<div class="empty">Tháng ' + rpE_(label) + ' chưa có số liệu nào trong sheet '
       + '“9. Tổng kết hiệu quả tháng”.<br><span style="font-size:11px">'
@@ -18621,9 +19806,9 @@ function rpViewHieuQuaLichSu_(label){
   /* Nói ngay từ đầu phần nào KHÔNG có, trước khi người đọc đi tìm nó. */
   h += '<div class="card" style="margin-top:12px;border-left:3px solid #b45309">'
     + '<div class="cb" style="padding:10px 12px;font-size:11.5px;line-height:1.7;color:#78350f">'
-    + '<b>Đây là bản xem nhanh từ số đã chốt (Sheet 9).</b> Chưa có ba mục cần số từng ngày: '
+    + '<b>Báo cáo này lấy từ số đã chốt (Sheet 9)</b> — cùng nguồn với trang Tổng kết hiệu quả tháng. Không có ba mục cần số từng ngày: '
     + 'chuỗi ngày kém hiệu quả liên tiếp · độ đều giữa các ngày (biến thiên &gt;' + RP_CFG.DEU_CV_PCT + '%) · '
-    + 'phụ lục diễn biến theo ngày. Dựng báo cáo chi tiết (nút ở trên) để lấy lại số từng ngày từ SmartGen/LIXiSE. '
+    + 'phụ lục diễn biến theo ngày, vì Sheet 9 không giữ số từng ngày. Cần thì lấy lại số từng ngày từ SmartGen/LIXiSE (nút tuỳ chọn ở thẻ phía trên). '
     + 'Tổng điện phát, tổng giờ chạy, công suất TB, % đạt thiết kế và so sánh giữa các tháng ở đây là số đã chốt, không đổi nữa.'
     + '</div></div>';
 
@@ -18638,16 +19823,16 @@ function rpViewHieuQuaLichSu_(label){
       + rpBar_(xau.slice(0, 12).map(x => ({
           t: x.code, v: (x.pctKw != null ? x.pctKw : (x.pctHr || 0)),
           nhan: (x.pctKw != null ? Math.round(x.pctKw) : '—') + '%',
-          mau: rpHqMau_(x.tt) })))
+          mau: rpHqMau_(x.tt), ct: ['ls-may', x.code, label] })))
       + '</div>'
-      + rpHqBang_(xau);
+      + rpHqBang_(xau, label);
   }
   h += '</div></div>';
 
   h += '<div class="card" style="margin-top:12px;border-left:3px solid #334155"><div class="cb" style="padding:10px 12px">'
     + '<b style="font-size:12px">Toàn bộ tổ máy — tháng ' + rpE_(label) + '</b>'
     + '<span style="font-size:11px;color:var(--mu)"> — ' + d.soMay + ' máy có số liệu</span>'
-    + rpHqBang_(d.rows.slice().sort((a, b) => (a.pctKw ?? 999) - (b.pctKw ?? 999)))
+    + rpHqBang_(d.rows.slice().sort((a, b) => (a.pctKw ?? 999) - (b.pctKw ?? 999)), label)
     + '</div></div>';
 
   const coSo = d.series.filter(t => t.hasData);
@@ -18661,17 +19846,18 @@ function rpViewHieuQuaLichSu_(label){
           t: t.label + (t.label === label ? ' ◀' : ''),
           v: t.power, nhan: rpN_(t.power, 0),
           mau: (t.devPct != null && t.devPct < -MONTHLY_TREND_PCT) ? '#b91c1c'
-             : ((t.devPct != null && t.devPct > MONTHLY_TREND_PCT) ? '#0d6e3f' : '#64748b') })))
+             : ((t.devPct != null && t.devPct > MONTHLY_TREND_PCT) ? '#0d6e3f' : '#64748b'),
+          ct: ['ls-thang', t.label] })))
       + '</div>';
 
     if (d.prevLabel && (d.tang.length || d.giam.length)){
       h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">'
         + '<div style="flex:1;min-width:230px"><div style="font-size:11px;font-weight:600;color:#0d6e3f;margin-bottom:4px">'
         +   'Tăng mạnh nhất — ' + rpE_(label) + ' so ' + rpE_(d.prevLabel) + '</div>'
-        + rpBar_(d.tang.map(x => ({ t: x.code, v: x.delta, nhan: '+' + rpN_(x.delta, 0) })), '#0d6e3f') + '</div>'
+        + rpBar_(d.tang.map(x => ({ t: x.code, v: x.delta, nhan: '+' + rpN_(x.delta, 0), ct: ['ls-may', x.code, label] })), '#0d6e3f') + '</div>'
         + '<div style="flex:1;min-width:230px"><div style="font-size:11px;font-weight:600;color:#b91c1c;margin-bottom:4px">'
         +   'Giảm mạnh nhất</div>'
-        + rpBar_(d.giam.map(x => ({ t: x.code, v: x.delta, nhan: rpN_(x.delta, 0) })), '#b91c1c') + '</div>'
+        + rpBar_(d.giam.map(x => ({ t: x.code, v: x.delta, nhan: rpN_(x.delta, 0), ct: ['ls-may', x.code, label] })), '#b91c1c') + '</div>'
         + '</div>';
     }
     h += '</div></div>';
@@ -18687,7 +19873,7 @@ function rpViewHieuQuaLichSu_(label){
 
 /** Bảng chi tiết trên MÀN HÌNH. Bản cho Word là rpHqBangWord_ — hai bản tách nhau vì Word không
  *  có thanh cuộn ngang. Cả hai đọc chung một mảng `rows`, nên con số luôn là một. */
-function rpHqBang_(list){
+function rpHqBang_(list, label){
   if (!list.length) return '';
   return '<div class="tw" style="margin-top:8px;max-height:420px"><table><thead><tr>'
     + '<th>Mã máy</th><th>Trang trại</th><th>Đơn vị</th><th>Khu vực</th>'
@@ -18700,7 +19886,7 @@ function rpHqBang_(list){
     + '<th style="text-align:right">So tháng trước</th>'
     + '<th>Phân loại</th></tr></thead><tbody>'
     + list.map(x => '<tr>'
-      + '<td><span class="mm">' + rpE_(x.code) + '</span></td>'
+      + '<td>' + rpMa_(x.code, 'ls-may', label) + '</td>'
       + '<td style="font-size:11px">' + rpE_(x.farm || '—') + '</td>'
       + '<td style="font-size:11px">' + rpE_(x.unit || '—') + '</td>'
       + '<td style="font-size:11px">' + rpE_(x.region || '—') + '</td>'
@@ -18783,6 +19969,7 @@ function rpXuatHieuQuaLichSu_(){
 
   const nang = d.khong.length + d.kem.length;
   let b = '';
+  b += rpPhamViG_(d.soMay, d.tongMay);
 
   b += wH_(1, 'I. Tóm tắt điều hành (5W1H)');
   b += wP_('<b>Việc gì</b> — Báo cáo hiệu quả vận hành tháng ' + rpE_(label) + ' trên '
@@ -18856,9 +20043,10 @@ function rpXuatHieuQuaLichSu_(){
   b += wH_(1, 'Phụ lục A. Toàn bộ tổ máy tháng ' + rpE_(label));
   b += rpHqBangWord_(d.rows.slice().sort((a, b2) => (a.pctKw ?? 999) - (b2.pctKw ?? 999)));
 
-  wXuat_('BaoCao-HieuQuaVanHanh-' + rpHqSlugThang_(label),
+  wXuat_('BaoCao-HieuQuaVanHanh-' + rpHqSlugThang_(label) + rpHauToG_(),
     'BÁO CÁO HIỆU QUẢ VẬN HÀNH THÁNG ' + label,
-    'Số liệu đã chốt của tháng ' + label + ' — nguồn sheet “9. Tổng kết hiệu quả tháng” · lập lúc ' + RP.at, b);
+    'Số liệu đã chốt của tháng ' + label + ' — nguồn sheet “9. Tổng kết hiệu quả tháng” · lập lúc ' + RP.at
+      + (rpGSoLoc_() ? ' · phạm vi lọc: ' + rpMoTaLocG_() : ''), b);
 }
 
 function rpHqBangWord_(list){
@@ -18879,6 +20067,119 @@ function rpHqBangWord_(list){
 /* Tên ngắn cho nút bấm — giữ đúng quy ước rpXuat* của module. */
 function rpXuatHieuQuaLichSu(){ rpXuatHieuQuaLichSu_(); }
 
+/** Vị từ lọc theo bộ lọc dùng chung RP.g (cùng bộ lọc của ②/③). Chưa lắp đặt thì không bao giờ vào báo cáo. */
+function rpHqLoc_(code){
+  try { return !rpBoQua_(code) && rpQua_(rpMay_(code), RP.g); } catch (e){ return true; }
+}
+/** Bản có nhớ — một lần dựng báo cáo gọi hàng trăm lần, rpMay_ tra danh mục máy mỗi lần. */
+function rpHqLocFn_(){
+  const memo = new Map();
+  return function (code){
+    const k = String(code == null ? '' : code).trim().toUpperCase();
+    if (!memo.has(k)) memo.set(k, rpHqLoc_(k));
+    return memo.get(k);
+  };
+}
+
+/** Bản dựng của tháng `label` đang được HIỆN trên màn hình (không phải bản xem nhanh)? Cùng điều kiện với hqViewPast_. */
+function hqRebuiltShown_(label){
+  const ym = hqYmOf_(label);
+  const st = HQ.st || {}, job = st.job || null, cache = st.cache || null;
+  return !!(HQ.data && HQ.data.ym === ym && cache && cache.ym === ym && !(job && job.live));
+}
+
+/** Tập máy của thanh lọc cho một THÁNG CŨ: máy của bản dựng nếu đang hiện bản dựng, nếu không thì máy
+ *  có số ở Sheet 9 trong tháng đó (đúng tập mà bản xem nhanh liệt kê). */
+function rpHqMaThang_(label){
+  if (hqRebuiltShown_(label)){
+    try { return hqWithMonth_(hqYmOf_(label), function (){ return rpMaHQ_(); }); } catch (e){ /* rơi xuống nhánh Sheet 9 */ }
+  }
+  const out = [];
+  try {
+    (rpHqModel_().machines || []).forEach(x => {
+      const d = (x.byMonth || {})[label];
+      if (d && (d.power != null || d.hours != null)) out.push(x.code);
+    });
+  } catch (e){}
+  return out.length ? out : rpMaHQ_();
+}
+
+/** Bảng phụ: bấm một CỘT THÁNG của bản xem nhanh → máy nào tạo nên tổng của tháng đó.
+ *  Dựng từ cùng mô hình Sheet 9 và cùng vị từ lọc với chuỗi tháng của bản xem nhanh nên tổng khớp từng đơn vị. */
+RP_CT['ls-thang'] = function (label){
+  const model = rpHqModel_();
+  const months = (model.months || []).slice().sort((a, b) => a.sortKey - b.sortKey);
+  const idx = months.findIndex(m => m.label === label);
+  if (idx < 0) return null;
+  const pl = idx > 0 ? months[idx - 1].label : null;
+  const loc = rpHqLocFn_();
+  const rows = [];
+  let tong = 0, n = 0;
+  (model.machines || []).forEach(x => {
+    if (!loc(x.code)) return;
+    const cur = (x.byMonth || {})[label], prv = pl ? (x.byMonth || {})[pl] : null;
+    if (!cur && !prv) return;
+    const c = cur ? cur.power : null, p = prv ? prv.power : null;
+    if (c != null){ tong += c; n++; }
+    rows.push({ code: x.code, cur: c, curH: cur ? cur.hours : null, prv: p,
+                delta: (c != null && p != null) ? Math.round((c - p) * 100) / 100 : null });
+  });
+  rows.sort((a, b) => pl ? (Math.abs(b.delta == null ? 0 : b.delta) - Math.abs(a.delta == null ? 0 : a.delta)) : ((b.cur || 0) - (a.cur || 0)));
+  const co = 'Tổng điện phát tháng <b>' + rpE_(label) + '</b> = cộng <b>' + n + '</b> máy có số = <b>' + rpN_(Math.round(tong), 0) + ' kWh</b>. '
+    + 'Số theo tháng lấy từ Sheet 9 — số đã chốt.'
+    + (rpGSoLoc_() ? ' Chỉ gồm các máy đang lọc: ' + rpE_(rpMoTaLocG_()) + '.' : '');
+  const h = rpGhiChuCt_('<b>Cơ sở của nhận xét.</b> ' + co) + rpTblCt_(
+    [{ t: 'Mã máy' }, { t: 'Điện ' + label + ' (kWh)', a: 'right', m: 1 }, { t: pl ? 'Điện ' + pl + ' (kWh)' : 'Tháng trước', a: 'right', m: 1 },
+     { t: 'Chênh', a: 'right', m: 1 }, { t: 'Giờ chạy (h)', a: 'right', m: 1 }],
+    rows.map(r => ({
+      bg: (r.delta != null && r.delta < 0) ? '#fdecec' : ((r.delta != null && r.delta > 0) ? '#eaf5ef' : ''),
+      c: [rpMa_(r.code, 'ls-may', label), rpSo_(r.cur, 0), rpSo_(r.prv, 0),
+          r.delta == null ? '—' : '<b>' + (r.delta >= 0 ? '+' : '') + rpN_(r.delta, 0) + '</b>', rpSo_(r.curH, 0)],
+    })), 420);
+  return { tieuDe: 'Tháng ' + label + ' — máy nào tạo nên tổng điện phát', phuDe: rows.length + ' máy' + (pl ? ' · so với tháng ' + rpE_(pl) : ''), html: h };
+};
+
+/** Bảng phụ: bấm một MÁY / một CỘT MÁY của bản xem nhanh → vì sao máy nằm ở nhóm này + chuỗi tháng của nó. */
+RP_CT['ls-may'] = function (code, label){
+  const lb = label || rpHqThang_();
+  const d = rpHieuQuaThang_(lb);
+  const key = String(code).toUpperCase();
+  const x = d.rows.find(z => String(z.code).toUpperCase() === key) || null;
+  if (!x) return null;
+  const B = BAD_THRESHOLD_PCT, V = SEVERE_THRESHOLD_PCT;
+
+  const co = 'Phân loại dùng đúng bộ luật chấm từng ngày của trang này (hàm effDayStatus_) nhưng đầu vào là số CẢ THÁNG: '
+    + 'điện cả tháng ' + rpSo_(x.power, 0) + ' kWh = <b>' + rpPc_(x.pctKw) + '</b> thiết kế cả tháng (' + rpSo_(x.designKw, 0) + ' kWh), '
+    + 'giờ cả tháng ' + rpSo_(x.hours, 0) + ' h = <b>' + rpPc_(x.pctHr) + '</b> (' + rpSo_(x.designHr, 0) + ' h). '
+    + 'Ngưỡng: dưới ' + V + '% hoặc đủ giờ mà điện dưới ' + B + '% là không hiệu quả; điện và giờ cùng dưới ' + B + '% là kém hiệu quả. '
+    + '→ <b>' + rpE_(EFF_DAY_META[x.tt].label) + '</b>. Số theo tháng là số đã chốt ở Sheet 9; chưa dựng chi tiết nên chưa có số từng ngày.';
+  let h = rpGhiChuCt_('<b>Cơ sở của nhận xét.</b> ' + co);
+
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    + rpKpi_('Điện phát ' + rpE_(lb), rpSo_(x.power, 0), '#0d6e3f', 'thiết kế ' + rpSo_(x.designKw, 0) + ' kWh · ' + rpPc_(x.pctKw))
+    + rpKpi_('Giờ chạy', rpSo_(x.hours, 0), '#0f766e', 'thiết kế ' + rpSo_(x.designHr, 0) + ' h · ' + rpPc_(x.pctHr))
+    + rpKpi_('CS phát TB (kW)', rpSo_(x.avgKw, 2), '#334155', 'điện ÷ giờ chạy')
+    + rpKpi_('So tháng trước', x.delta == null ? '—' : ((x.delta >= 0 ? '+' : '') + rpN_(x.delta, 0)), x.delta != null && x.delta < 0 ? '#b91c1c' : '#0d6e3f',
+             d.prevLabel ? 'tháng ' + rpE_(d.prevLabel) + ': ' + rpSo_(x.prevPower, 0) + ' kWh' : 'chưa có tháng trước')
+    + '</div>';
+
+  /* Chuỗi tháng của máy — lấy từ mô hình Sheet 9, KHÔNG lọc (đây là một máy, lọc không có nghĩa). */
+  const model = rpHqModel_();
+  const mm = (model.machines || []).find(z => String(z.code).toUpperCase() === key) || null;
+  if (mm){
+    const ms = (model.months || []).slice().sort((a, b) => a.sortKey - b.sortKey);
+    const dk = mm.designKw > 0 ? mm.designKw : null, dh = mm.designHr > 0 ? mm.designHr : null;
+    h += rpTieuMuc_('Theo tháng', 'số đã chốt ở Sheet 9');
+    h += rpTblCt_([{ t: 'Tháng' }, { t: 'Điện phát (kWh)', a: 'right', m: 1 }, { t: '% thiết kế', a: 'right', m: 1 },
+                   { t: 'Giờ chạy (h)', a: 'right', m: 1 }, { t: '% thiết kế', a: 'right', m: 1 }],
+      ms.map(mo => { const b = (mm.byMonth || {})[mo.label]; return {
+        bg: mo.label === lb ? '#eef2ff' : '',
+        c: ['<b>' + rpE_(mo.label) + '</b>', rpSo_(b && b.power, 0), (b && b.power != null && dk) ? rpPc_(b.power / dk * 100) : '—',
+            rpSo_(b && b.hours, 0), (b && b.hours != null && dh) ? rpPc_(b.hours / dh * 100) : '—'] }; }), 260);
+  }
+  return { tieuDe: 'Máy ' + code + ' — tháng ' + lb, phuDe: rpMayDong_(code), html: h };
+};
+
 /* ===========================================================================
  *  12 · TỰ CÀI LÚC NẠP TRANG
  * ========================================================================= */
@@ -18886,15 +20187,31 @@ function rpXuatHieuQuaLichSu(){ rpXuatHieuQuaLichSu_(); }
   if (window.__hqInstalled) return;                 // dán khối này hai lần thì không bọc hai lớp
   window.__hqInstalled = true;
 
-  HQ_ORIG.view = rpViewHieuQua_;
+  /* HQ_ORIG.view là THÂN báo cáo ② (không kèm thanh lọc): thanh lọc do chính hàm bọc dưới đây đặt
+   * lên đầu, để ở cả ba cảnh (tháng đang chạy · tháng đã dựng · bản xem nhanh) nó đều đứng đầu trang
+   * giống trang Kho vật tư. */
+  HQ_ORIG.view = rpViewHieuQuaThan_;
   HQ_ORIG.xuat = rpXuatHieuQua;
 
-  /* Tháng đang chạy → gọi lại ĐÚNG hàm gốc, kèm ô chọn tháng ở trên cùng. */
+  /* Thứ tự trên trang: thanh lọc → ô chọn tháng → (tháng đang chạy: vùng kiểm tra) → thân báo cáo. */
   rpViewHieuQua_ = function (){
     const label = rpHqThang_();
+    const nay = label === rpHqThangNay_();
+    const bar = rpThanhLocG_(nay ? rpMaHQ_() : rpHqMaThang_(label));
     const sel = rpHqChonThangHtml_(label);
-    if (label === rpHqThangNay_()) return sel + HQ_ORIG.view();
-    return sel + hqViewPast_(label);
+    if (nay) return bar + sel + hqChkArea_() + HQ_ORIG.view();
+    return bar + sel + hqViewPast_(label);
+  };
+
+  /* Bảng phụ (bấm cột/mã máy) của một THÁNG ĐÃ DỰNG phải chạy trên số của tháng đó, không phải tháng
+   * đang chạy → bọc trong hqWithMonth_ — cùng đường tráo tạm mà thân báo cáo đang đi. Bản xem nhanh
+   * và tháng đang chạy KHÔNG tráo (chúng đọc thẳng mô hình Sheet 9 / dữ liệu thật). */
+  const ctBoc0 = rpCtBoc_;
+  rpCtBoc_ = function (fn){
+    const label = rpHqThang_();
+    if (!HQ.swapped && label !== rpHqThangNay_() && hqRebuiltShown_(label))
+      return hqWithMonth_(hqYmOf_(label), fn);
+    return ctBoc0(fn);
   };
 
   rpXuatHieuQua = function (){
@@ -18908,6 +20225,7 @@ function rpXuatHieuQuaLichSu(){ rpXuatHieuQuaLichSu_(); }
       if (!HQ.started){ HQ.started = true; hqPoll_(); }
     } else if (HQ.started){
       HQ.started = false; HQ.st = null; HQ.data = null;
+      HQ.chk = null; HQ.chkOpen = false; HQ.chkErr = ''; HQ.chkLoading = '';
       clearTimeout(HQ.timer);
       try { hqPaint_(); } catch (e){}
     }
