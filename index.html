@@ -15110,7 +15110,7 @@ function simOpenEdit(row, focus, preset){
         <div class="iw"><div class="il">Loại SIM</div><select class="sel" id="seType" onchange="simEditToggle_()">${opt(L.types, v('Loại SIM'))}</select></div>
         <div class="iw"><div class="il">Ngày đăng ký</div><input class="inp" type="date" id="seReg" value="${esc(v('Ngày đăng ký'))}"></div>
         <div class="iw"><div class="il">Chu kỳ thanh toán</div>
-          <input class="inp" id="seCycle" list="seCycles" autocomplete="off" placeholder="VD: 30 ngày · 1 tháng · 3 tháng" value="${esc(v('Chu kỳ thanh toán'))}">
+          <input class="inp" id="seCycle" list="seCycles" autocomplete="off" placeholder="Số ngày, VD: 30 ngày · 90 ngày (chưa biết thì để trống)" value="${esc(v('Chu kỳ thanh toán'))}">
           <datalist id="seCycles">${(L.cycles || []).map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
         <div class="iw" id="seBillWrap"><div class="il">Ngày chốt cước hằng tháng (SIM trả sau)</div>
           <input class="inp" type="number" min="1" max="31" step="1" id="seBill" value="${esc(v('Ngày chốt cước'))}" placeholder="VD: 14">
