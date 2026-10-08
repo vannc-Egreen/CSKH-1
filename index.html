@@ -446,7 +446,10 @@ body.ro .rochip{display:inline-flex}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>Chi phí vật tư
       </div>
       <div class="nitem" data-page="sim" onclick="nav('sim')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>SIM &amp; Cảnh báo máy<span class="nbadge am" id="nb-sim">0</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>Theo dõi SIM<span class="nbadge am" id="nb-sim">0</span>
+      </div>
+      <div class="nitem" data-page="alarm" onclick="nav('alarm')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Cảnh báo máy<span class="nbadge rd" id="nb-alarm">0</span>
       </div>
 
       <div class="nsec">Danh mục</div>
@@ -488,6 +491,7 @@ body.ro .rochip{display:inline-flex}
       <div id="pg-stock" class="page"></div>
       <div id="pg-matcost" class="page"></div>
       <div id="pg-sim" class="page"></div>
+      <div id="pg-alarm" class="page"></div>
       <div id="pg-vtcat" class="page"></div>
       <div id="pg-zalo" class="page"></div>
       <div id="pg-users" class="page"></div>
@@ -1402,7 +1406,7 @@ function applyQlvt_(d){
     minOv:d.minOv||{ headers:[], rows:[] },
     models:d.models||Q.models,
     normLinks:d.normLinks||{},
-    stock:d.stock, sim:d.sim, alarmDict:d.alarmDict,
+    stock:d.stock, sim:d.sim||Q.sim, simLists:d.simLists||Q.simLists||{}, alarmDict:d.alarmDict,
     contacts:d.contacts, maintLog:d.maintLog, moveLog:d.moveLog, alarmLog:d.alarmLog,
     moveAudit:d.moveAudit||{ headers:[], rows:[], total:0 },
     alerts:d.alerts||Q.alerts, cfg:d.cfg||{},
@@ -1921,7 +1925,7 @@ function nav(page){
 const PAGE_SOURCE = {
   dash:'both', alerts:'both', analysis:'core', monthly:'core', report:'both',
   tracking:'core', filter:'core', efficiency:'core', master:'core', spec:'core',
-  stock:'qlvt', matcost:'qlvt', sim:'qlvt', vtcat:'qlvt',
+  stock:'qlvt', matcost:'qlvt', sim:'qlvt', alarm:'qlvt', vtcat:'qlvt',
   users:'none',
 };
 /* Từ khi có mốc dữ liệu (rev) hỏi mỗi 15 giây, việc tự tải lại theo trang chỉ còn
@@ -2088,7 +2092,8 @@ function _renderPageInner_(p, el){
     case 'spec':     el.innerHTML = viewSpec(); break;
     case 'stock':    el.innerHTML = viewStock(); break;
     case 'matcost':  el.innerHTML = viewMatCost(); afterMatCost(); break;
-    case 'sim':      el.innerHTML = viewSim(); break;
+    case 'sim':      el.innerHTML = viewSim(); afterSim(); break;
+    case 'alarm':    el.innerHTML = viewAlarm(); afterAlarm(); break;
     case 'vtcat':    el.innerHTML = viewVtCat(); break;
     case 'users':    el.innerHTML = viewUsers(); break;
     case 'zalo':     el.innerHTML = viewZalo(); ensureZalo_(); break;
@@ -10820,7 +10825,7 @@ function pageTitle_(p){
   return ({ dash:'Tổng quan', alerts:'Cảnh báo', analysis:'Phân tích',
     monthly:'Tổng kết hiệu quả tháng', tracking:'Theo dõi bảo dưỡng', filter:'Data thay lọc',
     efficiency:'Hiệu quả vận hành', master:'Danh sách &amp; Định mức máy', spec:'Hạng mục bảo dưỡng',
-    stock:'Kho vật tư tại trại', matcost:'Chi phí vật tư', sim:'SIM &amp; Cảnh báo máy',
+    stock:'Kho vật tư tại trại', matcost:'Chi phí vật tư', sim:'Theo dõi SIM', alarm:'Cảnh báo máy',
     vtcat:'Danh mục vật tư', users:'Người dùng &amp; Phân quyền',
     zalo:'Zalo &amp; KTV phụ trách' })[p] || 'Đang tải';
 }
@@ -11011,7 +11016,11 @@ const Q = {
    * xem viewBdCounter(). Giữ lại một object rỗng thì sớm muộn cũng có người đọc nó
    * và tưởng là chưa tải xong, nên bỏ hẳn. */
   stock:{ headers:[], rows:[] },
-  sim:{ headers:[], rows:[] }, alarmDict:{ headers:[], rows:[] }, contacts:{ headers:[], rows:[] },
+  /* sim: gói của sheet "8. Theo dõi sim các trại" — { exists, legacy, missingCols, sheetName, headers, rows, total }.
+   * simLists: danh sách chọn (mục đích, nhà mạng, loại SIM, chu kỳ, trạng thái) khớp 1-1 với ô thả xuống trên Sheet.
+   * simSel / alSel: các dòng đang được tích chọn ở bảng Đề xuất thanh toán / nhật ký cảnh báo máy. */
+  sim:{ exists:false, legacy:false, headers:[], rows:[] }, simLists:{}, simSel:new Set(), alSel:new Set(),
+  alarmDict:{ headers:[], rows:[] }, contacts:{ headers:[], rows:[] },
   anomalyOk:{ keys:[] },          // khoá các điểm dữ liệu đã xác nhận đúng — Sheet 24
   kiemKe:null,                    // { log, alerts, cfg, loaiBu } — Sheet 35, QLVT.gs mục 12
   dongBo:null,                    // báo cáo đồng bộ Sheet 1→2→14 — QLVT.gs mục 13
@@ -11039,7 +11048,12 @@ const Q = {
     moveQ:'', moveType:'', moveVt:'',  // bộ lọc sổ nhật ký
     normQ:'', normVt:'',               // bộ lọc bảng sửa định mức (modal)
     catQ:'',                           // bộ lọc trang Danh mục vật tư
-    sim:'', simOnlyDue:true,
+    /* Trang SIM. simLv mặc định RỖNG = hiện tất cả: bản cũ mặc định "chỉ SIM tới hạn" nên khi không có SIM nào
+     * tới hạn là bảng trống trơn, trông như web chưa nạp được dữ liệu. */
+    sim:'', simLv:'', simEmpty:false, simSort:'urgent', simSumBy:'khu',
+    simPurpose:new Set(), simCarrier:new Set(), simType:new Set(), simStatus:new Set(), simRegion:new Set(),
+    /* Trang Cảnh báo máy. Mặc định: 30 ngày gần nhất, chỉ hiện cái chưa xử lý xong. */
+    al:'', alLevel:new Set(), alState:'open', alRange:'30', alDict:false,
     costMonth:'',
     /* Bộ lọc trang Chi phí vật tư — CÙNG BỘ ba với trang Kho vật tư (khu vực · loại hình ·
      * đơn vị hợp tác) để không phải học lại cách lọc ở mỗi trang. costFlag lọc theo kết
@@ -11130,7 +11144,21 @@ function qUpdateBadges_(){
     el.textContent = v; el.style.display = show ? '' : 'none'; };
   const nBd = (Q.alerts.maintenance||[]).length;
   const nSt = (Q.alerts.stock||[]).length;
-  const nSim= (Q.alerts.sim||[]).length;
+  /* Huy hiệu SIM tính ngay tại web từ hạn thanh toán và NGÀY HÔM NAY, không lấy số server gửi: gói bootstrap
+   * được cache tới 6 giờ nên số đếm của server có thể là của hôm qua. Dùng đúng simAnnot_() của trang SIM nên
+   * huy hiệu và bảng Đề xuất thanh toán luôn cùng một con số. Máy chưa lắp đặt không tính (giống server). */
+  let nSim = (Q.alerts.sim||[]).length;
+  try {
+    if (Q.sim && Q.sim.exists && !Q.sim.legacy)
+      nSim = simAnnot_().filter(s => s.has && !s.r._chuaLap && SIM_ACT.indexOf(s.level) >= 0).length;
+  } catch (e) { /* giữ số của server */ }
+  /* Huy hiệu Cảnh báo máy: cảnh báo 7 ngày gần nhất chưa xử lý xong. Cái cũ hơn vẫn còn trên trang nhưng không
+   * đếm vào huy hiệu — nếu không thì một cảnh báo bị bỏ quên từ tháng trước sẽ đỏ mãi và người ta quen với màu đỏ. */
+  let nAl = 0;
+  try {
+    const today = simTodayNum_();
+    nAl = alRows_().filter(a => (a.state === 'Mới' || a.state === 'Đang xử lý') && alInRange_(a, '7', today)).length;
+  } catch (e) { /* log chưa về */ }
   /* Badge "Bộ đếm bảo dưỡng" cũ đã không còn mục riêng trên sidebar. Số việc của bộ đếm nay
    * cộng vào badge "Theo dõi bảo dưỡng" — cùng một trang thì phải cùng một con số, nếu để
    * riêng thì lại quay về đúng cái cảnh 2 chỗ nói 2 kiểu mà việc gộp này muốn dẹp. */
@@ -11141,6 +11169,7 @@ function qUpdateBadges_(){
   try { updateSidebarBadges(); } catch (e) { /* bootstrap chưa xong — lần gọi sau sẽ đúng */ }
   set('nb-stock', nSt, nSt>0);
   set('nb-sim', nSim, nSim>0);
+  set('nb-alarm', nAl, nAl>0);
   /* Badge "Danh mục vật tư" = số vật tư đang dùng mà CHƯA dòng máy nào khai định mức.
    * Đó là việc cần làm thật: vật tư khai ra mà không gắn với dòng máy nào thì không bao
    * giờ sinh cảnh báo thiếu hàng, và sẽ lặng lẽ nằm đó cho tới lúc trại hết hàng. */
@@ -14153,105 +14182,1252 @@ function qExportCost(){
 }
 
 /* ============================================================================
- *  TRANG 4 · SIM & CẢNH BÁO MÁY
+ *  TRANG 4a · THEO DÕI SIM CÁC TRẠI   ·   nguồn: sheet "8. Theo dõi sim các trại"
+ * ----------------------------------------------------------------------------
+ *  Trang này CHỈ HIỂN THỊ và THAO TÁC. Mọi quy tắc tính tiền / tính hạn nằm ở MỘT chỗ duy
+ *  nhất — hàm simCalc_ trong QLVT.gs (đã kiểm thử), cũng chính là hàm ghi ra các cột tự
+ *  tính trên Google Sheet. Web đọc kết quả của nó (hạn, kỳ cước, số ngày, số tiền) chứ
+ *  KHÔNG tính lại: có hai bản quy tắc là có ngày hai bản cho hai con số, và người đóng tiền
+ *  sẽ không biết tin bên nào.
+ *
+ *  Chỉ có HAI việc nhỏ được làm ở web, vì gói dữ liệu được cache tới 6 giờ và qua nửa đêm
+ *  thì "còn mấy ngày" đã sai:
+ *     · trừ  (hạn thanh toán − hôm nay)
+ *     · xếp mức  quá hạn / gấp / sắp tới hạn / còn hạn   (simLevelOf_ — bản sao đúng logic
+ *       của simLevel_ ở QLVT.gs; sửa ngưỡng ở QLVT_CFG thì cả hai nơi tự theo, vì web đọc
+ *       ngưỡng từ Q.cfg chứ không viết cứng).
+ *
+ *  Tiền: các khoá có "(đ)" bị server gỡ khỏi gói nếu tài khoản không có quyền xem giá, nên
+ *  ở đây thiếu khoá = không được xem, không phải bằng 0. Mọi chỗ in tiền đều qua simMoney_().
  * ========================================================================== */
-function viewSim(){
-  if (!Q.loaded) return qNotReady_('SIM & Cảnh báo máy');
-  const q = (Q.f.sim||'').toLowerCase();
-  const alerts = Q.alerts.sim||[];
-  const due = new Set(alerts.map(a=>a.maCode+'|'+a.simKind));
 
-  let rows = (Q.sim.rows||[]).filter(r=>{
-    if (q && !`${r['Mã máy']} ${r['Trại']} ${r['Người phụ trách']}`.toLowerCase().includes(q)) return false;
-    if (Q.f.simOnlyDue) return due.has(String(r['Mã máy'])+'|SIM truyền thông') || due.has(String(r['Mã máy'])+'|SIM camera');
+/* Mức hạn → nhãn, màu, thứ tự ưu tiên. rank nhỏ = khẩn hơn = xếp lên trên. */
+const SIM_LV = {
+  locked:  { rank:0, cls:'br',  color:'#7f1d1d' },
+  overdue: { rank:1, cls:'br',  color:'#dc2626' },
+  urgent:  { rank:2, cls:'ba',  color:'#ea580c' },
+  soon:    { rank:3, cls:'ba',  color:'#f59e0b' },
+  ok:      { rank:5, cls:'bg',  color:'#16a05e' },
+  unknown: { rank:6, cls:'bmu', color:'#94a3b8' },
+  cancel:  { rank:9, cls:'bmu', color:'#cbd5e1' },
+};
+/* Các mức "cần xử lý ngay" — đúng tập đi vào bảng Đề xuất thanh toán. */
+const SIM_ACT = ['locked', 'overdue', 'urgent', 'soon'];
+
+function simCfg_(key, dflt){
+  const raw = Q.cfg ? Q.cfg[key] : undefined;
+  const n = Number(raw);
+  return (raw === undefined || raw === null || raw === '' || !isFinite(n)) ? dflt : n;
+}
+function simLvLabel_(level){
+  switch (level){
+    case 'locked':  return 'Bị chặn / hết hạn';
+    case 'overdue': return 'Quá hạn';
+    case 'urgent':  return 'Gấp · ≤' + simCfg_('SIM_URGENT_DAYS', 2) + ' ngày';
+    case 'soon':    return 'Sắp tới hạn · ≤' + simCfg_('SIM_WARN_DAYS', 5) + ' ngày';
+    case 'ok':      return 'Còn hạn';
+    case 'unknown': return 'Thiếu thông tin';
+    case 'cancel':  return 'Đã hủy';
+  }
+  return '';
+}
+
+/* ---------- ngày ---------------------------------------------------------- */
+function simDayNum_(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000) : null;
+}
+function simTodayNum_(){
+  const d = new Date();
+  return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+}
+function simVn_(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? m[3] + '/' + m[2] + '/' + m[1] : '';
+}
+function simMoney_(n){ return (n === null || n === undefined || !isFinite(Number(n))) ? '—' : fmtVnd_(n); }
+
+/** Bản sao đúng logic simLevel_() của QLVT.gs — xem chú thích đầu mục. */
+function simLevelOf_(due, today, warn, urgent, status){
+  const st = String(status || '').normalize('NFC').trim().toLowerCase();
+  if (/hủy|huỷ/.test(st)) return { level:'cancel', days:null };
+  const days = due === null ? null : due - today;
+  if (/chặn|hết hạn/.test(st)) return { level:'locked', days };
+  if (days === null) return { level:'unknown', days:null };
+  if (days < 0) return { level:'overdue', days };
+  if (days <= urgent) return { level:'urgent', days };
+  if (days <= warn) return { level:'soon', days };
+  return { level:'ok', days };
+}
+
+/**
+ * MỌI dòng của sheet SIM, kèm mức hạn tính theo NGÀY HÔM NAY.
+ * Dòng chưa khai SIM (_co = false) là ô trống do hệ thống dựng sẵn: máy chưa có SIM cho mục
+ * đích đó — hợp lệ, không phải lỗi, nên không có mức hạn.
+ */
+function simAnnot_(){
+  const today = simTodayNum_();
+  const warn = simCfg_('SIM_WARN_DAYS', 5), urg = simCfg_('SIM_URGENT_DAYS', 2);
+  return ((Q.sim && Q.sim.rows) || []).map(r => {
+    const has = !!r._co;
+    const dueIso = String(r['Hạn thanh toán'] || '');
+    const due = simDayNum_(dueIso);
+    const lv = has ? simLevelOf_(due, today, warn, urg, r['Trạng thái SIM']) : null;
+    const mraw = r['Số tiền cần thanh toán (đ)'];
+    return {
+      r, row: r._row, has,
+      code: String(r['Mã máy'] || ''), purpose: String(r['Mục đích SIM'] || ''),
+      level: lv ? lv.level : '', days: lv ? lv.days : null,
+      dueIso, due, canPay: !!r._canPay,
+      money: (mraw === '' || mraw === null || mraw === undefined) ? null : Number(mraw),
+    };
+  });
+}
+
+/** Thống kê trên một tập dòng — dùng cho thẻ KPI, biểu đồ và file tổng hợp. */
+function simStats_(list){
+  const st = { total:0, cancel:0, byLevel:{}, byPurpose:{}, empty:{}, machines:new Set(),
+    act:{ n:0, money:0, moneyN:0 }, d30:{ n:0, money:0, moneyN:0 }, unknown:0, orphan:0, nextDue:'' };
+  list.forEach(s => {
+    if (!s.has){
+      st.empty[s.purpose] = (st.empty[s.purpose] || 0) + 1;
+      return;
+    }
+    if (s.r._orphan) st.orphan++;
+    if (s.level === 'cancel'){ st.cancel++; return; }
+    st.total++;
+    st.machines.add(s.code);
+    st.byLevel[s.level] = (st.byLevel[s.level] || 0) + 1;
+    st.byPurpose[s.purpose] = (st.byPurpose[s.purpose] || 0) + 1;
+    if (s.level === 'unknown') st.unknown++;
+    const isAct = SIM_ACT.indexOf(s.level) >= 0;
+    const in30 = isAct || (s.level === 'ok' && s.days !== null && s.days <= 30);
+    if (isAct){ st.act.n++; if (s.money !== null){ st.act.money += s.money; st.act.moneyN++; } }
+    if (in30){ st.d30.n++; if (s.money !== null){ st.d30.money += s.money; st.d30.moneyN++; } }
+    if (s.dueIso && SIM_ACT.indexOf(s.level) < 0 && s.level !== 'unknown' && (!st.nextDue || s.dueIso < st.nextDue)) st.nextDue = s.dueIso;
+  });
+  return st;
+}
+
+function simOpts_(all, key){
+  return [...new Set(all.filter(s => s.has).map(s => String(s.r[key] || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'vi'));
+}
+
+/** Bộ lọc của bảng chi tiết. Ô trống chỉ hiện khi bật công tắc riêng. */
+function simFiltered_(all){
+  const f = Q.f, q = String(f.sim || '').trim().toLowerCase();
+  const inSet = (set, v) => !set.size || set.has(v);
+  const lvOk = s => {
+    switch (f.simLv){
+      case 'act':  return SIM_ACT.indexOf(s.level) >= 0;
+      case 'late': return s.level === 'locked' || s.level === 'overdue';
+      case 'ok':   return s.level === 'ok';
+      case 'miss': return s.level === 'unknown';
+      default:     return true;
+    }
+  };
+  const out = all.filter(s => {
+    const r = s.r;
+    if (!s.has){
+      if (!f.simEmpty || f.simLv || f.simCarrier.size || f.simType.size || f.simStatus.size) return false;
+    } else {
+      if (!lvOk(s)) return false;
+      if (!inSet(f.simCarrier, String(r['Nhà mạng'] || ''))) return false;
+      if (!inSet(f.simType, String(r['Loại SIM'] || ''))) return false;
+      if (!inSet(f.simStatus, String(r['Trạng thái SIM'] || ''))) return false;
+    }
+    if (!inSet(f.simPurpose, s.purpose)) return false;
+    if (!inSet(f.simRegion, String(r['Khu vực'] || ''))) return false;
+    if (q){
+      const hay = [r['Mã máy'], r['Tên trại'], r['Đơn vị hợp tác'], r['Khu vực'], r['Tỉnh thành'],
+                   r['Mã seri SIM'], r['Số thuê bao'], r['Nhà mạng'], r['Ghi chú']].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
     return true;
   });
+  const rank = s => !s.has ? 99 : (SIM_LV[s.level] ? SIM_LV[s.level].rank : 50);
+  const dueKey = s => s.due === null ? 1e9 : s.due;
+  const byCode = (a, b) => a.code.localeCompare(b.code, 'vi', { numeric:true }) || a.purpose.localeCompare(b.purpose, 'vi');
+  if (f.simSort === 'code') out.sort(byCode);
+  else if (f.simSort === 'due') out.sort((a, b) => dueKey(a) - dueKey(b) || byCode(a, b));
+  else out.sort((a, b) => rank(a) - rank(b) || ((a.days === null ? 1e9 : a.days) - (b.days === null ? 1e9 : b.days)) || byCode(a, b));
+  return out;
+}
 
-  const kinds = ['SIM truyền thông','SIM camera'];
-  const cell = (r,k) => {
-    const han = String(r[k+QSEP+'Ngày hết hạn']||'');
-    const days = num2_(r[k+QSEP+'Còn (ngày)']);
-    const so = String(r[k+QSEP+'Số thuê bao']||'');
-    const cls = days==null ? 'bmu' : (days<0 ? 'br' : (days<=5 ? 'ba' : (days<=15 ? 'bb' : 'bg')));
-    return `<td>
-      <div style="font-size:11px">${so?esc(so):'<span style="color:var(--mu)">chưa nhập</span>'}</div>
-      <div style="margin-top:2px">${han?`<span class="b ${cls}">${esc(han)}${days!=null?' · '+(days<0?'quá '+Math.abs(days)+'n':days+'n'):''}</span>`:'—'}</div>
-      <div style="font-size:10px;color:var(--mu);margin-top:2px">${esc(String(r[k+QSEP+'Nhà mạng']||''))} ${esc(String(r[k+QSEP+'Chu kỳ đóng']||''))}</div>
-      ${han?`<button class="btn bg-b sm" style="margin-top:4px" onclick="qPaySim('${esc(String(r['Mã máy']||''))}','${k}')">✓ Đã đóng</button>`:''}
-    </td>`;
-  };
+/* ---------- chip / badge nhỏ ---------------------------------------------- */
+function simStatusBadge_(status){
+  const s = String(status || '').trim();
+  if (!s) return '<span style="color:var(--mu)">—</span>';
+  const low = s.normalize('NFC').toLowerCase();
+  const cls = /hủy|huỷ/.test(low) ? 'bmu' : (/chặn|hết hạn/.test(low) ? 'br' : (/bình thường|hoạt/.test(low) ? 'bg' : 'bmu'));
+  return `<span class="b ${cls}">${esc(s)}</span>`;
+}
+function simDaysBadge_(s){
+  const lv = SIM_LV[s.level];
+  if (!s.has || !lv) return '';
+  if (s.level === 'cancel') return '<span class="b bmu">Đã hủy</span>';
+  if (s.level === 'unknown'){
+    const miss = (s.r._thieu || []).join('; ');
+    return `<span class="b bmu" title="${esc(miss || 'Chưa đủ dữ liệu để tính hạn')}">Thiếu thông tin</span>`;
+  }
+  let txt;
+  if (s.days === null) txt = simLvLabel_(s.level);
+  else if (s.days < 0) txt = 'Quá ' + Math.abs(s.days) + ' ngày';
+  else if (s.days === 0) txt = 'HÔM NAY';
+  else txt = 'Còn ' + s.days + ' ngày';
+  if (s.level === 'locked' && s.days !== null) txt = 'Chặn · ' + txt;
+  return `<span class="b ${lv.cls}" ${s.level === 'urgent' ? 'style="box-shadow:0 0 0 1.5px #ea580c inset"' : ''}>${esc(txt)}</span>`;
+}
 
-  const alarmLog = (Q.alarmLog && Q.alarmLog.rows || []).slice().reverse().slice(0,40);
+function simKpi_(cls, lbl, val, sub, onclick, small){
+  return `<div class="kcard ${cls}" ${onclick ? `onclick="${onclick}"` : 'style="cursor:default"'}>
+    <div class="klbl">${lbl}</div>
+    <div class="kval" ${small ? 'style="font-size:19px;line-height:1.25;padding:3px 0"' : ''}>${val}</div>
+    <div class="ksub">${sub}</div></div>`;
+}
+
+/* ---------- màn hình chưa sẵn sàng ---------------------------------------- */
+function simSetupHtml_(kind){
+  const isAdmin = !!(S.perm && S.perm.admin);
+  const sheet = (Q.sim && Q.sim.sheetName) || '8. Theo dõi sim các trại';
+  const title = kind === 'legacy' ? 'Sheet SIM còn bố cục cũ' : 'Chưa có sheet SIM';
+  const body = kind === 'legacy'
+    ? `Sheet “${esc(sheet)}” đang ở bố cục cũ (mã máy chỉ ghi ở dòng đầu mỗi máy). Trang này cần bố cục mới —
+       <b>mỗi SIM một dòng, mã máy ở mọi dòng</b>. Việc chuyển có <b>sao lưu nguyên vẹn bản cũ</b> sang một tab riêng,
+       mã seri / số thuê bao / ngày đăng ký được mang sang.`
+    : `Chưa tìm thấy sheet “${esc(sheet)}”. Bấm dựng để hệ thống tạo sheet và sinh sẵn hai dòng (SIM truyền thông, SIM camera) cho từng máy.`;
+  return `<div class="ph"><h1>Theo dõi SIM các trại</h1></div>
+    <div class="card" style="border-left:3px solid var(--amb)"><div class="cb">
+      <div style="font-size:14px;font-weight:700;margin-bottom:6px">⚠ ${title}</div>
+      <div style="font-size:12px;line-height:1.7;max-width:760px">${body}</div>
+      <div style="margin-top:12px">${isAdmin
+        ? `<button class="btn bg-g" onclick="simMigrate()">⚙ ${kind === 'legacy' ? 'Chuyển sang bố cục mới' : 'Dựng sheet SIM'}</button>`
+        : '<span class="b ba">Chỉ Admin / HCNS thực hiện được — nhờ họ bấm giúp, hoặc chạy menu ⚙️ eGreen → “Dựng / chuyển bảng SIM” trong Google Sheet.</span>'}
+      </div></div></div>`;
+}
+
+async function simMigrate(){
+  if (!confirm('Dựng / chuyển sheet SIM sang bố cục mới?\n\nBản cũ (nếu có) được sao lưu sang một tab riêng trước khi chuyển.')) return;
+  toast('Đang dựng sheet SIM… có thể mất vài chục giây');
+  const d = await apiPost({ action:'simMigrate', user:(S.user && S.user.name) || 'admin' });
+  if (!d || !d.ok){ toast((d && d.error) || 'Lỗi', 'err'); return; }
+  await loadQlvt(); renderPage('sim');
+  toast(`Xong · ${d.sims} SIM đã khai trên ${d.rows} dòng${d.backup ? ' · bản cũ lưu ở tab “' + d.backup + '”' : ''}`, 'ok');
+}
+
+/* ============================================================================
+ *  TRANG CHÍNH
+ * ========================================================================== */
+function viewSim(){
+  if (!Q.loaded) return qNotReady_('Theo dõi SIM');
+  const sim = Q.sim || {};
+  if (!sim.exists) return simSetupHtml_('missing');
+  if (sim.legacy) return simSetupHtml_('legacy');
+
+  const viewPrice = !!Q.perm.viewPrice;
+  const warn = simCfg_('SIM_WARN_DAYS', 5);
+  const all = simAnnot_();
+  const st = simStats_(all);
+  const list = simFiltered_(all);
+  const CAP = 400;
+  const shown = list.slice(0, CAP);
+
+  const nEmpty = Object.values(st.empty).reduce((s, v) => s + v, 0);
+  const emptyTxt = Object.keys(st.empty).map(k => `${esc(k.replace(/^SIM /, ''))}: ${st.empty[k]}`).join(' · ') || 'Mọi máy đều đã khai';
+  const nLate = (st.byLevel.locked || 0) + (st.byLevel.overdue || 0);
+  const nSoon = (st.byLevel.urgent || 0) + (st.byLevel.soon || 0);
+  const purposes = Object.keys(st.byPurpose).map(k => `${st.byPurpose[k]} ${esc(k.replace(/^SIM /, ''))}`).join(' · ');
+
+  const kpis = [
+    simKpi_('', 'Tổng số SIM đang quản lý', nint_(st.total),
+      `${nint_(st.machines.size)} máy · ${purposes || '—'}${st.cancel ? ` · ${st.cancel} đã hủy` : ''}`,
+      "Q.f.simLv='';renderPage('sim')"),
+    simKpi_(st.act.n ? 'rd' : '', 'Cần xử lý (quá hạn · chặn · ≤' + warn + ' ngày)', nint_(st.act.n),
+      st.act.n ? `<b style="color:var(--red)">${nLate} quá hạn/chặn</b> · <b style="color:var(--amb)">${nSoon} sắp tới hạn</b>` : 'Không có SIM nào cần nạp',
+      "Q.f.simLv='act';renderPage('sim')"),
+    viewPrice
+      ? simKpi_(st.act.n ? 'am' : '', 'Tiền cần thanh toán ngay', fmtVnd_(st.act.money),
+          `${st.act.n} SIM cần xử lý${st.act.moneyN < st.act.n ? ` · <span style="color:var(--amb)">${st.act.n - st.act.moneyN} SIM chưa tính được tiền</span>` : ''}`,
+          "Q.f.simLv='act';renderPage('sim')", true)
+      : simKpi_('', 'Tiền cần thanh toán ngay', '—', 'Tài khoản chưa có quyền xem giá', '', true),
+    viewPrice
+      ? simKpi_('bl', 'Dự kiến thanh toán 30 ngày tới', fmtVnd_(st.d30.money),
+          `${st.d30.n} SIM · gồm cả SIM đang quá hạn${st.nextDue ? ` · hạn kế tiếp ${simVn_(st.nextDue)}` : ''}`, '', true)
+      : simKpi_('bl', 'SIM đến hạn trong 30 ngày', nint_(st.d30.n), 'Tài khoản chưa có quyền xem giá', '', false),
+    simKpi_('pu', 'Máy chưa có SIM (ô trống)', nint_(nEmpty), emptyTxt,
+      "Q.f.simEmpty=true;Q.f.simLv='';renderPage('sim')"),
+    simKpi_(st.unknown ? 'am' : '', 'SIM thiếu thông tin', nint_(st.unknown),
+      st.unknown ? 'Chưa tính được hạn — bấm để xem và bổ sung' : 'Mọi SIM đã đủ để tính hạn',
+      "Q.f.simLv='miss';renderPage('sim')"),
+  ].join('');
+
+  const sel = (set, key, v, n) => `<button class="fchip ${set.has(v) ? 'on' : ''}"
+      onclick="qToggle(Q.f.${key},'${esc(v)}');renderPage('sim')">${esc(v)}${n !== undefined ? ' · ' + n : ''}</button>`;
+  const grp = (label, set, key, opts) => opts.length ? `<div class="msg"><span class="mslbl">${label}</span>
+      ${opts.map(v => sel(set, key, v)).join('')}</div>` : '';
+  const lvChip = (v, label, n) => `<button class="fchip ${Q.f.simLv === v ? 'on' : ''}"
+      onclick="Q.f.simLv='${v}';renderPage('sim')">${label} · ${n}</button>`;
+
+  const nFilter = Q.f.simPurpose.size + Q.f.simCarrier.size + Q.f.simType.size + Q.f.simStatus.size + Q.f.simRegion.size
+    + (Q.f.simLv ? 1 : 0) + (Q.f.sim ? 1 : 0) + (Q.f.simEmpty ? 1 : 0);
+
+  const filterBar = `<div class="msf" style="flex-direction:column;align-items:stretch;gap:8px">
+      <div class="msg"><span class="mslbl">Mức hạn</span>
+        ${lvChip('', 'Tất cả', st.total)}
+        ${lvChip('act', 'Cần xử lý', st.act.n)}
+        ${lvChip('late', 'Quá hạn / chặn', nLate)}
+        ${lvChip('ok', 'Còn hạn', st.byLevel.ok || 0)}
+        ${lvChip('miss', 'Thiếu thông tin', st.unknown)}
+        <button class="fchip ${Q.f.simEmpty ? 'on' : ''}" onclick="Q.f.simEmpty=!Q.f.simEmpty;renderPage('sim')"
+          title="Hiện cả những máy chưa có SIM cho mục đích đó (để khai mới)">${Q.f.simEmpty ? '✓ ' : ''}Hiện ô trống · ${nEmpty}</button>
+      </div>
+      ${grp('Mục đích', Q.f.simPurpose, 'simPurpose', (Q.simLists && Q.simLists.purposes) || [])}
+      ${grp('Nhà mạng', Q.f.simCarrier, 'simCarrier', simOpts_(all, 'Nhà mạng'))}
+      ${grp('Loại SIM', Q.f.simType, 'simType', simOpts_(all, 'Loại SIM'))}
+      ${grp('Trạng thái SIM', Q.f.simStatus, 'simStatus', simOpts_(all, 'Trạng thái SIM'))}
+      ${grp('Khu vực', Q.f.simRegion, 'simRegion', simOpts_(all, 'Khu vực'))}
+      <div class="msg">
+        <!-- id BẮT BUỘC: renderPage() dựng lại cả trang sau mỗi ký tự và chỉ trả con trỏ cho input có id -->
+        <input class="si" id="simSearch" style="flex:1" placeholder="🔍 Tìm mã máy, trại, đơn vị, seri SIM, số thuê bao…"
+               value="${esc(Q.f.sim)}" oninput="Q.f.sim=this.value;renderPage('sim')">
+        <select class="sel" style="width:auto;font-size:11px;padding:5px 8px" onchange="Q.f.simSort=this.value;renderPage('sim')" title="Sắp xếp">
+          <option value="urgent" ${Q.f.simSort === 'urgent' ? 'selected' : ''}>Khẩn cấp trước</option>
+          <option value="due" ${Q.f.simSort === 'due' ? 'selected' : ''}>Theo hạn thanh toán</option>
+          <option value="code" ${Q.f.simSort === 'code' ? 'selected' : ''}>Theo mã máy</option>
+        </select>
+        ${nFilter ? `<button class="btn bg-gr sm" onclick="simClearFilters()">↺ Bỏ lọc · ${nFilter}</button>` : ''}
+        <button class="btn bg-g sm" onclick="simOpenEdit(0,'', {})">＋ Thêm SIM</button>
+        <button class="btn bg-gr sm" onclick="simExportDetail()" title="Xuất đúng tập đang lọc, kèm dòng tổng">⤓ Chi tiết (Excel)</button>
+        <select class="sel" id="simSumBy" style="width:auto;font-size:11px;padding:5px 8px" title="Gộp bảng tổng hợp theo">
+          ${[['khu', 'Khu vực'], ['donvi', 'Đơn vị hợp tác'], ['trai', 'Trại'], ['nhamang', 'Nhà mạng'], ['loai', 'Loại SIM']]
+            .map(o => `<option value="${o[0]}" ${Q.f.simSumBy === o[0] ? 'selected' : ''}>Tổng hợp theo ${o[1]}</option>`).join('')}
+        </select>
+        <button class="btn bg-gr sm" onclick="simExportSummary()">⤓ Tổng hợp (Excel)</button>
+      </div></div>`;
+
+  const th = (t, extra) => `<th ${extra || ''}>${t}</th>`;
+  const rowsHtml = shown.map(s => simRowHtml_(s, viewPrice)).join('')
+    || `<tr><td colspan="${viewPrice ? 10 : 9}"><div class="empty">Không có SIM nào khớp bộ lọc.</div></td></tr>`;
 
   return `
     <div class="ph">
-      <h1>SIM truyền thông &amp; Cảnh báo từ máy</h1>
-      <p>${(Q.sim.rows||[]).length} máy · <b style="color:var(--red)">${alerts.filter(a=>a.days<0).length} quá hạn</b>
-        · <b style="color:var(--amb)">${alerts.filter(a=>a.days>=0).length} sắp tới hạn</b>
-        · nhắc trước ${(Q.cfg&&Q.cfg.SIM_WARN_DAYS)||15} ngày</p>
+      <h1>Theo dõi SIM các trại</h1>
+      <p>${nint_(st.total)} SIM · ${nint_(st.machines.size)} máy · nhắc nạp trước <b>${warn} ngày</b>
+        (gấp ≤ ${simCfg_('SIM_URGENT_DAYS', 2)} ngày) · hạn và số tiền do hệ thống tự tính từ loại SIM, chu kỳ, ngày chốt cước
+        — chỉ cần khai đúng các ô nhập${(sim.missingCols && sim.missingCols.length) ? `<br><b style="color:var(--red)">⚠ Sheet đang thiếu cột: ${esc(sim.missingCols.join(', '))} — chạy menu “Dựng / chuyển bảng SIM”.</b>` : ''}</p>
     </div>
 
-    <div class="msf">
-      <input class="si" id="qSimSearch" style="flex:1" placeholder="🔍 Tìm mã máy, trại, người phụ trách…" value="${esc(Q.f.sim)}"
-             oninput="Q.f.sim=this.value;renderPage('sim')">
-      <button class="fchip ${Q.f.simOnlyDue?'on':''}"
-        onclick="Q.f.simOnlyDue=!Q.f.simOnlyDue;renderPage('sim')">Chỉ SIM tới hạn · ${alerts.length}</button>
-      <button class="btn bg-gr sm" onclick="exportCsv(Q.sim,'quan-ly-sim')">⤓ CSV</button>
+    <div class="krow">${kpis}</div>
+
+    ${simProposalHtml_(all, st)}
+
+    <div class="cg2">
+      <div class="cc"><div class="ct">Tình trạng hạn của ${nint_(st.total)} SIM</div><div class="cw"><canvas id="chSimLevel"></canvas></div></div>
+      <div class="cc"><div class="ct">Lịch đến hạn${viewPrice ? ' &amp; tiền cần đóng' : ''} (số SIM theo khoảng ngày)</div><div class="cw"><canvas id="chSimDue"></canvas></div></div>
+    </div>
+    <div class="cg2">
+      <div class="cc"><div class="ct">Nhà mạng × loại SIM (trả trước / trả sau)</div><div class="cw"><canvas id="chSimCarrier"></canvas></div></div>
+      <div class="cc"><div class="ct">Mục đích sử dụng × trạng thái SIM</div><div class="cw"><canvas id="chSimStatus"></canvas></div></div>
     </div>
 
-    <div class="card"><div class="ch"><h3>Hạn đóng tiền SIM</h3>
-      <span class="b bmu">Bấm "Đã đóng" → hạn tự đẩy sang kỳ kế tiếp, tính từ hạn cũ nên đóng trễ không làm trôi mốc</span></div>
-      <div class="tw" style="max-height:50vh"><table>
-        <thead><tr><th>Mã máy</th><th>Trại</th><th>Phụ trách</th>
-          ${kinds.map(k=>`<th>${esc(k)}</th>`).join('')}</tr></thead>
-        <tbody>${rows.map(r=>`<tr>
-          <td><span class="mm">${esc(String(r['Mã máy']||''))}</span></td>
-          <td style="font-size:11px">${esc(String(r['Trại']||''))}<br><span style="color:var(--mu)">${esc(String(r['Khu vực']||''))}</span></td>
-          <td style="font-size:11px">${esc(String(r['Người phụ trách']||''))}</td>
-          ${kinds.map(k=>cell(r,k)).join('')}
-        </tr>`).join('') || '<tr><td colspan="5"><div class="empty">Không có SIM nào khớp bộ lọc.</div></td></tr>'}</tbody>
-      </table></div></div>
+    ${filterBar}
 
-    <div class="card"><div class="ch"><h3>Cảnh báo Smartgen gần đây</h3>
-      <div style="display:flex;gap:6px">
-        <span class="b bmu">${(Q.alarmLog&&Q.alarmLog.total)||0} bản ghi</span>
-        <button class="btn bg-gr sm" onclick="qScanAlarms()">⟳ Quét ngay</button>
-      </div></div>
-      <div class="tw" style="max-height:40vh"><table>
-        <thead><tr><th>Thời gian</th><th>Mã máy</th><th>Trang trại</th><th>Cảnh báo</th><th>Mức độ</th><th>Zalo</th><th>Xử lý</th></tr></thead>
-        <tbody>${alarmLog.map(a=>{
-          const md = String(a['Mức độ']||'');
-          const cls = /nguy hiểm/i.test(md)?'br':(/cảnh báo/i.test(md)?'ba':'bmu');
-          return `<tr>
-            <td style="font-size:11px">${esc(String(a['Thời gian ghi nhận']||''))}</td>
-            <td><span class="mm">${esc(String(a['Mã máy']||''))}</span></td>
-            ${farmCell_(String(a['Mã máy']||''))}
-            <td style="font-size:11px">${esc(String(a['Nội dung gốc']||''))}</td>
-            <td><span class="b ${cls}">${esc(md)}</span></td>
-            <td>${String(a['Đã gửi Zalo']||'').toUpperCase()==='TRUE'?'<span class="b bg">đã gửi</span>':'<span class="b bmu">—</span>'}</td>
-            <td style="font-size:11px">${esc(String(a['Trạng thái xử lý']||''))}</td>
-          </tr>`;
-        }).join('') || '<tr><td colspan="6"><div class="empty">Chưa có cảnh báo nào được ghi nhận.<br><span style="font-size:11px">Cấu hình danh sách cảnh báo nguy hiểm ở Sheet 17 rồi bấm "Quét ngay".</span></div></td></tr>'}</tbody>
+    <div class="card"><div class="ch"><h3>Danh sách SIM · ${nint_(list.length)} dòng${list.length > CAP ? ` <span style="color:var(--amb)">(đang hiện ${CAP} dòng đầu — lọc thêm để thu hẹp)</span>` : ''}</h3>
+      <span class="b bmu">Sửa ô nhập ở đây hoặc trực tiếp trên Google Sheet đều được — hai nơi dùng chung một sổ</span></div>
+      <div class="tw" style="max-height:62vh"><table>
+        <thead><tr>
+          ${th('Mã máy · Trại')}${th('Mục đích')}${th('Seri · Số thuê bao')}${th('Nhà mạng · Loại')}${th('Chu kỳ')}
+          ${th('Đã TT đến')}${th('Hạn thanh toán')}${viewPrice ? th('Tiền cần đóng', 'style="text-align:right"') : ''}${th('Trạng thái SIM')}${th('')}
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
       </table></div></div>
   `;
 }
 
-async function qPaySim(code, kind){
-  if (!confirm(`Xác nhận đã đóng tiền ${kind} của máy ${code}?\nHạn sẽ được đẩy sang kỳ kế tiếp.`)) return;
-  const d = await apiPost({ action:'paySim',
-    payload:{ maCode:code, simKind:kind, nguoi:(S.user&&S.user.name)||'' },
-    user:(S.user&&S.user.name)||'admin' });
-  if (!d || !d.ok){ toast((d&&d.error)||'Lỗi','err'); return; }
-  await loadQlvt(); renderPage('sim');
-  toast(`Đã cập nhật · hạn mới ${d.nextDue}`,'ok');
+function simClearFilters(){
+  Q.f.sim = ''; Q.f.simLv = ''; Q.f.simEmpty = false;
+  ['simPurpose', 'simCarrier', 'simType', 'simStatus', 'simRegion'].forEach(k => Q.f[k].clear());
+  renderPage('sim');
 }
 
-async function qScanAlarms(){
-  toast('Đang quét cảnh báo Smartgen…');
-  const d = await apiPost({ action:'scanAlarms', user:(S.user&&S.user.name)||'admin' });
-  if (!d || !d.ok){ toast((d&&d.error)||'Lỗi quét','err'); return; }
+function simRowHtml_(s, viewPrice){
+  const r = s.r;
+  const farm = [r['Đơn vị hợp tác'], r['Tên trại']].filter(Boolean).join(' · ');
+  const area = [r['Khu vực'], r['Tỉnh thành']].filter(Boolean).join(' · ');
+  const orphan = r._orphan ? '<div style="font-size:10px;color:var(--red)">⚠ Mã máy không còn trong Sheet 1</div>'
+    : (r._chuaLap ? '<div style="font-size:10px;color:var(--mu)">Máy chưa lắp đặt</div>' : '');
+  const lv = SIM_LV[s.level];
+  const cell0 = `<td style="${lv ? 'box-shadow:inset 3px 0 0 ' + lv.color : ''}">
+      <span class="mm">${esc(s.code)}</span>
+      <div style="font-size:11px;margin-top:2px">${farm ? esc(farm) : '<span style="color:var(--mu)">—</span>'}</div>
+      ${area ? `<div style="font-size:10px;color:var(--mu)">${esc(area)}</div>` : ''}${orphan}</td>`;
+
+  if (!s.has){
+    return `<tr style="background:#fafafa">${cell0}
+      <td style="font-size:11px">${esc(s.purpose)}</td>
+      <td colspan="${viewPrice ? 7 : 6}" style="color:var(--mu);font-size:11px">— máy này chưa có ${esc(s.purpose)} —</td>
+      <td style="text-align:right"><button class="btn bg-g sm" onclick="simOpenEdit(${s.row},'')">＋ Khai SIM</button></td></tr>`;
+  }
+
+  const bill = r['Loại SIM'] === 'Trả sau' && r['Ngày chốt cước'] ? ` · chốt ngày ${esc(r['Ngày chốt cước'])}` : '';
+  const kyTxt = s.canPay && r['Kỳ từ']
+    ? `<div style="font-size:10px;color:var(--mu)" title="Kỳ cước sẽ thanh toán">Kỳ ${simVn_(r['Kỳ từ'])} → ${simVn_(r['Kỳ đến'])}${r['Số ngày tính cước'] !== '' ? ' · ' + r['Số ngày tính cước'] + ' ngày' : ''}${r['Cước trọn kỳ'] === false ? ' (theo ngày)' : ''}</div>`
+    : '';
+  const warnTxt = (r._canhbao && r._canhbao.length) ? `<div style="font-size:10px;color:var(--amb)">⚠ ${esc(r._canhbao.join('; '))}</div>` : '';
+  const note = r['Ghi chú'] ? ` <span title="${esc(r['Ghi chú'])}" style="cursor:help">📝</span>` : '';
+  const payBtn = (s.canPay && s.level !== 'cancel')
+    ? `<button class="btn bg-g sm" onclick="simOpenPay(${s.row})">✓ Đã đóng</button>` : '';
+
+  return `<tr>${cell0}
+    <td style="font-size:11px">${esc(s.purpose)}</td>
+    <td style="font-size:11px"><span style="font-family:var(--mono)">${r['Mã seri SIM'] ? esc(r['Mã seri SIM']) : '<span style="color:var(--red)">chưa nhập seri</span>'}</span>${note}
+      <div style="color:var(--mu)">${r['Số thuê bao'] ? esc(r['Số thuê bao']) : '—'}</div></td>
+    <td style="font-size:11px">${esc(r['Nhà mạng'] || '—')}
+      <div><span class="b ${r['Loại SIM'] === 'Trả sau' ? 'bb' : 'bmu'}">${esc(r['Loại SIM'] || '—')}</span></div></td>
+    <td style="font-size:11px">${esc(r['Chu kỳ thanh toán'] || '—')}${bill}</td>
+    <td style="font-size:11px">${r['Đã thanh toán đến'] ? simVn_(r['Đã thanh toán đến']) : '<span style="color:var(--mu)">—</span>'}</td>
+    <td>${s.dueIso ? `<div style="font-size:12px;font-weight:600">${simVn_(s.dueIso)}</div>` : ''}${simDaysBadge_(s)}${kyTxt}${warnTxt}</td>
+    ${viewPrice ? `<td style="text-align:right;font-family:var(--mono)">${s.money !== null ? vnd0_(s.money) : '<span style="color:var(--mu)">—</span>'}
+      ${r['Giá gói cước (đ)'] !== '' && r['Giá gói cước (đ)'] != null ? `<div style="font-size:10px;color:var(--mu)">gói ${vnd0_(r['Giá gói cước (đ)'])}</div>` : ''}</td>` : ''}
+    <td>${simStatusBadge_(r['Trạng thái SIM'])}</td>
+    <td style="text-align:right;white-space:nowrap">
+      ${payBtn}
+      <button class="btn bg-gr sm" onclick="simOpenEdit(${s.row},'')" title="Xem / sửa thông tin SIM">✏️ Sửa</button>
+      <button class="btn bg-gr sm" onclick="simOpenEdit(${s.row},'serial')" title="Thay SIM khác vào máy: nhập seri mới, hệ thống ghi lại seri cũ vào Ghi chú">🔁 Thay SIM</button>
+    </td></tr>`;
+}
+
+/* ============================================================================
+ *  ĐỀ XUẤT THANH TOÁN TỰ ĐỘNG
+ *  Tập đề xuất = mọi SIM quá hạn · đang bị chặn · còn ≤ ngưỡng nhắc. Hệ thống chỉ LẬP DANH SÁCH;
+ *  tiền chỉ được coi là đã đóng khi người có quyền bấm xác nhận (không bao giờ tự đóng).
+ * ========================================================================== */
+function simProposalItems_(all){
+  const rk = s => SIM_LV[s.level].rank;
+  return all.filter(s => s.has && SIM_ACT.indexOf(s.level) >= 0)
+    .sort((a, b) => rk(a) - rk(b) || ((a.days === null ? 1e9 : a.days) - (b.days === null ? 1e9 : b.days))
+      || a.code.localeCompare(b.code, 'vi', { numeric:true }));
+}
+
+function simProposalHtml_(all, st){
+  const viewPrice = !!Q.perm.viewPrice;
+  const warn = simCfg_('SIM_WARN_DAYS', 5);
+  const items = simProposalItems_(all);
+  if (!items.length){
+    return `<div class="card" style="border-left:3px solid var(--g)"><div class="cb" style="font-size:12px">
+      ✅ <b>Không có SIM nào cần thanh toán</b> trong ${warn} ngày tới${st.nextDue ? ` — hạn gần nhất là <b>${simVn_(st.nextDue)}</b>` : ''}.
+      Khi có SIM còn ≤ ${warn} ngày, bảng <b>Đề xuất thanh toán</b> sẽ tự hiện ở đây.</div></div>`;
+  }
+  /* Chọn nhầm một SIM chưa đóng được thì chỉ mất công bấm lại; chọn sẵn mà bấm xác nhận nhầm là
+   * ghi sai sổ. Nên mặc định KHÔNG chọn gì, người đóng tiền tự tích. */
+  const keep = new Set([...Q.simSel].filter(r => items.some(s => s.row === r && s.canPay)));
+  Q.simSel = keep;
+  const payable = items.filter(s => s.canPay);
+  const noInfo = items.filter(s => !s.canPay);
+  const totalAll = payable.reduce((a, s) => a + (s.money || 0), 0);
+
+  const rows = items.map(s => {
+    const r = s.r, lv = SIM_LV[s.level];
+    const ky = s.canPay && r['Kỳ từ']
+      ? `${simVn_(r['Kỳ từ'])} → ${simVn_(r['Kỳ đến'])}<div style="color:var(--mu)">${r['Số ngày tính cước'] !== '' ? r['Số ngày tính cước'] + ' ngày' : ''}${r['Cước trọn kỳ'] === false ? ' · tính theo ngày' : (r['Cước trọn kỳ'] === true ? ' · cước trọn kỳ' : '')}</div>`
+      : '<span style="color:var(--amb)">chưa tính được</span>';
+    return `<tr>
+      <td style="width:28px;box-shadow:inset 3px 0 0 ${lv.color}">${s.canPay
+        ? `<input type="checkbox" class="simck" data-row="${s.row}" ${Q.simSel.has(s.row) ? 'checked' : ''} onchange="simToggleSel(${s.row},this.checked)">`
+        : '<span title="Chưa đủ thông tin để tính tiền — bổ sung ở nút Sửa" style="color:var(--amb)">⚠</span>'}</td>
+      <td><span class="mm">${esc(s.code)}</span><div style="font-size:11px;color:var(--mu)">${esc([r['Đơn vị hợp tác'], r['Tên trại']].filter(Boolean).join(' · ') || '—')}</div></td>
+      <td style="font-size:11px">${esc(s.purpose)}<div style="color:var(--mu)">${esc([r['Nhà mạng'], r['Loại SIM']].filter(Boolean).join(' · '))}</div></td>
+      <td style="font-size:11px"><span style="font-family:var(--mono)">${esc(r['Số thuê bao'] || '—')}</span><div style="color:var(--mu)">${esc(r['Mã seri SIM'] || '')}</div></td>
+      <td style="font-size:11px"><b>${simVn_(s.dueIso) || '—'}</b><div>${simDaysBadge_(s)}</div></td>
+      <td style="font-size:11px">${ky}</td>
+      ${viewPrice ? `<td style="text-align:right;font-family:var(--mono);font-weight:700">${s.money !== null ? vnd0_(s.money) : '—'}</td>` : ''}
+      <td>${simStatusBadge_(r['Trạng thái SIM'])}</td>
+      <td style="text-align:right">${s.canPay ? `<button class="btn bg-g sm" onclick="simOpenPay(${s.row})">✓ Đã đóng</button>` : `<button class="btn bg-a sm" onclick="simOpenEdit(${s.row},'')">Bổ sung</button>`}</td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="card" style="border-left:3px solid var(--red)">
+    <div class="ch"><h3>⚡ ĐỀ XUẤT THANH TOÁN · ${items.length} SIM cần nạp / đóng cước${noInfo.length ? ` <span style="color:var(--amb)">(${noInfo.length} chưa đủ thông tin)</span>` : ''}</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        ${viewPrice ? `<span class="b br" style="font-size:11px">Tổng đề xuất: ${fmtVnd_(totalAll)}</span>` : ''}
+        <button class="btn bg-gr sm" onclick="simSelectAll(true)">Chọn tất cả</button>
+        <button class="btn bg-gr sm" onclick="simSelectAll(false)">Bỏ chọn</button>
+        <button class="btn bg-gr sm" onclick="simExportProposal()">⤓ Xuất đề xuất (Excel)</button>
+      </div></div>
+    <div class="tw" style="max-height:44vh"><table>
+      <thead><tr><th></th><th>Mã máy · Trại</th><th>SIM</th><th>Số thuê bao · Seri</th><th>Hạn</th><th>Kỳ cước</th>
+        ${viewPrice ? '<th style="text-align:right">Số tiền</th>' : ''}<th>Trạng thái</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="cb" style="border-top:1px solid var(--bd);display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#f8fafc;padding:10px 16px">
+      <span id="simSelInfo" style="font-size:12px"></span>
+      <label style="font-size:11px;display:flex;gap:5px;align-items:center;cursor:pointer" title="Chỉ áp dụng cho SIM đang ở trạng thái chặn / hết hạn">
+        <input type="checkbox" id="simReact" checked data-nodraft> Với SIM đang bị chặn: đặt lại trạng thái “Hoạt động bình thường” sau khi đóng</label>
+      <button class="btn bg-g" style="margin-left:auto" onclick="simPayBatch()">✓ Xác nhận đã thanh toán các SIM đã chọn</button>
+    </div>
+  </div>`;
+}
+
+function simSelInfoUpdate_(){
+  const el = $('simSelInfo'); if (!el) return;
+  const items = simProposalItems_(simAnnot_()).filter(s => Q.simSel.has(s.row));
+  const tot = items.reduce((a, s) => a + (s.money || 0), 0);
+  el.innerHTML = items.length
+    ? `Đã chọn <b>${items.length}</b> SIM${Q.perm.viewPrice ? ` · tổng <b style="color:var(--red)">${fmtVnd_(tot)}</b>` : ''}`
+    : '<span style="color:var(--mu)">Tích chọn các SIM đã được đóng tiền, rồi bấm xác nhận — hạn của chúng sẽ tự đẩy sang kỳ kế tiếp.</span>';
+}
+function simToggleSel(row, on){ if (on) Q.simSel.add(row); else Q.simSel.delete(row); simSelInfoUpdate_(); }
+function simSelectAll(on){
+  Q.simSel = new Set(on ? simProposalItems_(simAnnot_()).filter(s => s.canPay).map(s => s.row) : []);
+  document.querySelectorAll('.simck').forEach(c => { c.checked = Q.simSel.has(Number(c.dataset.row)); });
+  simSelInfoUpdate_();
+}
+
+async function simPayBatch(){
+  const all = simAnnot_();
+  const items = simProposalItems_(all).filter(s => Q.simSel.has(s.row) && s.canPay);
+  if (!items.length){ toast('Chưa tích chọn SIM nào', 'err'); return; }
+  const tot = items.reduce((a, s) => a + (s.money || 0), 0);
+  if (!confirm(`Xác nhận ĐÃ ĐÓNG TIỀN cho ${items.length} SIM${Q.perm.viewPrice ? ` (tổng ${fmtVnd_(tot)})` : ''}?\n\n` +
+               'Hạn của từng SIM sẽ đẩy sang kỳ kế tiếp và mỗi SIM ghi một phiếu chi phí vào sổ. Không có nút hoàn tác — nếu nhầm, sửa lại ô “Đã thanh toán đến”.')) return;
+  const react = !!(($('simReact') || {}).checked);
+  const d = await apiPost({ action:'paySimBatch', user:(S.user && S.user.name) || 'admin',
+    payload:{ nguoi:(S.user && S.user.name) || '',
+      items: items.map(s => ({ row:s.row, maCode:s.code, purpose:s.purpose, expectedDue:s.dueIso, reactivate:react })) } });
+  if (!d || !d.ok){ toast((d && d.error) || 'Lỗi', 'err'); return; }
+  Q.simSel = new Set();
   await loadQlvt(); renderPage('sim');
-  toast(`Quét ${d.scanned} máy · khớp ${d.matched} · gửi Zalo ${d.notified}`,'ok');
+  const bad = (d.results || []).filter(x => !x.ok);
+  if (bad.length){
+    openOv(`<div class="mh"><div><h2>Đã đóng ${d.paid}/${d.paid + d.failed} SIM</h2><p>${d.failed} SIM chưa ghi được</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+      <div class="mb"><ul style="font-size:12px;line-height:1.8;padding-left:18px">${bad.map(x => `<li>${esc(x.error)}</li>`).join('')}</ul></div>
+      <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`, 'sim-batch-result');
+  } else {
+    toast(`✓ Đã ghi ${d.paid} SIM${d.thanhTienTong !== undefined ? ' · ' + fmtVnd_(d.thanhTienTong) : ''}`, 'ok');
+  }
+}
+
+/* ============================================================================
+ *  ĐÓNG CƯỚC MỘT SIM
+ * ========================================================================== */
+function simOpenPay(row){
+  const s = simAnnot_().find(x => x.row === row);
+  if (!s || !s.has){ toast('Không tìm thấy dòng SIM — hãy tải lại trang', 'err'); return; }
+  const r = s.r, viewPrice = !!Q.perm.viewPrice, editPrice = !!Q.perm.editPrice;
+  const locked = s.level === 'locked';
+  const info = (k, v) => `<div class="es"><div class="esl">${k}</div><div class="esv" style="font-size:12px">${v}</div></div>`;
+  openOv(`<div class="mh"><div><h2>✓ Xác nhận đã đóng cước · ${esc(s.code)}</h2>
+      <p>${esc(s.purpose)} · ${esc([r['Nhà mạng'], r['Loại SIM']].filter(Boolean).join(' · '))}</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div class="effstats" style="margin-bottom:12px">
+        ${info('Số thuê bao', esc(r['Số thuê bao'] || '—'))}
+        ${info('Hạn hiện tại', `${simVn_(s.dueIso) || '—'} ${simDaysBadge_(s)}`)}
+        ${info('Kỳ cước', r['Kỳ từ'] ? `${simVn_(r['Kỳ từ'])} → ${simVn_(r['Kỳ đến'])}` : '—')}
+        ${info('Số ngày tính cước', r['Số ngày tính cước'] !== '' ? esc(r['Số ngày tính cước']) + (r['Cước trọn kỳ'] === false ? ' (theo ngày)' : ' (trọn kỳ)') : '—')}
+        ${viewPrice ? info('Số tiền hệ thống tính', `<b>${simMoney_(s.money)}</b>`) : ''}
+      </div>
+      <div class="fgrid fg2" style="padding:0">
+        <div class="iw"><div class="il">Đã thanh toán đến (hạn mới)</div>
+          <input class="inp" type="date" id="spPaid" data-nodraft value="${esc(r['Gia hạn đến'] || '')}">
+          <div style="font-size:10px;color:var(--mu)">Hệ thống đã điền sẵn theo chu kỳ. Chỉ sửa khi nhà mạng tính khác (ví dụ nạp trễ nên gói tính lại từ ngày nạp).</div></div>
+        ${editPrice ? `<div class="iw"><div class="il">Số tiền thực đóng (đ)</div>
+          <input class="inp" type="number" min="0" step="1" id="spAmount" data-nodraft value="${s.money !== null ? esc(Math.round(s.money)) : ''}">
+          <div style="font-size:10px;color:var(--mu)">Ghi vào sổ chi phí. Để nguyên nếu đóng đúng số hệ thống tính.</div></div>` : ''}
+        ${locked ? `<div class="iw full"><label style="font-size:12px;display:flex;gap:6px;align-items:center;cursor:pointer">
+          <input type="checkbox" id="spReact" checked data-nodraft> SIM đang “${esc(r['Trạng thái SIM'])}” → đặt lại thành “Hoạt động bình thường” sau khi đóng</label></div>` : ''}
+      </div>
+      ${(r._canhbao && r._canhbao.length) ? `<div style="font-size:11px;color:var(--amb);margin-top:10px">⚠ ${esc(r._canhbao.join('; '))}</div>` : ''}
+    </div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Hủy</button>
+      <button class="btn bg-g" onclick="simDoPay(${row})">✓ Đã đóng — ghi vào sổ</button></div>`, 'simpay:' + row);
+}
+
+async function simDoPay(row){
+  const s = simAnnot_().find(x => x.row === row); if (!s) return;
+  const r = s.r;
+  const payload = { row:s.row, maCode:s.code, purpose:s.purpose, expectedDue:s.dueIso, nguoi:(S.user && S.user.name) || '' };
+  const paid = String(($('spPaid') || {}).value || '').trim();
+  if (paid && paid !== String(r['Gia hạn đến'] || '')) payload.paidThrough = paid;
+  const am = $('spAmount');
+  if (am && String(am.value).trim() !== '' && Number(am.value) !== Math.round(s.money || 0)) payload.amount = Number(am.value);
+  if ($('spReact') && $('spReact').checked) payload.reactivate = true;
+  const d = await apiPost({ action:'paySim', payload, user:(S.user && S.user.name) || 'admin' });
+  if (!d || !d.ok){
+    toast((d && d.error) || 'Lỗi', 'err');
+    if (d && d.stale){ closeOv(); await loadQlvt(); renderPage('sim'); }
+    return;
+  }
+  closeOv(); await loadQlvt(); renderPage('sim');
+  toast(`✓ Đã ghi · hạn mới ${simVn_(d.nextDue) || '—'}`, 'ok');
+  if (d.warning) setTimeout(() => toast(d.warning, 'warn'), 800);
+}
+
+/* ============================================================================
+ *  SỬA / THÊM / THAY SIM
+ *  Thay SIM thật ngoài hiện trường là việc hay xảy ra: sửa ô “Mã seri SIM” là đủ — server tự chép
+ *  seri cũ vào Ghi chú (kèm ngày và người sửa) và ghi Change Log.
+ * ========================================================================== */
+function simKnownCodes_(){
+  const set = new Set(((Q.sim && Q.sim.rows) || []).map(r => String(r['Mã máy'] || '').toUpperCase()).filter(Boolean));
+  ((S.master && S.master.rows) || []).forEach(m => {
+    const c = String((m._byLetter && m._byLetter[COL.MA]) || '').trim().toUpperCase();
+    if (c) set.add(c);
+  });
+  return [...set].sort((a, b) => a.localeCompare(b, 'vi', { numeric:true }));
+}
+
+function simOpenEdit(row, focus, preset){
+  const s = row ? simAnnot_().find(x => x.row === row) : null;
+  if (row && !s){ toast('Không tìm thấy dòng SIM — hãy tải lại trang', 'err'); return; }
+  const r = s ? s.r : {};
+  const isNew = !s || !s.has;            // ô trống dựng sẵn cũng là "khai mới": server dùng lại đúng dòng đó
+  const viewPrice = !!Q.perm.viewPrice, editPrice = !!Q.perm.editPrice;
+  const L = Q.simLists || {};
+  const opt = (arr, cur) => ['<option value=""></option>'].concat((arr || []).map(v =>
+    `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(v)}</option>`)).join('')
+    + ((cur && (arr || []).indexOf(cur) < 0) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : '');
+  const v = k => (r[k] === undefined || r[k] === null) ? '' : r[k];
+  const code = s ? s.code : String((preset && preset.code) || '');
+  const purpose = s ? s.purpose : String((preset && preset.purpose) || '');
+  const title = (focus === 'serial' && !isNew) ? '🔁 Thay SIM' : (isNew ? '＋ Khai SIM' : '✏️ Thông tin SIM');
+  const codeField = s
+    ? `<input class="inp" id="seCode" value="${esc(code)}" readonly>`
+    : `<input class="inp" id="seCode" list="seCodes" autocomplete="off" placeholder="Gõ hoặc chọn mã máy" value="${esc(code)}">
+       <datalist id="seCodes">${simKnownCodes_().map(c => `<option value="${esc(c)}">`).join('')}</datalist>`;
+  const purposeField = s
+    ? `<input class="inp" id="sePurpose" value="${esc(purpose)}" readonly>`
+    : `<select class="sel" id="sePurpose">${(L.purposes || []).map(p => `<option ${p === purpose ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>`;
+
+  const c = s && s.has ? s : null;
+  const calcBox = c ? `<div class="effstats" style="margin-bottom:12px">
+      <div class="es"><div class="esl">Hạn thanh toán</div><div class="esv" style="font-size:12px">${simVn_(c.dueIso) || '—'} ${simDaysBadge_(c)}</div></div>
+      <div class="es"><div class="esl">Kỳ cước kế tiếp</div><div class="esv" style="font-size:12px">${r['Kỳ từ'] ? simVn_(r['Kỳ từ']) + ' → ' + simVn_(r['Kỳ đến']) : '—'}</div></div>
+      ${viewPrice ? `<div class="es"><div class="esl">Số tiền cần đóng</div><div class="esv" style="font-size:12px">${simMoney_(c.money)}</div></div>` : ''}
+      <div class="es"><div class="esl">Sau khi đóng, hạn mới</div><div class="esv" style="font-size:12px">${simVn_(r['Gia hạn đến']) || '—'}</div></div>
+    </div>
+    ${(r._thieu && r._thieu.length) ? `<div style="font-size:11px;color:var(--amb);margin-bottom:8px">⚠ Chưa tính được hạn — thiếu: ${esc(r._thieu.join('; '))}</div>` : ''}
+    <div style="font-size:10px;color:var(--mu);margin:-4px 0 10px">Hạn và số tiền tự tính lại ngay sau khi lưu, theo loại SIM · ngày đăng ký · chu kỳ · ngày chốt cước · mốc “Đã thanh toán đến”.</div>` : '';
+
+  openOv(`<div class="mh"><div><h2>${title}${code ? ' · ' + esc(code) : ''}</h2>
+      <p>${esc(purpose || 'Chọn mã máy và mục đích SIM')}${s && s.has ? ' · dòng ' + s.row + ' trên Sheet' : ''}</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      ${calcBox}
+      <div class="fgrid fg2" style="padding:0">
+        <div class="iw"><div class="il">Mã máy</div>${codeField}</div>
+        <div class="iw"><div class="il">Mục đích SIM</div>${purposeField}</div>
+        <div class="iw"><div class="il">Mã seri SIM ${focus === 'serial' ? '(nhập seri SIM MỚI)' : ''}</div>
+          <input class="inp" id="seSerial" autocomplete="off" value="${esc(v('Mã seri SIM'))}" ${focus === 'serial' ? 'style="border-color:var(--g);box-shadow:0 0 0 3px rgba(13,110,63,.15)"' : ''}>
+          <div style="font-size:10px;color:var(--mu)" id="seSerialHint">Dãy số in trên SIM (ICCID). Đổi seri thì seri cũ được ghi lại vào Ghi chú.</div></div>
+        <div class="iw"><div class="il">Số thuê bao</div><input class="inp" id="sePhone" autocomplete="off" value="${esc(v('Số thuê bao'))}"></div>
+        <div class="iw"><div class="il">Nhà mạng</div><select class="sel" id="seCarrier">${opt(L.carriers, v('Nhà mạng'))}</select></div>
+        <div class="iw"><div class="il">Loại SIM</div><select class="sel" id="seType" onchange="simEditToggle_()">${opt(L.types, v('Loại SIM'))}</select></div>
+        <div class="iw"><div class="il">Ngày đăng ký</div><input class="inp" type="date" id="seReg" value="${esc(v('Ngày đăng ký'))}"></div>
+        <div class="iw"><div class="il">Chu kỳ thanh toán</div>
+          <input class="inp" id="seCycle" list="seCycles" autocomplete="off" placeholder="VD: 30 ngày · 1 tháng · 3 tháng" value="${esc(v('Chu kỳ thanh toán'))}">
+          <datalist id="seCycles">${(L.cycles || []).map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+        <div class="iw" id="seBillWrap"><div class="il">Ngày chốt cước hằng tháng (SIM trả sau)</div>
+          <input class="inp" type="number" min="1" max="31" step="1" id="seBill" value="${esc(v('Ngày chốt cước'))}" placeholder="VD: 14">
+          <div style="font-size:10px;color:var(--mu)">Trả sau thanh toán cố định vào ngày này mỗi tháng; kỳ đầu tính theo số ngày thực tế.</div></div>
+        ${editPrice
+          ? `<div class="iw"><div class="il">Giá gói cước (đ / chu kỳ)</div><input class="inp" type="number" min="0" step="1" id="sePrice" value="${esc(v('Giá gói cước (đ)'))}"></div>`
+          : (viewPrice ? `<div class="iw"><div class="il">Giá gói cước (đ / chu kỳ)</div><input class="inp" id="sePrice" value="${esc(v('Giá gói cước (đ)') !== '' ? vnd0_(v('Giá gói cước (đ)')) : '')}" readonly>
+              <div style="font-size:10px;color:var(--mu)">Tài khoản này chỉ được xem giá.</div></div>` : '')}
+        <div class="iw"><div class="il">Đã thanh toán đến</div><input class="inp" type="date" id="sePaid" value="${esc(v('Đã thanh toán đến'))}">
+          <div style="font-size:10px;color:var(--mu)">Mốc đã trả tiền tới ngày nào. Để trống = tính từ ngày đăng ký. Bấm “Đã đóng” sẽ tự cập nhật ô này.</div></div>
+        <div class="iw"><div class="il">Trạng thái SIM</div><select class="sel" id="seStatus">${opt(L.statuses, v('Trạng thái SIM'))}</select></div>
+        <div class="iw full"><div class="il">Ghi chú</div><textarea class="ta" id="seNote" rows="3">${esc(v('Ghi chú'))}</textarea></div>
+      </div>
+    </div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">${S.perm && S.perm.readOnly ? 'Đóng' : 'Hủy'}</button>
+      <button class="btn bg-g" onclick="simSaveForm(${row || 0}, ${isNew ? 'true' : 'false'})">💾 Lưu</button></div>`,
+    'simedit:' + (row || 'new'));
+
+  simEditToggle_();
+  const hint = $('seSerial');
+  if (hint) hint.dataset.orig = String(v('Mã seri SIM'));
+  if (hint) hint.addEventListener('input', () => {
+    const h = $('seSerialHint'); if (!h) return;
+    const o = hint.dataset.orig || '', n = hint.value.trim();
+    h.innerHTML = (o && n !== o)
+      ? `Seri cũ <b>${esc(o)}</b> sẽ được ghi vào Ghi chú kèm ngày và tên người đổi.`
+      : 'Dãy số in trên SIM (ICCID). Đổi seri thì seri cũ được ghi lại vào Ghi chú.';
+  });
+  if (focus === 'serial' && hint){ hint.focus(); hint.select(); }
+}
+
+/** Ô "Ngày chốt cước" chỉ có nghĩa với SIM trả sau — trả trước thì ẩn cho đỡ rối. */
+function simEditToggle_(){
+  const t = $('seType'), w = $('seBillWrap'); if (!t || !w) return;
+  w.style.display = (t.value === 'Trả trước') ? 'none' : '';
+}
+
+async function simSaveForm(row, isNew){
+  const val = id => { const el = $(id); return el ? String(el.value == null ? '' : el.value).trim() : undefined; };
+  const s = row ? simAnnot_().find(x => x.row === row) : null;
+  const r = s ? s.r : {};
+  const code = (val('seCode') || '').toUpperCase();
+  const purpose = val('sePurpose') || '';
+  if (!code){ toast('Chưa nhập mã máy', 'err'); return; }
+  if (!s && simKnownCodes_().indexOf(code) < 0){ toast('Mã máy “' + code + '” không có trong danh sách máy (Sheet 1)', 'err'); return; }
+
+  /* Chỉ gửi những ô THỰC SỰ ĐỔI — server cũng bỏ qua ô không đổi, nhưng gửi ít thì Change Log
+   * và việc kiểm quyền (giá) sạch hơn, và không vô tình ghi đè bản sửa của người khác ở ô mình không đụng. */
+  const map = { 'Mã seri SIM':'seSerial', 'Số thuê bao':'sePhone', 'Nhà mạng':'seCarrier', 'Loại SIM':'seType',
+    'Ngày đăng ký':'seReg', 'Chu kỳ thanh toán':'seCycle', 'Ngày chốt cước':'seBill',
+    'Giá gói cước (đ)':'sePrice', 'Đã thanh toán đến':'sePaid', 'Trạng thái SIM':'seStatus', 'Ghi chú':'seNote' };
+  const fields = {};
+  Object.keys(map).forEach(k => {
+    if (k === 'Giá gói cước (đ)' && !Q.perm.editPrice) return;
+    const nv = val(map[k]); if (nv === undefined) return;
+    const ov = (r[k] === undefined || r[k] === null) ? '' : String(r[k]);
+    if (isNew ? nv !== '' : nv !== ov) fields[k] = nv;
+  });
+  if (!Object.keys(fields).length){ toast('Không có gì thay đổi để lưu', 'info'); return; }
+
+  const d = await apiPost({ action:'simSave', user:(S.user && S.user.name) || 'admin',
+    payload:{ row: row || 0, maCode: code, purpose, isNew: !!isNew, fields, nguoi:(S.user && S.user.name) || '' } });
+  if (!d || !d.ok){ toast((d && d.error) || 'Lỗi', 'err'); return; }
+  closeOv(); await loadQlvt(); renderPage('sim');
+  toast(`✓ Đã lưu ${d.changed} ô — hạn và số tiền đã tính lại`, 'ok');
+  if (d.warnings && d.warnings.length) setTimeout(() => toast('⚠ ' + d.warnings.join(' · '), 'warn'), 900);
+}
+
+/* ============================================================================
+ *  BIỂU ĐỒ
+ * ========================================================================== */
+function simChartFont_(size){ return { family:'Be Vietnam Pro', size:size || 10 }; }
+
+function afterSim(){
+  if (!Q.loaded || !Q.sim || !Q.sim.exists || Q.sim.legacy || typeof Chart === 'undefined') return;
+  const all = simAnnot_(), act = all.filter(s => s.has && s.level !== 'cancel');
+  const viewPrice = !!Q.perm.viewPrice;
+  const kill = id => { const el = $(id); if (el && el._chart){ el._chart.destroy(); el._chart = null; } return el; };
+  const legend = { position:'bottom', labels:{ color:'#475569', font:simChartFont_(10), boxWidth:11, padding:8 } };
+  const axis = { ticks:{ color:'#64748b', font:simChartFont_(10) }, grid:{ color:'#f1f5f9' } };
+
+  /* 1 · tình trạng hạn */
+  const lvOrder = ['locked', 'overdue', 'urgent', 'soon', 'ok', 'unknown'];
+  const cnt = {}; act.forEach(s => { cnt[s.level] = (cnt[s.level] || 0) + 1; });
+  const lvs = lvOrder.filter(k => cnt[k]);
+  const c1 = kill('chSimLevel');
+  if (c1) c1._chart = new Chart(c1, { type:'doughnut',
+    data:{ labels: lvs.length ? lvs.map(simLvLabel_) : ['Chưa có SIM'],
+           datasets:[{ data: lvs.length ? lvs.map(k => cnt[k]) : [1],
+                       backgroundColor: lvs.length ? lvs.map(k => SIM_LV[k].color) : ['#e2e8f0'], borderWidth:2, borderColor:'#fff' }] },
+    options:{ maintainAspectRatio:false, cutout:'58%', plugins:{ legend, tooltip:{ backgroundColor:'#083d24' } } } });
+
+  /* 2 · lịch đến hạn theo khoảng ngày (+ tiền ở chú giải khi được xem giá) */
+  const B = [
+    { t:'Quá hạn / chặn', f:s => s.level === 'locked' || s.level === 'overdue', c:'#dc2626' },
+    { t:'Hôm nay',        f:s => s.level !== 'locked' && s.days === 0, c:'#ea580c' },
+    { t:'1–2 ngày',       f:s => s.days !== null && s.days >= 1 && s.days <= 2, c:'#f97316' },
+    { t:'3–5 ngày',       f:s => s.days !== null && s.days >= 3 && s.days <= 5, c:'#f59e0b' },
+    { t:'6–10 ngày',      f:s => s.days !== null && s.days >= 6 && s.days <= 10, c:'#84cc16' },
+    { t:'11–20 ngày',     f:s => s.days !== null && s.days >= 11 && s.days <= 20, c:'#22c55e' },
+    { t:'21–30 ngày',     f:s => s.days !== null && s.days >= 21 && s.days <= 30, c:'#16a05e' },
+    { t:'> 30 ngày',      f:s => s.days !== null && s.days > 30, c:'#0d6e3f' },
+    { t:'Thiếu thông tin', f:s => s.level === 'unknown', c:'#94a3b8' },
+  ];
+  const seen = new Set();
+  const buckets = B.map(b => {
+    const m = act.filter(s => !seen.has(s.row) && b.f(s));
+    m.forEach(s => seen.add(s.row));
+    return { b, n:m.length, money:m.reduce((a, s) => a + (s.money || 0), 0) };
+  });
+  const c2 = kill('chSimDue');
+  if (c2) c2._chart = new Chart(c2, { type:'bar',
+    data:{ labels:buckets.map(x => x.b.t), datasets:[{ data:buckets.map(x => x.n),
+      backgroundColor:buckets.map(x => x.b.c), borderRadius:5, maxBarThickness:34 }] },
+    options:{ maintainAspectRatio:false,
+      plugins:{ legend:{ display:false }, tooltip:{ backgroundColor:'#083d24', callbacks:{
+        label: ctx => ` ${ctx.parsed.y} SIM`,
+        afterLabel: ctx => viewPrice ? ' Tiền cần đóng: ' + fmtVnd_(buckets[ctx.dataIndex].money) : '' } } },
+      scales:{ x:{ ticks:{ color:'#64748b', font:simChartFont_(9), maxRotation:40, minRotation:0 }, grid:{ display:false } },
+               y:Object.assign({ beginAtZero:true }, axis, { ticks:{ color:'#64748b', font:simChartFont_(10), precision:0 } }) } } });
+
+  /* 3 · nhà mạng × loại SIM */
+  const stack = (rowsKey, colKey, palette, unknownLabel) => {
+    const rowsV = [...new Set(act.map(s => String(s.r[rowsKey] || '').trim() || unknownLabel))];
+    const colsV = [...new Set(act.map(s => String(s.r[colKey] || '').trim() || unknownLabel))];
+    return { rowsV, datasets: colsV.map((cv, i) => ({ label:cv, backgroundColor:palette[i % palette.length], borderRadius:4, maxBarThickness:42,
+      data: rowsV.map(rv => act.filter(s => (String(s.r[rowsKey] || '').trim() || unknownLabel) === rv
+                                         && (String(s.r[colKey] || '').trim() || unknownLabel) === cv).length) })) };
+  };
+  const stackOpts = { maintainAspectRatio:false, plugins:{ legend, tooltip:{ backgroundColor:'#083d24' } },
+    scales:{ x:{ stacked:true, ticks:{ color:'#64748b', font:simChartFont_(10) }, grid:{ display:false } },
+             y:{ stacked:true, beginAtZero:true, ticks:{ color:'#64748b', font:simChartFont_(10), precision:0 }, grid:{ color:'#f1f5f9' } } } };
+  const s3 = stack('Nhà mạng', 'Loại SIM', ['#1e6bb8', '#0d6e3f', '#94a3b8', '#f59e0b'], '(chưa khai)');
+  const c3 = kill('chSimCarrier');
+  if (c3) c3._chart = new Chart(c3, { type:'bar', data:{ labels:s3.rowsV, datasets:s3.datasets }, options:stackOpts });
+
+  /* 4 · mục đích × trạng thái SIM */
+  const s4 = stack('Mục đích SIM', 'Trạng thái SIM', ['#16a05e', '#dc2626', '#f59e0b', '#7f1d1d', '#94a3b8'], '(chưa khai)');
+  const c4 = kill('chSimStatus');
+  if (c4) c4._chart = new Chart(c4, { type:'bar', data:{ labels:s4.rowsV, datasets:s4.datasets }, options:stackOpts });
+
+  simSelInfoUpdate_();
+}
+
+/* ============================================================================
+ *  XUẤT EXCEL  (dùng exportXls_ — giữ đúng kiểu cột, seri/số thuê bao không bị Excel đổi thành số)
+ * ========================================================================== */
+function simStamp_(){
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+}
+
+function simExportDetail(){
+  if (!Q.sim || !Q.sim.exists || Q.sim.legacy){ toast('Sheet SIM chưa sẵn sàng', 'err'); return; }
+  const vp = !!Q.perm.viewPrice;
+  const list = simFiltered_(simAnnot_()).filter(s => s.has);
+  if (!list.length){ toast('Không có SIM nào trong bộ lọc để xuất', 'err'); return; }
+  const cols = [
+    { key:'ma', label:'Mã máy', type:'text' }, { key:'khu', label:'Khu vực', type:'text' }, { key:'tinh', label:'Tỉnh thành', type:'text' },
+    { key:'dv', label:'Đơn vị hợp tác', type:'text' }, { key:'trai', label:'Trại', type:'text' }, { key:'mucdich', label:'Mục đích SIM', type:'text' },
+    { key:'seri', label:'Mã seri SIM', type:'text' }, { key:'sdt', label:'Số thuê bao', type:'text' }, { key:'nm', label:'Nhà mạng', type:'text' },
+    { key:'loai', label:'Loại SIM', type:'text' }, { key:'dk', label:'Ngày đăng ký', type:'text' }, { key:'ck', label:'Chu kỳ thanh toán', type:'text' },
+    { key:'chot', label:'Ngày chốt cước', type:'int' },
+    ...(vp ? [{ key:'gia', label:'Giá gói cước (đ)', type:'money' }] : []),
+    { key:'pt', label:'Đã thanh toán đến', type:'text' }, { key:'han', label:'Hạn thanh toán', type:'text' },
+    { key:'con', label:'Số ngày còn lại', type:'int' }, { key:'tt', label:'Tình trạng hạn', type:'text' },
+    ...(vp ? [{ key:'tien', label:'Số tiền cần thanh toán (đ)', type:'money' }] : []),
+    { key:'ttsim', label:'Trạng thái SIM', type:'text' }, { key:'gc', label:'Ghi chú', type:'text' },
+  ];
+  const rows = list.map(s => { const r = s.r; return {
+    ma:s.code, khu:r['Khu vực'], tinh:r['Tỉnh thành'], dv:r['Đơn vị hợp tác'], trai:r['Tên trại'], mucdich:s.purpose,
+    seri:r['Mã seri SIM'], sdt:r['Số thuê bao'], nm:r['Nhà mạng'], loai:r['Loại SIM'], dk:simVn_(r['Ngày đăng ký']),
+    ck:r['Chu kỳ thanh toán'], chot:r['Ngày chốt cước'], gia:r['Giá gói cước (đ)'], pt:simVn_(r['Đã thanh toán đến']),
+    han:simVn_(s.dueIso), con:s.days, tt:simLvLabel_(s.level), tien:s.money, ttsim:r['Trạng thái SIM'], gc:r['Ghi chú'] }; });
+  /* Hai dòng cuối: tổng của CỘT tiền (cộng đúng những dòng vừa xuất, để người kiểm tra tự cộng lại được)
+   * và phần trong đó cần đóng ngay. */
+  const st = simStats_(list);
+  rows.push({ ma:'TỔNG', mucdich:`${st.total} SIM · ${st.machines.size} máy`, tt:`${st.act.n} cần xử lý`,
+    tien: vp ? list.reduce((a, s) => a + (s.money || 0), 0) : undefined });
+  if (vp) rows.push({ ma:'Trong đó cần đóng ngay', mucdich:`${st.act.n} SIM (quá hạn · chặn · ≤${simCfg_('SIM_WARN_DAYS', 5)} ngày)`, tien:st.act.money });
+  exportXls_('theo-doi-sim-' + simStamp_(), 'Theo dõi SIM các trại · chi tiết (' + list.length + ' SIM)', cols, rows);
+}
+
+function simExportSummary(){
+  if (!Q.sim || !Q.sim.exists || Q.sim.legacy){ toast('Sheet SIM chưa sẵn sàng', 'err'); return; }
+  const vp = !!Q.perm.viewPrice;
+  const by = (($('simSumBy') || {}).value) || Q.f.simSumBy || 'khu';
+  Q.f.simSumBy = by;
+  const def = { khu:['Khu vực', 'Khu vực'], donvi:['Đơn vị hợp tác', 'Đơn vị hợp tác'], trai:['Tên trại', 'Trại'],
+                nhamang:['Nhà mạng', 'Nhà mạng'], loai:['Loại SIM', 'Loại SIM'] }[by] || ['Khu vực', 'Khu vực'];
+  const list = simFiltered_(simAnnot_()).filter(s => s.has && s.level !== 'cancel');
+  if (!list.length){ toast('Không có SIM nào trong bộ lọc để tổng hợp', 'err'); return; }
+  const groups = new Map();
+  list.forEach(s => {
+    const k = String(s.r[def[0]] || '').trim() || '(chưa khai)';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(s);
+  });
+  const sumRow = (name, arr) => {
+    const st = simStats_(arr);
+    const nPur = p => arr.filter(s => s.purpose === p).length;
+    const nTy = t => arr.filter(s => s.r['Loại SIM'] === t).length;
+    return { g:name, may:st.machines.size, tong:st.total, tt:nPur('SIM truyền thông'), cam:nPur('SIM camera'),
+      truoc:nTy('Trả trước'), sau:nTy('Trả sau'),
+      late:(st.byLevel.locked || 0) + (st.byLevel.overdue || 0), soon:(st.byLevel.urgent || 0) + (st.byLevel.soon || 0),
+      ok:st.byLevel.ok || 0, miss:st.unknown, next:simVn_(st.nextDue),
+      act:st.act.money, d30:st.d30.money };
+  };
+  const rows = [...groups.keys()].sort((a, b) => a.localeCompare(b, 'vi')).map(k => sumRow(k, groups.get(k)));
+  rows.push(Object.assign(sumRow('TỔNG CỘNG', list), {}));
+  const cols = [
+    { key:'g', label:def[1], type:'text' }, { key:'may', label:'Số máy', type:'int' }, { key:'tong', label:'Tổng số SIM', type:'int' },
+    { key:'tt', label:'SIM truyền thông', type:'int' }, { key:'cam', label:'SIM camera', type:'int' },
+    { key:'truoc', label:'Trả trước', type:'int' }, { key:'sau', label:'Trả sau', type:'int' },
+    { key:'late', label:'Quá hạn / bị chặn', type:'int' }, { key:'soon', label:'Sắp tới hạn (≤' + simCfg_('SIM_WARN_DAYS', 5) + ' ngày)', type:'int' },
+    { key:'ok', label:'Còn hạn', type:'int' }, { key:'miss', label:'Thiếu thông tin', type:'int' },
+    { key:'next', label:'Hạn gần nhất (chưa tới ngưỡng nhắc)', type:'text' },
+    ...(vp ? [{ key:'act', label:'Tiền cần thanh toán ngay (đ)', type:'money' }, { key:'d30', label:'Dự kiến 30 ngày tới (đ)', type:'money' }] : []),
+  ];
+  exportXls_('tong-hop-sim-' + by + '-' + simStamp_(), 'Tổng hợp SIM theo ' + def[1].toLowerCase(), cols, rows);
+}
+
+function simExportProposal(){
+  const vp = !!Q.perm.viewPrice;
+  const items = simProposalItems_(simAnnot_());
+  if (!items.length){ toast('Hiện không có SIM nào cần thanh toán', 'info'); return; }
+  const cols = [
+    { key:'stt', label:'STT', type:'int' }, { key:'ma', label:'Mã máy', type:'text' }, { key:'khu', label:'Khu vực', type:'text' },
+    { key:'trai', label:'Đơn vị · Trại', type:'text' }, { key:'mucdich', label:'Mục đích SIM', type:'text' },
+    { key:'sdt', label:'Số thuê bao', type:'text' }, { key:'seri', label:'Mã seri SIM', type:'text' },
+    { key:'nm', label:'Nhà mạng', type:'text' }, { key:'loai', label:'Loại SIM', type:'text' },
+    { key:'han', label:'Hạn thanh toán', type:'text' }, { key:'con', label:'Số ngày còn lại', type:'int' },
+    { key:'ky', label:'Kỳ cước', type:'text' }, { key:'ngay', label:'Số ngày tính cước', type:'int' },
+    ...(vp ? [{ key:'tien', label:'Số tiền cần thanh toán (đ)', type:'money' }] : []),
+    { key:'tt', label:'Tình trạng', type:'text' }, { key:'ghichu', label:'Ghi chú', type:'text' },
+  ];
+  const rows = items.map((s, i) => { const r = s.r; return {
+    stt:i + 1, ma:s.code, khu:r['Khu vực'], trai:[r['Đơn vị hợp tác'], r['Tên trại']].filter(Boolean).join(' · '),
+    mucdich:s.purpose, sdt:r['Số thuê bao'], seri:r['Mã seri SIM'], nm:r['Nhà mạng'], loai:r['Loại SIM'],
+    han:simVn_(s.dueIso), con:s.days, ky:s.canPay && r['Kỳ từ'] ? simVn_(r['Kỳ từ']) + ' → ' + simVn_(r['Kỳ đến']) : '',
+    ngay:r['Số ngày tính cước'], tien:s.money, tt:simLvLabel_(s.level),
+    ghichu: s.canPay ? '' : 'Chưa đủ thông tin để tính: ' + (r._thieu || []).join('; ') }; });
+  rows.push({ ma:'TỔNG', mucdich:items.length + ' SIM', tien: vp ? items.reduce((a, s) => a + (s.money || 0), 0) : undefined });
+  exportXls_('de-xuat-thanh-toan-sim-' + simStamp_(), 'Đề xuất thanh toán SIM · lập ngày ' + new Date().toLocaleDateString('vi-VN'), cols, rows);
+}
+
+/* ============================================================================
+ *  TRANG 4b · CẢNH BÁO MÁY (Smartgen)   ·   nguồn: sheet "18. Nhật ký cảnh báo Smartgen"
+ * ----------------------------------------------------------------------------
+ *  Tách khỏi trang SIM vì hai việc khác hẳn nhau: SIM là việc LÊN LỊCH (biết trước hạn, đóng tiền
+ *  trước khi bị khoá), còn cảnh báo máy là việc XẢY RA BẤT NGỜ (máy báo lỗi, phải có người ra xử lý).
+ *  Gộp chung thì danh sách "việc phải làm hôm nay" lẫn hai loại việc có nhịp độ khác nhau.
+ *
+ *  Sổ ở Sheet 18 là sổ CHỈ-THÊM do bộ quét ghi (xem scanSmartGenAlarms ở QLVT.gs). Trang này không
+ *  sửa nội dung cảnh báo, chỉ đánh dấu TRẠNG THÁI XỬ LÝ (Mới → Đang xử lý → Đã xử lý / Bỏ qua) qua
+ *  action alarmSetStatus — server kiểm lại mã máy ở từng dòng nên bấm khi sổ vừa bị chèn/xoá dòng
+ *  cũng không đánh dấu nhầm máy khác.
+ *
+ *  Gói dữ liệu chỉ mang 300 dòng mới nhất của sổ (Q.alarmLog) — đủ cho việc xử lý hằng ngày; lịch sử
+ *  xa hơn xem thẳng trên Google Sheet.
+ * ========================================================================== */
+const AL_STATES = ['Mới', 'Đang xử lý', 'Đã xử lý', 'Bỏ qua'];
+const AL_LV = {
+  danger: { label:'Nguy hiểm', cls:'br',  color:'#dc2626' },
+  warn:   { label:'Cảnh báo',  cls:'ba',  color:'#f59e0b' },
+  info:   { label:'Khác',      cls:'bmu', color:'#94a3b8' },
+};
+const AL_ST = {
+  'Mới':        { cls:'br',  color:'#dc2626' },
+  'Đang xử lý': { cls:'ba',  color:'#f59e0b' },
+  'Đã xử lý':   { cls:'bg',  color:'#16a05e' },
+  'Bỏ qua':     { cls:'bmu', color:'#94a3b8' },
+};
+
+/** Ô trống hoặc giá trị lạ đều coi là "Mới" — cảnh báo chưa ai đụng tới phải nằm trong hàng đợi. */
+function alState_(v){ const s = String(v == null ? '' : v).trim(); return AL_STATES.indexOf(s) >= 0 ? s : 'Mới'; }
+function alLevelKey_(v){
+  const s = String(v == null ? '' : v).normalize('NFC').toLowerCase();
+  if (/nguy hiểm/.test(s)) return 'danger';
+  if (/cảnh báo/.test(s)) return 'warn';
+  return 'info';
+}
+
+/**
+ * Thời gian cảnh báo do Smartgen trả về dạng chữ, còn Google Sheet có thể đã tự đổi thành ngày (mất giờ)
+ * khi qlvtRead_ đọc ra — nên chấp nhận cả "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd", "dd/MM/yyyy HH:mm".
+ * Không đọc được thì day = null: dòng đó KHÔNG bị loại khỏi bộ lọc thời gian (thà hiện thừa còn hơn giấu mất một cảnh báo).
+ */
+function alParse_(t){
+  const s = String(t == null ? '' : t).trim();
+  let m = /(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(s), y, mo, d, hh, mi;
+  if (m){ y = +m[1]; mo = +m[2]; d = +m[3]; hh = m[4]; mi = m[5]; }
+  else {
+    m = /(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/.exec(s);
+    if (!m) return { day:null, ms:null, label:s };
+    d = +m[1]; mo = +m[2]; y = +m[3]; hh = m[4]; mi = m[5];
+  }
+  const p = n => String(n).padStart(2, '0');
+  const base = Date.UTC(y, mo - 1, d);
+  return { day: Math.floor(base / 86400000),
+           ms: base + (hh ? (+hh * 60 + +mi) * 60000 : 0),
+           label: p(d) + '/' + p(mo) + '/' + y + (hh ? ' ' + p(hh) + ':' + mi : '') };
+}
+
+function alDictName_(code){
+  const rows = (Q.alarmDict && Q.alarmDict.rows) || [];
+  const hit = rows.find(r => String(r['Mã alarm'] || '').trim() === String(code || '').trim());
+  return hit ? String(hit['Tên cảnh báo (Smartgen)'] || '').trim() : '';
+}
+
+function alRows_(){
+  const rows = ((Q.alarmLog && Q.alarmLog.rows) || []).map(r => {
+    const t = alParse_(r['Thời gian ghi nhận']);
+    return { r, row:r._row, code:String(r['Mã máy'] || '').trim(), day:t.day, ms:t.ms, time:t.label,
+      level:alLevelKey_(r['Mức độ']), state:alState_(r['Trạng thái xử lý']),
+      zalo:String(r['Đã gửi Zalo'] || '').toUpperCase() === 'TRUE' };
+  });
+  rows.sort((a, b) => ((b.ms === null ? -1 : b.ms) - (a.ms === null ? -1 : a.ms)) || (b.row - a.row));
+  return rows;
+}
+
+function alInRange_(a, range, today){
+  if (range === 'all' || a.day === null) return true;
+  const lim = range === '1' ? 0 : Number(range);
+  return today - a.day <= lim;
+}
+
+/* ============================================================================
+ *  TRANG
+ * ========================================================================== */
+function viewAlarm(){
+  if (!Q.loaded) return qNotReady_('Cảnh báo máy');
+  const f = Q.f, today = simTodayNum_();
+  const all = alRows_();
+  const R = all.filter(a => alInRange_(a, f.alRange, today));          // phạm vi thời gian — nền cho KPI & biểu đồ
+  const q = String(f.al || '').trim().toLowerCase();
+  const stOk = a => f.alState === 'all' ? true
+    : (f.alState === 'open' ? (a.state === 'Mới' || a.state === 'Đang xử lý')
+    : (f.alState === 'done' ? a.state === 'Đã xử lý' : a.state === 'Bỏ qua'));
+  const list = R.filter(a => {
+    if (!stOk(a)) return false;
+    if (f.alLevel.size && !f.alLevel.has(a.level)) return false;
+    if (q){
+      const hay = [a.code, a.r['Nội dung gốc'], a.r['Mã alarm'], alDictName_(a.r['Mã alarm']), farmOfCode_(a.code),
+                   a.r['Người xử lý'], a.r['Ghi chú xử lý']].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+  const CAP = 300, shown = list.slice(0, CAP);
+  /* Giữ lại lựa chọn còn hiển thị — dòng đã bị lọc mất thì không được bấm "Đã xử lý" nhầm hàng loạt. */
+  Q.alSel = new Set([...Q.alSel].filter(r => shown.some(a => a.row === r)));
+
+  const cnt = fn => R.filter(fn).length;
+  const nDangerOpen = cnt(a => a.level === 'danger' && (a.state === 'Mới' || a.state === 'Đang xử lý'));
+  const nNew = cnt(a => a.state === 'Mới'), nDoing = cnt(a => a.state === 'Đang xử lý');
+  const nDone = cnt(a => a.state === 'Đã xử lý'), nIgn = cnt(a => a.state === 'Bỏ qua');
+  const nZalo = cnt(a => a.zalo);
+  const machines = new Set(R.map(a => a.code).filter(Boolean));
+  const pctDone = R.length ? Math.round(nDone / R.length * 100) : 0;
+  const nOpenAll = all.filter(a => a.state === 'Mới' || a.state === 'Đang xử lý').length;
+
+  const kp = (cls, lbl, val, sub, onclick) => simKpi_(cls, lbl, val, sub, onclick);
+  const kpis = [
+    kp('', 'Cảnh báo trong kỳ lọc', nint_(R.length), `${nint_(machines.size)} máy có cảnh báo`, "Q.f.alState='all';renderPage('alarm')"),
+    kp(nDangerOpen ? 'rd' : '', 'Nguy hiểm chưa xử lý', nint_(nDangerOpen),
+      nDangerOpen ? 'Cần người ra hiện trường' : 'Không có cảnh báo nguy hiểm tồn đọng',
+      "Q.f.alState='open';Q.f.alLevel=new Set(['danger']);renderPage('alarm')"),
+    kp(nNew ? 'am' : '', 'Mới · chưa ai nhận', nint_(nNew), `${nint_(nDoing)} đang xử lý`,
+      "Q.f.alState='open';Q.f.alLevel=new Set();renderPage('alarm')"),
+    kp('bl', 'Đã xử lý', nint_(nDone), `${pctDone}% số cảnh báo trong kỳ${nIgn ? ' · ' + nIgn + ' bỏ qua' : ''}`,
+      "Q.f.alState='done';renderPage('alarm')"),
+    kp('', 'Đã gửi Zalo cho KTV', nint_(nZalo), R.length ? `${Math.round(nZalo / R.length * 100)}% số cảnh báo` : '—', ''),
+    kp('pu', 'Tồn đọng toàn sổ', nint_(nOpenAll), 'Mới + đang xử lý, mọi thời điểm (300 dòng gần nhất)',
+      "Q.f.alRange='all';Q.f.alState='open';Q.f.alLevel=new Set();renderPage('alarm')"),
+  ].join('');
+
+  const rng = (v, label) => `<button class="fchip ${f.alRange === v ? 'on' : ''}" onclick="Q.f.alRange='${v}';renderPage('alarm')">${label}</button>`;
+  const stc = (v, label, n) => `<button class="fchip ${f.alState === v ? 'on' : ''}" onclick="Q.f.alState='${v}';renderPage('alarm')">${label} · ${n}</button>`;
+  const lvc = k => `<button class="fchip ${f.alLevel.has(k) ? 'on' : ''}" onclick="qToggle(Q.f.alLevel,'${k}');renderPage('alarm')">${AL_LV[k].label} · ${cnt(a => a.level === k)}</button>`;
+  const nFilter = (f.al ? 1 : 0) + f.alLevel.size + (f.alState !== 'open' ? 1 : 0) + (f.alRange !== '30' ? 1 : 0);
+
+  const sel = Q.alSel.size;
+  const bulk = (st, label, cls) => `<button class="btn ${cls} sm" onclick="alMark('${st}')">${label}</button>`;
+
+  const rowsHtml = shown.map(a => {
+    const r = a.r, lv = AL_LV[a.level], stt = AL_ST[a.state];
+    return `<tr>
+      <td style="width:28px;box-shadow:inset 3px 0 0 ${lv.color}"><input type="checkbox" class="alck" data-row="${a.row}" ${Q.alSel.has(a.row) ? 'checked' : ''} onchange="alToggleSel(${a.row},this.checked)"></td>
+      <td style="font-size:11px">${esc(a.time)}</td>
+      <td><span class="mm">${esc(a.code)}</span></td>
+      ${farmCell_(a.code)}
+      <td style="font-size:11px;white-space:normal;min-width:200px">${esc(r['Nội dung gốc'] || '')}
+        ${alDictName_(r['Mã alarm']) ? `<div style="color:var(--mu)">${esc(r['Mã alarm'])} · ${esc(alDictName_(r['Mã alarm']))}</div>` : ''}</td>
+      <td><span class="b ${lv.cls}">${esc(r['Mức độ'] || lv.label)}</span></td>
+      <td>${a.zalo ? '<span class="b bg" title="' + esc(r['Người nhận'] || '') + '">đã gửi</span>' : '<span class="b bmu">—</span>'}</td>
+      <td><span class="b ${stt.cls}">${esc(a.state)}</span>
+        ${r['Người xử lý'] ? `<div style="font-size:10px;color:var(--mu)">${esc(r['Người xử lý'])}</div>` : ''}
+        ${r['Ghi chú xử lý'] ? `<div style="font-size:10px;color:var(--mu);white-space:normal;max-width:180px">${esc(r['Ghi chú xử lý'])}</div>` : ''}</td>
+      <td style="text-align:right;white-space:nowrap">
+        ${a.state === 'Mới' ? `<button class="btn bg-gr sm" onclick="alMarkOne(${a.row},'Đang xử lý')">Nhận xử lý</button>` : ''}
+        ${(a.state === 'Mới' || a.state === 'Đang xử lý') ? `<button class="btn bg-g sm" onclick="alMarkOne(${a.row},'Đã xử lý')">✓ Xong</button>` : ''}
+        ${(a.state === 'Đã xử lý' || a.state === 'Bỏ qua') ? `<button class="btn bg-gr sm" onclick="alMarkOne(${a.row},'Mới')" title="Mở lại cảnh báo">↺ Mở lại</button>` : ''}
+      </td></tr>`;
+  }).join('') || `<tr><td colspan="9"><div class="empty">${all.length
+    ? 'Không có cảnh báo nào khớp bộ lọc.'
+    : 'Chưa có cảnh báo nào được ghi nhận.<br><span style="font-size:11px">Cấu hình danh sách cảnh báo nguy hiểm ở Sheet 17 rồi bấm “Quét ngay”.</span>'}</div></td></tr>`;
+
+  const dict = (Q.alarmDict && Q.alarmDict.rows) || [];
+  const dictHtml = `<div class="card"><div class="ch" style="cursor:pointer" onclick="Q.f.alDict=!Q.f.alDict;renderPage('alarm')">
+      <h3>${f.alDict ? '▾' : '▸'} Danh sách cảnh báo đang theo dõi · ${dict.length} loại</h3>
+      <span class="b bmu">Sửa ở Sheet “17. Danh sách cảnh báo nguy hiểm” — từ khoá khớp với nội dung Smartgen báo về</span></div>
+    ${f.alDict ? `<div class="tw" style="max-height:40vh"><table><thead><tr>
+        <th>Mã</th><th>Tên cảnh báo</th><th>Từ khoá khớp</th><th>Mức độ</th><th>Gửi Zalo</th><th>Hành động yêu cầu</th></tr></thead>
+      <tbody>${dict.map(d => `<tr>
+        <td><span class="mm">${esc(d['Mã alarm'] || '')}</span></td><td style="font-size:11px">${esc(d['Tên cảnh báo (Smartgen)'] || '')}</td>
+        <td style="font-size:11px;font-family:var(--mono)">${esc(d['Từ khoá khớp'] || '')}</td>
+        <td><span class="b ${AL_LV[alLevelKey_(d['Mức độ'])].cls}">${esc(d['Mức độ'] || '')}</span></td>
+        <td>${String(d['Gửi Zalo'] || '').toUpperCase() === 'TRUE' ? '<span class="b bg">có</span>' : '<span class="b bmu">không</span>'}</td>
+        <td style="font-size:11px;white-space:normal">${esc(d['Hành động yêu cầu'] || '')}</td></tr>`).join('')
+        || '<tr><td colspan="6"><div class="empty">Chưa cấu hình cảnh báo nào ở Sheet 17.</div></td></tr>'}</tbody></table></div>` : ''}</div>`;
+
+  return `
+    <div class="ph">
+      <h1>Cảnh báo từ máy (Smartgen)</h1>
+      <p>${nint_(all.length)} cảnh báo trong sổ · <b style="color:var(--red)">${nint_(nOpenAll)} chưa xử lý xong</b>
+        · hệ thống quét Smartgen theo lịch và gửi Zalo cho KTV phụ trách; ở đây theo dõi ai đang xử lý và đã xử lý chưa</p>
+    </div>
+
+    <div class="krow">${kpis}</div>
+
+    <div class="cg2">
+      <div class="cc"><div class="ct">Cảnh báo 14 ngày gần nhất (theo mức độ)</div><div class="cw"><canvas id="chAlDay"></canvas></div></div>
+      <div class="cc"><div class="ct">Tiến độ xử lý (trong kỳ lọc)</div><div class="cw"><canvas id="chAlState"></canvas></div></div>
+    </div>
+    <div class="cg2">
+      <div class="cc"><div class="ct">Loại cảnh báo nhiều nhất (trong kỳ lọc)</div><div class="cw"><canvas id="chAlType"></canvas></div></div>
+      <div class="cc"><div class="ct">Máy báo nhiều nhất (trong kỳ lọc)</div><div class="cw"><canvas id="chAlMachine"></canvas></div></div>
+    </div>
+
+    <div class="msf" style="flex-direction:column;align-items:stretch;gap:8px">
+      <div class="msg"><span class="mslbl">Thời gian</span>${rng('1', 'Hôm nay')}${rng('7', '7 ngày')}${rng('30', '30 ngày')}${rng('all', 'Tất cả')}</div>
+      <div class="msg"><span class="mslbl">Xử lý</span>
+        ${stc('open', 'Chưa xử lý xong', nNew + nDoing)}${stc('done', 'Đã xử lý', nDone)}${stc('ignore', 'Bỏ qua', nIgn)}${stc('all', 'Tất cả', R.length)}</div>
+      <div class="msg"><span class="mslbl">Mức độ</span>${lvc('danger')}${lvc('warn')}${lvc('info')}</div>
+      <div class="msg">
+        <input class="si" id="alSearch" style="flex:1" placeholder="🔍 Tìm mã máy, trại, nội dung cảnh báo, người xử lý…"
+               value="${esc(f.al)}" oninput="Q.f.al=this.value;renderPage('alarm')">
+        ${nFilter ? `<button class="btn bg-gr sm" onclick="alClearFilters()">↺ Mặc định</button>` : ''}
+        <button class="btn bg-g sm" onclick="alScan()" title="Hỏi Smartgen ngay bây giờ thay vì chờ lịch quét">⟳ Quét ngay</button>
+        <button class="btn bg-gr sm" onclick="alExport()">⤓ Excel</button>
+      </div></div>
+
+    <div class="card"><div class="ch"><h3>Nhật ký cảnh báo · ${nint_(list.length)} dòng${list.length > CAP ? ` <span style="color:var(--amb)">(hiện ${CAP} dòng mới nhất)</span>` : ''}</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span id="alSelInfo" style="font-size:11px;color:var(--mu)">${sel ? `Đã chọn <b>${sel}</b> dòng` : 'Tích chọn nhiều dòng để đánh dấu một lượt'}</span>
+        <input class="inp" id="alNote" data-nodraft placeholder="Ghi chú xử lý (tuỳ chọn)" style="width:200px;padding:4px 8px;font-size:11px">
+        ${bulk('Đang xử lý', 'Đang xử lý', 'bg-gr')}${bulk('Đã xử lý', '✓ Đã xử lý', 'bg-g')}${bulk('Bỏ qua', 'Bỏ qua', 'bg-gr')}
+      </div></div>
+      <div class="tw" style="max-height:60vh"><table>
+        <thead><tr><th><input type="checkbox" onchange="alSelectAll(this.checked)" title="Chọn / bỏ chọn mọi dòng đang hiện"></th>
+          <th>Thời gian</th><th>Mã máy</th><th>Trang trại</th><th>Cảnh báo</th><th>Mức độ</th><th>Zalo</th><th>Xử lý</th><th></th></tr></thead>
+        <tbody>${rowsHtml}</tbody></table></div></div>
+
+    ${dictHtml}
+  `;
+}
+
+function alClearFilters(){
+  Q.f.al = ''; Q.f.alLevel = new Set(); Q.f.alState = 'open'; Q.f.alRange = '30';
+  renderPage('alarm');
+}
+
+/* ---------- chọn nhiều & đánh dấu ---------------------------------------- */
+function alSelInfoUpdate_(){
+  const el = $('alSelInfo'); if (!el) return;
+  const n = Q.alSel.size;
+  el.innerHTML = n ? `Đã chọn <b>${n}</b> dòng` : 'Tích chọn nhiều dòng để đánh dấu một lượt';
+}
+function alToggleSel(row, on){ if (on) Q.alSel.add(row); else Q.alSel.delete(row); alSelInfoUpdate_(); }
+function alSelectAll(on){
+  Q.alSel = new Set();
+  document.querySelectorAll('.alck').forEach(c => {
+    c.checked = on;
+    if (on) Q.alSel.add(Number(c.dataset.row));
+  });
+  alSelInfoUpdate_();
+}
+
+async function alSend_(rows, status, note){
+  const logRows = (Q.alarmLog && Q.alarmLog.rows) || [];
+  const maCodes = {};
+  rows.forEach(rn => {
+    const hit = logRows.find(x => x._row === rn);
+    if (hit) maCodes[rn] = String(hit['Mã máy'] || '').trim();
+  });
+  const payload = { rows, status, maCodes, nguoi:(S.user && S.user.name) || '' };
+  if (note) payload.ghiChu = note;
+  const d = await apiPost({ action:'alarmSetStatus', payload, user:(S.user && S.user.name) || 'admin' });
+  if (!d || !d.ok){ toast((d && d.error) || 'Lỗi', 'err'); return false; }
+  Q.alSel = new Set();
+  await loadQlvt(); renderPage('alarm');
+  toast(`✓ Đã đánh dấu “${status}” cho ${d.updated} cảnh báo` + (d.skipped && d.skipped.length ? ` · ${d.skipped.length} dòng bỏ qua (sổ đã đổi, tải lại rồi thử lại)` : ''),
+        d.skipped && d.skipped.length ? 'warn' : 'ok');
+  return true;
+}
+async function alMark(status){
+  const rows = [...Q.alSel];
+  if (!rows.length){ toast('Chưa tích chọn cảnh báo nào', 'err'); return; }
+  const note = String((($('alNote') || {}).value) || '').trim();
+  await alSend_(rows, status, note);
+}
+async function alMarkOne(row, status){ await alSend_([row], status, ''); }
+
+async function alScan(){
+  toast('Đang quét cảnh báo Smartgen…');
+  const d = await apiPost({ action:'scanAlarms', user:(S.user && S.user.name) || 'admin' });
+  if (!d || !d.ok){ toast((d && d.error) || 'Lỗi quét', 'err'); return; }
+  await loadQlvt(); renderPage('alarm');
+  toast(`Quét ${d.scanned} máy · khớp ${d.matched} · ghi mới & gửi Zalo ${d.notified}`, 'ok');
+}
+
+/* ============================================================================
+ *  BIỂU ĐỒ
+ * ========================================================================== */
+function afterAlarm(){
+  if (!Q.loaded || typeof Chart === 'undefined') return;
+  const f = Q.f, today = simTodayNum_();
+  const all = alRows_();
+  const R = all.filter(a => alInRange_(a, f.alRange, today));
+  const kill = id => { const el = $(id); if (el && el._chart){ el._chart.destroy(); el._chart = null; } return el; };
+  const font = n => ({ family:'Be Vietnam Pro', size:n || 10 });
+  const legend = { position:'bottom', labels:{ color:'#475569', font:font(10), boxWidth:11, padding:8 } };
+  const ax = { ticks:{ color:'#64748b', font:font(10), precision:0 }, grid:{ color:'#f1f5f9' } };
+
+  /* 1 · 14 ngày gần nhất — luôn cố định cửa sổ này, không phụ thuộc bộ lọc thời gian */
+  const days = [], keys = [];
+  for (let i = 13; i >= 0; i--){
+    const dn = today - i, d = new Date(dn * 86400000);
+    days.push(String(d.getUTCDate()).padStart(2, '0') + '/' + String(d.getUTCMonth() + 1).padStart(2, '0'));
+    keys.push(dn);
+  }
+  const c1 = kill('chAlDay');
+  if (c1) c1._chart = new Chart(c1, { type:'bar',
+    data:{ labels:days, datasets:['danger', 'warn', 'info'].map(k => ({ label:AL_LV[k].label, backgroundColor:AL_LV[k].color,
+      borderRadius:3, maxBarThickness:26, data:keys.map(dn => all.filter(a => a.day === dn && a.level === k).length) })) },
+    options:{ maintainAspectRatio:false, plugins:{ legend, tooltip:{ backgroundColor:'#083d24' } },
+      scales:{ x:{ stacked:true, ticks:{ color:'#64748b', font:font(9) }, grid:{ display:false } },
+               y:Object.assign({ stacked:true, beginAtZero:true }, ax) } } });
+
+  /* 2 · tiến độ xử lý */
+  const c2 = kill('chAlState');
+  const nz = AL_STATES.filter(s => R.some(a => a.state === s));
+  if (c2) c2._chart = new Chart(c2, { type:'doughnut',
+    data:{ labels: nz.length ? nz : ['Chưa có cảnh báo'],
+           datasets:[{ data: nz.length ? nz.map(s => R.filter(a => a.state === s).length) : [1],
+                       backgroundColor: nz.length ? nz.map(s => AL_ST[s].color) : ['#e2e8f0'], borderWidth:2, borderColor:'#fff' }] },
+    options:{ maintainAspectRatio:false, cutout:'58%', plugins:{ legend, tooltip:{ backgroundColor:'#083d24' } } } });
+
+  /* 3 · loại cảnh báo (top 8) — gộp theo Mã alarm, tên lấy từ Sheet 17 */
+  const topOf = (keyFn, labelFn) => {
+    const m = new Map();
+    R.forEach(a => { const k = keyFn(a); if (!k) return; m.set(k, (m.get(k) || 0) + 1); });
+    return [...m.entries()].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([k, n]) => ({ k, n, label:labelFn(k) }));
+  };
+  const hbar = (id, items, color) => {
+    const el = kill(id); if (!el) return;
+    el._chart = new Chart(el, { type:'bar',
+      data:{ labels: items.length ? items.map(x => x.label) : ['Chưa có dữ liệu'],
+             datasets:[{ data: items.length ? items.map(x => x.n) : [0], backgroundColor:color, borderRadius:4, maxBarThickness:20 }] },
+      options:{ indexAxis:'y', maintainAspectRatio:false, plugins:{ legend:{ display:false }, tooltip:{ backgroundColor:'#083d24' } },
+        scales:{ x:Object.assign({ beginAtZero:true }, ax), y:{ ticks:{ color:'#475569', font:font(10) }, grid:{ display:false } } } } });
+  };
+  const short = (s, n) => String(s).length > n ? String(s).slice(0, n - 1) + '…' : String(s);
+  hbar('chAlType', topOf(a => String(a.r['Mã alarm'] || a.r['Nội dung gốc'] || '').trim(),
+    k => short(alDictName_(k) || k, 30)), '#0d6e3f');
+  hbar('chAlMachine', topOf(a => a.code, k => k), '#1e6bb8');
+}
+
+/* ============================================================================
+ *  XUẤT EXCEL — đúng tập đang lọc
+ * ========================================================================== */
+function alExport(){
+  const f = Q.f, today = simTodayNum_(), q = String(f.al || '').trim().toLowerCase();
+  const stOk = a => f.alState === 'all' ? true
+    : (f.alState === 'open' ? (a.state === 'Mới' || a.state === 'Đang xử lý')
+    : (f.alState === 'done' ? a.state === 'Đã xử lý' : a.state === 'Bỏ qua'));
+  const list = alRows_().filter(a => alInRange_(a, f.alRange, today) && stOk(a)
+    && (!f.alLevel.size || f.alLevel.has(a.level))
+    && (!q || [a.code, a.r['Nội dung gốc'], a.r['Mã alarm'], farmOfCode_(a.code), a.r['Người xử lý']].join(' ').toLowerCase().indexOf(q) >= 0));
+  if (!list.length){ toast('Không có cảnh báo nào trong bộ lọc để xuất', 'err'); return; }
+  const cols = [
+    { key:'t', label:'Thời gian', type:'text' }, { key:'ma', label:'Mã máy', type:'text' }, { key:'trai', label:'Trang trại', type:'text' },
+    { key:'al', label:'Mã alarm', type:'text' }, { key:'ten', label:'Tên cảnh báo', type:'text' }, { key:'nd', label:'Nội dung gốc', type:'text' },
+    { key:'md', label:'Mức độ', type:'text' }, { key:'zl', label:'Đã gửi Zalo', type:'text' }, { key:'nn', label:'Người nhận', type:'text' },
+    { key:'st', label:'Trạng thái xử lý', type:'text' }, { key:'nx', label:'Người xử lý', type:'text' }, { key:'gc', label:'Ghi chú xử lý', type:'text' },
+  ];
+  const rows = list.map(a => { const r = a.r; return { t:a.time, ma:a.code, trai:farmOfCode_(a.code), al:r['Mã alarm'],
+    ten:alDictName_(r['Mã alarm']), nd:r['Nội dung gốc'], md:r['Mức độ'], zl:a.zalo ? 'Đã gửi' : '', nn:r['Người nhận'],
+    st:a.state, nx:r['Người xử lý'], gc:r['Ghi chú xử lý'] }; });
+  exportXls_('canh-bao-may-' + simStamp_(), 'Cảnh báo máy Smartgen (' + list.length + ' dòng)', cols, rows);
 }
 
 /* ---------- Tiện ích ------------------------------------------------------ */
