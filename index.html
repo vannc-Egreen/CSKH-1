@@ -14650,7 +14650,7 @@ function simRowHtml_(s, viewPrice){
 
   const bill = r['Loại SIM'] === 'Trả sau' && r['Ngày chốt cước'] ? ` · chốt ngày ${esc(r['Ngày chốt cước'])}` : '';
   const kyTxt = s.canPay && r['Kỳ từ']
-    ? `<div style="font-size:10px;color:var(--mu)" title="Kỳ cước sẽ thanh toán">Kỳ ${simVn_(r['Kỳ từ'])} → ${simVn_(r['Kỳ đến'])}${r['Số ngày tính cước'] !== '' ? ' · ' + r['Số ngày tính cước'] + ' ngày' : ''}${r['Cước trọn kỳ'] === false ? ' (theo ngày)' : ''}</div>`
+    ? `<div style="font-size:10px;color:var(--mu)" title="Kỳ cước sẽ thanh toán">${r._kyCuoi ? '<b style="color:var(--amb)">Kỳ cuối</b> · ' : ''}Kỳ ${simVn_(r['Kỳ từ'])} → ${simVn_(r['Kỳ đến'])}${r['Số ngày tính cước'] !== '' ? ' · ' + r['Số ngày tính cước'] + ' ngày' : ''}${r['Cước trọn kỳ'] === false ? ' (theo ngày)' : ''}</div>`
     : '';
   const warnTxt = (r._canhbao && r._canhbao.length) ? `<div style="font-size:10px;color:var(--amb)">⚠ ${esc(r._canhbao.join('; '))}</div>` : '';
   const note = r['Ghi chú'] ? ` <span title="${esc(r['Ghi chú'])}" style="cursor:help">📝</span>` : '';
@@ -14670,11 +14670,13 @@ function simRowHtml_(s, viewPrice){
       ${r['Cước theo hóa đơn kỳ này (đ)'] !== '' && r['Cước theo hóa đơn kỳ này (đ)'] != null
           ? `<div style="font-size:10px;color:var(--bl)" title="Số tiền lấy theo hóa đơn nhà mạng, không phải giá gói">theo hóa đơn${(r['Cước giá gói kỳ này (đ)'] !== '' && r['Cước giá gói kỳ này (đ)'] != null) ? ' · gói ' + vnd0_(r['Cước giá gói kỳ này (đ)']) : ''}</div>`
           : (r['Giá gói cước (đ)'] !== '' && r['Giá gói cước (đ)'] != null ? `<div style="font-size:10px;color:var(--mu)">gói ${vnd0_(r['Giá gói cước (đ)'])}</div>` : '')}</td>` : ''}
-    <td>${simStatusBadge_(r['Trạng thái SIM'])}</td>
+    <td>${simStatusBadge_(r['Trạng thái SIM'])}${r['Ngày hủy SIM'] ? `<div style="font-size:10px;color:var(--mu)">hủy ${simVn_(r['Ngày hủy SIM'])}</div>` : ''}${r._dongKhep ? '<div style="font-size:10px;color:var(--g)">đã trả đủ tới ngày hủy</div>' : ''}</td>
     <td style="text-align:right;white-space:nowrap">
       ${payBtn}
       <button class="btn bg-gr sm" onclick="simOpenEdit(${s.row},'')" title="Xem / sửa thông tin SIM">✏️ Sửa</button>
-      <button class="btn bg-gr sm" onclick="simOpenEdit(${s.row},'serial')" title="Thay SIM khác vào máy: nhập seri mới, hệ thống ghi lại seri cũ vào Ghi chú">🔁 Thay SIM</button>
+      ${s.level !== 'cancel' && s.level !== 'final' && !r['Ngày hủy SIM']
+        ? `<button class="btn bg-gr sm" onclick="simOpenReplace(${s.row})" title="SIM cũ bị hủy, lắp SIM mới: SIM cũ được GIỮ làm lịch sử và vẫn phải đóng cước tới ngày hủy">🔁 Thay SIM</button>` : ''}
+      ${simGroupCount_(s) > 1 ? `<button class="btn bg-gr sm" onclick="simHistoryOpen('${esc(s.code)}','${esc(s.purpose)}')" title="Các SIM đã từng gắn ở máy này cho mục đích này">🕘 Lịch sử (${simGroupCount_(s)})</button>` : ''}
     </td></tr>`;
 }
 
@@ -15043,8 +15045,8 @@ async function simDoPay(row){
 
 /* ============================================================================
  *  SỬA / THÊM / THAY SIM
- *  Thay SIM thật ngoài hiện trường là việc hay xảy ra: sửa ô “Mã seri SIM” là đủ — server tự chép
- *  seri cũ vào Ghi chú (kèm ngày và người sửa) và ghi Change Log.
+ *  Thay SIM thật (SIM cũ hủy, SIM mới lắp bù) đi qua simOpenReplace → action simReplace: SIM cũ giữ làm dòng lịch sử + vẫn nợ cước
+ *  tới ngày hủy, SIM mới là dòng mới. Sửa ô “Mã seri SIM” chỉ để chữa seri gõ sai (seri cũ vẫn được chép vào Ghi chú).
  * ========================================================================== */
 function simKnownCodes_(){
   const set = new Set(((Q.sim && Q.sim.rows) || []).map(r => String(r['Mã máy'] || '').toUpperCase()).filter(Boolean));
@@ -15053,6 +15055,89 @@ function simKnownCodes_(){
     if (c) set.add(c);
   });
   return [...set].sort((a, b) => a.localeCompare(b, 'vi', { numeric:true }));
+}
+
+/** Số dòng SIM (đã khai) cùng máy + cùng mục đích: > 1 nghĩa là có lịch sử đổi SIM. */
+function simGroupCount_(s){
+  const m = Q._simGrp && Q._simGrp.rows === Q.sim.rows ? Q._simGrp.map : null;
+  let map = m;
+  if (!map){
+    map = new Map();
+    ((Q.sim && Q.sim.rows) || []).forEach(r => { if (!r._co) return; const k = r['Mã máy'] + '|' + r['Mục đích SIM']; map.set(k, (map.get(k) || 0) + 1); });
+    Q._simGrp = { rows: Q.sim.rows, map };
+  }
+  return map.get(s.code + '|' + s.purpose) || 0;
+}
+
+function simLocalIso_(){
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+/** LỊCH SỬ SIM của một máy + mục đích: SIM cũ (đã hủy) và SIM đang dùng, theo thứ tự trên Sheet. */
+function simHistoryOpen(code, purpose){
+  const list = ((Q.sim && Q.sim.rows) || []).filter(r => r._co && r['Mã máy'] === code && r['Mục đích SIM'] === purpose);
+  const vp = !!Q.perm.viewPrice;
+  const rows = list.map(r => {
+    const huy = /hủy|huỷ/i.test(r['Trạng thái SIM'] || '');
+    return `<tr${huy ? ' style="opacity:.8"' : ''}>
+      <td style="font-family:var(--mono);font-size:11px">${esc(r['Mã seri SIM'] || '—')}</td>
+      <td>${simStatusBadge_(r['Trạng thái SIM'])}</td>
+      <td style="font-size:11px">${r['Ngày đăng ký'] ? simVn_(r['Ngày đăng ký']) : '—'}</td>
+      <td style="font-size:11px">${r['Ngày hủy SIM'] ? simVn_(r['Ngày hủy SIM']) : '—'}</td>
+      <td style="font-size:11px">${r['Đã thanh toán đến'] ? simVn_(r['Đã thanh toán đến']) : '—'}</td>
+      <td style="font-size:11px">${huy ? (r._cuocCuoi ? `<span class="b ba">còn cước kỳ cuối${vp && r['Số tiền cần thanh toán (đ)'] !== '' ? ' · ' + vnd0_(r['Số tiền cần thanh toán (đ)']) : ''}</span>` : '<span class="b bg">đã trả đủ</span>') : (r['Hạn thanh toán'] ? 'hạn ' + simVn_(r['Hạn thanh toán']) : '—')}</td>
+      <td style="font-size:10px;color:var(--mu);white-space:pre-wrap;max-width:260px">${esc(r['Ghi chú'] || '')}</td></tr>`;
+  }).join('');
+  openOv(`<div class="mh"><div><h2>🕘 Lịch sử SIM · ${esc(code)}</h2><p>${esc(purpose)} — SIM cũ vẫn phải trả cước tới ngày hủy; mỗi lần đóng cước được ghi vào chi phí vận hành của máy (đ/kWh).</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb"><div class="tw"><table><thead><tr><th>Seri</th><th>Trạng thái</th><th>Đăng ký</th><th>Hủy</th><th>Đã thanh toán đến</th><th>Cước</th><th>Ghi chú</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div style="font-size:10px;color:var(--mu);margin-top:8px">Chi tiết từng lần đóng cước (ngày, số tiền, kỳ) xem ở Sheet “15. Nhật ký nhập xuất vật tư” — mã VT “SIM”, ghi chú có seri. Thao tác Thay SIM xem ở Sheet “${esc((Q.sim && Q.sim.confirmSheet) || '37. Xác nhận SIM máy')}”.</div></div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`, 'simhist:' + code + purpose);
+}
+
+/** THAY SIM: SIM cũ bị hủy, SIM mới lắp bù. SIM cũ KHÔNG bị ghi đè — giữ làm dòng lịch sử, vẫn nợ cước tới ngày hủy. */
+function simOpenReplace(row){
+  const s = simAnnot_().find(x => x.row === row);
+  if (!s || !s.has){ toast('Không tìm thấy SIM — hãy tải lại trang', 'err'); return; }
+  const r = s.r, editPrice = !!Q.perm.editPrice, today = simLocalIso_();
+  openOv(`<div class="mh"><div><h2>🔁 Thay SIM · ${esc(s.code)}</h2><p>${esc(s.purpose)} · SIM cũ seri <span style="font-family:var(--mono)">${esc(r['Mã seri SIM'] || '—')}</span></p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div style="font-size:11px;color:var(--mu);background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:10px;line-height:1.5">
+        SIM cũ được <b>giữ lại làm lịch sử</b> (trạng thái “Đã hủy” + ngày hủy). Thời gian đã dùng tới ngày hủy <b>vẫn phải đóng cước</b>: khoản này hiện ở “Đề xuất thanh toán” và khi đóng sẽ được tính vào chi phí vận hành đ/kWh của máy.
+        SIM mới là một dòng mới ngay dưới, kế thừa nhà mạng · loại SIM · giá gói · ngày chốt cước của SIM cũ.</div>
+      <div class="fgrid fg2" style="padding:0">
+        <div class="iw"><div class="il">Mã seri SIM MỚI *</div><input class="inp" id="rpSerial" autocomplete="off" placeholder="Dãy số in trên SIM mới (19 chữ số)"></div>
+        <div class="iw"><div class="il">Số thuê bao SIM mới</div><input class="inp" id="rpPhone" autocomplete="off"></div>
+        <div class="iw"><div class="il">Ngày HỦY SIM cũ *</div><input class="inp" type="date" id="rpCancel" value="${today}" onchange="const a=$('rpAct'); if(a && !a.dataset.touched) a.value=this.value">
+          <div style="font-size:10px;color:var(--mu)">Cước SIM cũ được tính tới hết ngày này.</div></div>
+        <div class="iw"><div class="il">Ngày KÍCH HOẠT SIM mới *</div><input class="inp" type="date" id="rpAct" value="${today}" oninput="this.dataset.touched=1"></div>
+        ${editPrice ? `<div class="iw"><div class="il">Hóa đơn thật của SIM cũ (đ) <span style="font-weight:400;color:var(--mu)">— nếu đã có</span></div>
+          <input class="inp" type="number" min="0" step="1" id="rpFinal" placeholder="Để trống = hệ thống tự tính theo ngày dùng">
+          <div style="font-size:10px;color:var(--mu)">Áp cho kỳ cước đang chờ đóng của SIM cũ.</div></div>` : ''}
+        <div class="iw full"><div class="il">Ghi chú (lý do thay)</div><textarea class="ta" id="rpNote" rows="2" placeholder="VD: SIM hỏng, nhà mạng thu hồi…"></textarea></div>
+      </div></div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Hủy</button>
+      <button class="btn bg-g" onclick="simReplaceSubmit(${row})">✓ Thay SIM</button></div>`, 'simrep:' + row);
+  const el = $('rpSerial'); if (el) el.focus();
+}
+
+async function simReplaceSubmit(row){
+  const s = simAnnot_().find(x => x.row === row); if (!s) return;
+  const g = id => { const el = $(id); return el ? String(el.value == null ? '' : el.value).trim() : ''; };
+  const newSerial = g('rpSerial');
+  if (!newSerial){ toast('Chưa nhập seri SIM mới', 'err'); return; }
+  if (!g('rpCancel')){ toast('Chưa nhập ngày hủy SIM cũ', 'err'); return; }
+  if (!g('rpAct')){ toast('Chưa nhập ngày kích hoạt SIM mới', 'err'); return; }
+  const payload = { row, maCode: s.code, purpose: s.purpose, newSerial, newPhone: g('rpPhone'),
+    cancelDate: g('rpCancel'), activateDate: g('rpAct'), note: g('rpNote'), nguoi:(S.user && S.user.name) || '' };
+  if (Q.perm.editPrice && g('rpFinal') !== '') payload.finalBill = g('rpFinal');
+  const d = await apiPost({ action:'simReplace', user:(S.user && S.user.name) || 'admin', payload });
+  if (!d || !d.ok){ toast((d && d.error) || 'Lỗi', 'err'); return; }
+  closeOv(); await loadQlvt(); renderPage('sim');
+  toast('✓ Đã thay SIM — SIM cũ giữ làm lịch sử' + (d.kyCuoi ? ', còn cước kỳ ' + d.kyCuoi : ''), 'ok');
+  if (d.warnings && d.warnings.length) setTimeout(() => toast('⚠ ' + d.warnings.join(' · '), 'warn'), 900);
 }
 
 function simOpenEdit(row, focus, preset){
@@ -15075,7 +15160,7 @@ function simOpenEdit(row, focus, preset){
   };
   const code = s ? s.code : String((preset && preset.code) || '');
   const purpose = s ? s.purpose : String((preset && preset.purpose) || '');
-  const title = (focus === 'serial' && !isNew) ? '🔁 Thay SIM' : (isNew ? '＋ Khai SIM' : '✏️ Thông tin SIM');
+  const title = (focus === 'serial' && !isNew) ? '✏️ Sửa seri SIM' : (isNew ? '＋ Khai SIM' : '✏️ Thông tin SIM');
   const codeField = s
     ? `<input class="inp" id="seCode" value="${esc(code)}" readonly>`
     : `<input class="inp" id="seCode" list="seCodes" autocomplete="off" placeholder="Gõ hoặc chọn mã máy" value="${esc(code)}">
@@ -15104,7 +15189,7 @@ function simOpenEdit(row, focus, preset){
         <div class="iw"><div class="il">Mục đích SIM</div>${purposeField}</div>
         <div class="iw"><div class="il">Mã seri SIM ${focus === 'serial' ? '(nhập seri SIM MỚI)' : ''}</div>
           <input class="inp" id="seSerial" autocomplete="off" value="${esc(v('Mã seri SIM'))}" ${focus === 'serial' ? 'style="border-color:var(--g);box-shadow:0 0 0 3px rgba(13,110,63,.15)"' : ''}>
-          <div style="font-size:10px;color:var(--mu)" id="seSerialHint">Dãy số in trên SIM (ICCID). Đổi seri thì seri cũ được ghi lại vào Ghi chú.</div></div>
+          <div style="font-size:10px;color:var(--mu)" id="seSerialHint">Dãy số in trên SIM (ICCID). Chỉ dùng để SỬA seri gõ sai; SIM thật sự bị thay thì dùng nút “Thay SIM”.</div></div>
         <div class="iw"><div class="il">Số thuê bao</div><input class="inp" id="sePhone" autocomplete="off" value="${esc(v('Số thuê bao'))}"></div>
         <div class="iw"><div class="il">Nhà mạng</div><select class="sel" id="seCarrier">${opt(L.carriers, v('Nhà mạng'))}</select></div>
         <div class="iw"><div class="il">Loại SIM</div><select class="sel" id="seType" onchange="simEditToggle_()">${opt(L.types, v('Loại SIM'))}</select></div>
@@ -15127,6 +15212,8 @@ function simOpenEdit(row, focus, preset){
         <div class="iw"><div class="il">Đã thanh toán đến</div><input class="inp" type="date" id="sePaid" value="${esc(v('Đã thanh toán đến'))}">
           <div style="font-size:10px;color:var(--mu)">Mốc đã trả tiền tới ngày nào. Để trống = tính từ ngày đăng ký. Bấm “Đã đóng” sẽ tự cập nhật ô này.</div></div>
         <div class="iw"><div class="il">Trạng thái SIM</div><select class="sel" id="seStatus">${opt(L.statuses, v('Trạng thái SIM'))}</select></div>
+        <div class="iw"><div class="il">Ngày hủy SIM</div><input class="inp" type="date" id="seCancel" value="${esc(v('Ngày hủy SIM'))}">
+          <div style="font-size:10px;color:var(--mu)">Chỉ điền khi SIM đã bị hủy. SIM hủy vẫn phải đóng cước tới ngày này; có ngày hủy thì trạng thái tự thành “Đã hủy”. Thay SIM thì dùng nút “Thay SIM” để giữ lịch sử.</div></div>
         <div class="iw full"><div class="il">Ghi chú</div><textarea class="ta" id="seNote" rows="3">${esc(v('Ghi chú'))}</textarea></div>
       </div>
     </div>
@@ -15142,7 +15229,7 @@ function simOpenEdit(row, focus, preset){
     const o = hint.dataset.orig || '', n = hint.value.trim();
     h.innerHTML = (o && n !== o)
       ? `Seri cũ <b>${esc(o)}</b> sẽ được ghi vào Ghi chú kèm ngày và tên người đổi.`
-      : 'Dãy số in trên SIM (ICCID). Đổi seri thì seri cũ được ghi lại vào Ghi chú.';
+      : 'Dãy số in trên SIM (ICCID). Chỉ dùng để SỬA seri gõ sai; SIM thật sự bị thay thì dùng nút “Thay SIM”.';
   });
   if (focus === 'serial' && hint){ hint.focus(); hint.select(); }
 }
@@ -15167,7 +15254,7 @@ async function simSaveForm(row, isNew){
   const map = { 'Mã seri SIM':'seSerial', 'Số thuê bao':'sePhone', 'Nhà mạng':'seCarrier', 'Loại SIM':'seType',
     'Ngày đăng ký':'seReg', 'Chu kỳ thanh toán':'seCycle', 'Ngày chốt cước':'seBill',
     'Giá gói cước (đ)':'sePrice', 'Đã thanh toán đến':'sePaid', 'Trạng thái SIM':'seStatus', 'Ghi chú':'seNote',
-    'Cước theo hóa đơn kỳ này (đ)':'seOver' };
+    'Cước theo hóa đơn kỳ này (đ)':'seOver', 'Ngày hủy SIM':'seCancel' };
   const fields = {};
   Object.keys(map).forEach(k => {
     if ((k === 'Giá gói cước (đ)' || k === 'Cước theo hóa đơn kỳ này (đ)') && !Q.perm.editPrice) return;
@@ -15312,7 +15399,7 @@ function simExportCsv(){
   const headers = ['Mã máy', 'Loại hình', 'Đơn vị hợp tác', 'Khu vực', 'Tỉnh thành', 'Tên trại', 'Trạng thái máy', 'Mục đích SIM',
     'Mã seri SIM', 'Số thuê bao', 'Nhà mạng', 'Loại SIM', 'Ngày đăng ký', 'Chu kỳ thanh toán', 'Ngày chốt cước',
     ...(vp ? ['Giá gói cước (đ)', 'Cước theo hóa đơn kỳ này (đ)'] : []),
-    'Đã thanh toán đến', 'Hạn thanh toán', 'Số ngày còn lại', 'Tình trạng hạn',
+    'Ngày hủy SIM', 'Đã thanh toán đến', 'Hạn thanh toán', 'Số ngày còn lại', 'Tình trạng hạn',
     ...(vp ? ['Số tiền cần thanh toán (đ)'] : []), 'Trạng thái SIM', 'Ghi chú'];
   const rows = list.map(s => { const r = s.r; return {
     'Mã máy':s.code, 'Loại hình':r['Loại hình'], 'Đơn vị hợp tác':r['Đơn vị hợp tác'], 'Khu vực':r['Khu vực'], 'Tỉnh thành':r['Tỉnh thành'],
@@ -15320,7 +15407,7 @@ function simExportCsv(){
     'Mã seri SIM':txt(r['Mã seri SIM']), 'Số thuê bao':txt(r['Số thuê bao']), 'Nhà mạng':r['Nhà mạng'], 'Loại SIM':r['Loại SIM'],
     'Ngày đăng ký':simVn_(r['Ngày đăng ký']), 'Chu kỳ thanh toán':r['Chu kỳ thanh toán'], 'Ngày chốt cước':r['Ngày chốt cước'],
     'Giá gói cước (đ)':r['Giá gói cước (đ)'], 'Cước theo hóa đơn kỳ này (đ)':r['Cước theo hóa đơn kỳ này (đ)'],
-    'Đã thanh toán đến':simVn_(r['Đã thanh toán đến']), 'Hạn thanh toán':simVn_(s.dueIso), 'Số ngày còn lại':s.days === null ? '' : s.days,
+    'Ngày hủy SIM':simVn_(r['Ngày hủy SIM']), 'Đã thanh toán đến':simVn_(r['Đã thanh toán đến']), 'Hạn thanh toán':simVn_(s.dueIso), 'Số ngày còn lại':s.days === null ? '' : s.days,
     'Tình trạng hạn': s.has ? simLvLabel_(s.level) : (r._khongSim ? 'Không có SIM (đã duyệt)' : 'Chưa khai SIM'),
     'Số tiền cần thanh toán (đ)':s.money === null ? '' : s.money, 'Trạng thái SIM':r['Trạng thái SIM'], 'Ghi chú':r['Ghi chú'] }; });
   exportCsv({ headers, rows }, 'theo-doi-sim-' + simStamp_());
