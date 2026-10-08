@@ -14342,8 +14342,25 @@ function simPendingKeys_(){
   return new Set(((Q.sim && Q.sim.pending) || []).map(p => p.code + '|' + p.purpose));
 }
 
+/** Danh sách ô SIM còn THIẾU sau khi áp đúng bộ lọc của trang (vị trí · mục đích · tìm kiếm).
+ *  Các bộ lọc chỉ có nghĩa với SIM đã khai (mức hạn, nhà mạng, loại SIM, trạng thái SIM) thì ẩn hẳn khối này. */
+function simPendingFiltered_(){
+  const f = Q.f, q = String(f.sim || '').trim().toLowerCase();
+  const inSet = (set, v) => !set.size || set.has(v);
+  if (f.simLv || f.simCarrier.size || f.simType.size || f.simStatus.size) return [];
+  return ((Q.sim && Q.sim.pending) || []).filter(p => {
+    if (!inSet(f.simPurpose, p.purpose)) return false;
+    if (!inSet(f.simRegion, String(p.khu || ''))) return false;
+    if (!inSet(f.simLoaiHinh, String(p.loaiHinh || ''))) return false;
+    if (!inSet(f.simUnit, String(p.donVi || ''))) return false;
+    if (q && [p.code, p.trai, p.donVi, p.loaiHinh, p.khu, p.tinh].join(' ').toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  });
+}
+
 /** Bộ lọc của bảng chi tiết. Ô trống chỉ hiện khi bật công tắc riêng. */
-function simFiltered_(all){
+function simFiltered_(all, opt){
+  opt = opt || {};
   const f = Q.f, q = String(f.sim || '').trim().toLowerCase();
   const inSet = (set, v) => !set.size || set.has(v);
   const lvOk = s => {
@@ -14369,7 +14386,7 @@ function simFiltered_(all){
     if (!s.has){
       /* ô trống: bỏ qua các bộ lọc chỉ có nghĩa với SIM đã khai */
     } else {
-      if (!lvOk(s)) return false;
+      if (!opt.noLevel && !lvOk(s)) return false;
       if (!inSet(f.simCarrier, String(r['Nhà mạng'] || ''))) return false;
       if (!inSet(f.simType, String(r['Loại SIM'] || ''))) return false;
       if (!inSet(f.simStatus, String(r['Trạng thái SIM'] || ''))) return false;
@@ -14471,21 +14488,24 @@ function viewSim(){
   const viewPrice = !!Q.perm.viewPrice;
   const warn = simCfg_('SIM_WARN_DAYS', 5);
   const all = simAnnot_();
-  const st = simStats_(all);
+  /* MỌI số liệu của trang bám đúng bộ lọc: st = tập đã lọc đầy đủ; stBase = lọc mọi thứ trừ “Mức hạn” (để chip mức hạn đếm đúng). */
   const list = simFiltered_(all);
+  const st = simStats_(list);
+  const stBase = simStats_(simFiltered_(all, { noLevel:true }));
   const CAP = 400;
   const shown = list.slice(0, CAP);
 
-  const pend = sim.pending || [];
+  const pend = simPendingFiltered_();
   const nMissing = pend.length;
   const nPendNew = pend.filter(p => p.kind === 'new').length, nPendCan = pend.filter(p => p.kind === 'cancelled').length;
-  const nEmpty = all.filter(s => !s.has && !s.stopped).length;
+  const nEmpty = simFiltered_(all.filter(s => !s.has), { noLevel:true }).length;
   /* Số MÁY đã dừng / thu hồi / chưa lắp / tồn kho đang có dòng SIM — nút “Kể cả máy đã dừng” chỉ hiện khi có. */
   const nStoppedM = new Set(all.filter(s => s.stopped && s.has).map(s => s.code)).size;
   const emptyTxt = nMissing
     ? `${nPendNew ? nPendNew + ' máy mới / vừa lắp · ' : ''}${nPendCan ? nPendCan + ' SIM cũ đã hủy · ' : ''}${nMissing - nPendNew - nPendCan} thiếu từ trước`
     : 'Mọi máy đều đã khai hoặc đã duyệt “không có”';
   const nLate = (st.byLevel.locked || 0) + (st.byLevel.overdue || 0);
+  const nLateB = (stBase.byLevel.locked || 0) + (stBase.byLevel.overdue || 0);
   const nSoon = (st.byLevel.urgent || 0) + (st.byLevel.soon || 0);
   const purposes = Object.keys(st.byPurpose).map(k => `${st.byPurpose[k]} ${esc(k.replace(/^SIM /, ''))}`).join(' · ');
 
@@ -14529,11 +14549,11 @@ function viewSim(){
       ${grp('Loại hình', Q.f.simLoaiHinh, 'simLoaiHinh', simLocOpts_(all, 'Loại hình'))}
       ${grp('Đơn vị hợp tác', Q.f.simUnit, 'simUnit', simLocOpts_(all, 'Đơn vị hợp tác'))}
       <div class="msg"><span class="mslbl">Mức hạn</span>
-        ${lvChip('', 'Tất cả', st.total)}
-        ${lvChip('act', 'Cần xử lý', st.act.n)}
-        ${lvChip('late', 'Quá hạn / chặn', nLate)}
-        ${lvChip('ok', 'Còn hạn', st.byLevel.ok || 0)}
-        ${lvChip('miss', 'Thiếu thông tin', st.unknown)}
+        ${lvChip('', 'Tất cả', stBase.total)}
+        ${lvChip('act', 'Cần xử lý', stBase.act.n)}
+        ${lvChip('late', 'Quá hạn / chặn', nLateB)}
+        ${lvChip('ok', 'Còn hạn', stBase.byLevel.ok || 0)}
+        ${lvChip('miss', 'Thiếu thông tin', stBase.unknown)}
         <button class="fchip ${Q.f.simEmpty ? 'on' : ''}" onclick="Q.f.simEmpty=!Q.f.simEmpty;renderPage('sim')"
           title="Hiện cả những ô SIM còn trống (để khai mới hoặc xem ô đã duyệt “không có SIM”)">${Q.f.simEmpty ? '✓ ' : ''}Hiện ô trống · ${nEmpty}</button>
       </div>
@@ -14582,11 +14602,13 @@ function viewSim(){
         — chỉ cần khai đúng các ô nhập${(sim.missingCols && sim.missingCols.length) ? `<br><b style="color:var(--red)">⚠ Sheet đang thiếu cột: ${esc(sim.missingCols.join(', '))} — chạy menu “Dựng / chuyển bảng SIM”.</b>` : ''}</p>
     </div>
 
+    ${filterBar}
+
     <div class="krow">${kpis}</div>
 
-    ${simPendingHtml_()}
+    ${simPendingHtml_(pend)}
 
-    ${simProposalHtml_(all, st)}
+    ${simProposalHtml_(list, st)}
 
     <div class="cg2">
       <div class="cc"><div class="ct">Tình trạng hạn của ${nint_(st.total)} SIM</div><div class="cw"><canvas id="chSimLevel"></canvas></div></div>
@@ -14597,7 +14619,6 @@ function viewSim(){
       <div class="cc"><div class="ct">Mục đích sử dụng × trạng thái SIM</div><div class="cw"><canvas id="chSimStatus"></canvas></div></div>
     </div>
 
-    ${filterBar}
 
     <div class="card"><div class="ch"><h3>Danh sách SIM · ${nint_(list.length)} dòng${list.length > CAP ? ` <span style="color:var(--amb)">(đang hiện ${CAP} dòng đầu — lọc thêm để thu hẹp)</span>` : ''}</h3>
       <span class="b bmu">Sửa ô nhập ở đây hoặc trực tiếp trên Google Sheet đều được — hai nơi dùng chung một sổ</span></div>
@@ -14695,8 +14716,8 @@ const SIM_KIND = {
   legacy:      { label:'Chưa khai từ trước', cls:'bmu' },
 };
 
-function simPendingHtml_(){
-  const list = (Q.sim && Q.sim.pending) || [];
+function simPendingHtml_(listIn){
+  const list = listIn || simPendingFiltered_();
   if (!list.length) return '';
   const nNew = list.filter(p => p.kind === 'new').length, nCan = list.filter(p => p.kind === 'cancelled').length;
   const nOld = list.length - nNew - nCan;
@@ -14748,7 +14769,7 @@ function simPendToggle(key, on){
   simPendInfo_();
 }
 function simPendSelectAll(on){
-  const list = (Q.sim && Q.sim.pending) || [];
+  const list = simPendingFiltered_();
   Q.simPendSel = new Set(on ? list.map(p => p.code + '|' + p.purpose) : []);
   document.querySelectorAll('.simpk').forEach(c => { c.checked = Q.simPendSel.has(c.dataset.key); });
   simPendInfo_();
@@ -14773,7 +14794,7 @@ function simDefaults_(){
 }
 
 function simPendKhai(i){
-  const p = ((Q.sim && Q.sim.pending) || [])[i]; if (!p){ toast('Danh sách đã đổi — tải lại trang', 'err'); return; }
+  const p = simPendingFiltered_()[i]; if (!p){ toast('Danh sách đã đổi — tải lại trang', 'err'); return; }
   const seri = String((($('pnSeri' + i) || {}).value) || '').trim();
   simOpenEdit(p.row || 0, seri ? 'serial' : '', { code:p.code, purpose:p.purpose, serial:seri });
 }
@@ -14949,7 +14970,7 @@ function simProposalHtml_(all, st){
 
 function simSelInfoUpdate_(){
   const el = $('simSelInfo'); if (!el) return;
-  const items = simProposalItems_(simAnnot_()).filter(s => Q.simSel.has(s.row));
+  const items = simProposalItems_(simFiltered_(simAnnot_())).filter(s => Q.simSel.has(s.row));
   const tot = items.reduce((a, s) => a + (s.money || 0), 0);
   el.innerHTML = items.length
     ? `Đã chọn <b>${items.length}</b> SIM${Q.perm.viewPrice ? ` · tổng <b style="color:var(--red)">${fmtVnd_(tot)}</b>` : ''}`
@@ -14957,7 +14978,7 @@ function simSelInfoUpdate_(){
 }
 function simToggleSel(row, on){ if (on) Q.simSel.add(row); else Q.simSel.delete(row); simSelInfoUpdate_(); }
 function simSelectAll(on){
-  Q.simSel = new Set(on ? simProposalItems_(simAnnot_()).filter(s => s.canPay).map(s => s.row) : []);
+  Q.simSel = new Set(on ? simProposalItems_(simFiltered_(simAnnot_())).filter(s => s.canPay).map(s => s.row) : []);
   document.querySelectorAll('.simck').forEach(c => { c.checked = Q.simSel.has(Number(c.dataset.row)); });
   simSelInfoUpdate_();
 }
@@ -15279,7 +15300,7 @@ function simChartFont_(size){ return { family:'Be Vietnam Pro', size:size || 10 
 
 function afterSim(){
   if (!Q.loaded || !Q.sim || !Q.sim.exists || Q.sim.legacy || typeof Chart === 'undefined') return;
-  const all = simAnnot_(), act = all.filter(s => s.has && s.level !== 'cancel');
+  const all = simFiltered_(simAnnot_()), act = all.filter(s => s.has && s.level !== 'cancel');
   const viewPrice = !!Q.perm.viewPrice;
   const kill = id => { const el = $(id); if (el && el._chart){ el._chart.destroy(); el._chart = null; } return el; };
   const legend = { position:'bottom', labels:{ color:'#475569', font:simChartFont_(10), boxWidth:11, padding:8 } };
@@ -15454,7 +15475,7 @@ function simExportSummary(){
 
 function simExportProposal(){
   const vp = !!Q.perm.viewPrice;
-  const items = simProposalItems_(simAnnot_());
+  const items = simProposalItems_(simFiltered_(simAnnot_()));
   if (!items.length){ toast('Hiện không có SIM nào cần thanh toán', 'info'); return; }
   const cols = [
     { key:'stt', label:'STT', type:'int' }, { key:'ma', label:'Mã máy', type:'text' }, { key:'khu', label:'Khu vực', type:'text' },
