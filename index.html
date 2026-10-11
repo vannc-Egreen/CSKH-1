@@ -13716,7 +13716,7 @@ function viewMatCost(){
       </div>`;
     })()}
 
-    <div class="card"><div class="ch"><h3>Trung bình theo dòng máy</h3>
+    <div class="card"><div class="ch"><h3>Chi phí vận hành trung bình theo dòng máy</h3>
       <span class="b bmu">mốc so sánh: TOÀN ĐỘI, không đổi theo bộ lọc</span></div><div class="cb">
       <div class="effstats">${avgLoc.map(a=>`<div class="es" style="cursor:pointer"
           title="Bấm để xem ${a.n} máy đã tạo ra con số trung bình này"
@@ -13725,6 +13725,8 @@ function viewMatCost(){
         <div class="esv">${fmt2_(a.avgCostPerKwh)} <span style="font-size:9px;color:var(--mu);font-weight:500">đ/kWh · ${a.n} máy</span></div>
       </div>`).join('') || '<div class="empty">Chưa đủ dữ liệu.</div>'}</div>
     </div></div>
+
+    ${qCostSimCardHtml_(rows, d, avgLoc)}
 
     <div class="card"><div class="ch"><h3>Chi tiết theo máy</h3>
       <span class="b bmu">${nint_(rows.length)}/${nint_(all.length)} máy · sắp xếp: lệch nhiều nhất lên đầu</span>
@@ -13941,6 +13943,9 @@ function qCostMachine(code){
           <td style="text-align:right;font-family:var(--mono)">${vnd0_(tong)}</td>
           <td colspan="3"></td></tr></tfoot>`:''}
       </table></div></div>
+      ${(r.costSim||0) > 0 ? `<div style="font-size:11px;line-height:1.7;margin-top:8px;padding:8px 10px;background:#f8fafc;border:1px solid var(--bd);border-radius:7px">
+        <b>Cước SIM đã đóng tháng này: ${fmtVnd_(r.costSim)}</b> (${nint_(r.phieuSim||0)} kỳ) — <b>không</b> nằm trong chi phí vật tư và đ/kWh ở trên.
+        Tiền SIM được gộp ở khối “Chi phí truyền thông, camera” (tổng tiền ÷ tổng điện phát của nhóm).</div>` : ''}
       <div style="font-size:11px;color:var(--mu);margin-top:8px;line-height:1.7">
         Muốn xem từng phiếu một: mở <b onclick="closeOv();Q.f.moveQ='${esc(r.code)}';nav('stock')"
         style="color:var(--bl);cursor:pointer;text-decoration:underline">Nhật ký nhập xuất</b> — nó đã lọc sẵn theo mã máy này.
@@ -13981,7 +13986,8 @@ function qCostExportMain(){
      {key:'cost',label:'Chi phí VT (đ)',type:'money'}, {key:'kwh',label:'Điện phát (kWh)',type:'num'},
      {key:'costPerKwh',label:'đ/kWh',type:'num'}, {key:'modelAvg',label:'TB dòng máy',type:'num'},
      {key:'devPct',label:'Lệch (%)',type:'num'}, {key:'flag',label:'Đánh giá',type:'text'},
-     {key:'_vt',label:'Vật tư đã dùng',type:'text'}],
+     {key:'_vt',label:'Vật tư đã dùng',type:'text'},
+     {key:'costSim',label:'Cước SIM đã đóng (đ, không tính vào đ/kWh)',type:'money'}],
     rows.map(r => Object.assign({}, r, {
       site: r.site || farmOfCode_(r.code) || '',
       _vt: Object.keys(r.detail||{}).map(k=>`${k}: ${r.detail[k]}`).join(' · ')
@@ -14093,11 +14099,131 @@ function qCostBase_(){
 }
 
 /** Tên hiển thị của bộ lọc vật tư đang bật — dùng trong tiêu đề, chú thích, tên file. */
-/** Danh mục để lọc chi phí = vật tư (Sheet 10) + khoản “Cước SIM”. SIM không phải vật tư kho nên không có ở Sheet 10, nhưng phiếu đóng
- *  cước SIM (mã VT “SIM”, Sheet 15) CÓ cộng vào chi phí tháng và đ/kWh của máy — nên phải lọc / xem riêng được như một khoản chi. */
+/** Danh mục để lọc chi phí = vật tư (Sheet 10). Cước SIM (mã VT “SIM”, Sheet 15) KHÔNG còn là một vật tư ở đây: nó không cộng vào chi phí /
+ *  đ/kWh của từng máy mà gộp riêng ở khối “Chi phí truyền thông, camera” (tổng tiền SIM ÷ tổng điện phát) — xem qCostSimCardHtml_. */
 function qCostItems_(){
-  const c = qItems_();
-  return c.some(v => v.vt === 'SIM') ? c : c.concat([{ vt:'SIM', ten:'Cước SIM', dvt:'kỳ', theoGio:false, nhom:'Chi phí khác' }]);
+  return qItems_().filter(v => String(v.vt || '').toUpperCase() !== 'SIM');
+}
+
+/* ============================================================================
+ *  CHI PHÍ TRUYỀN THÔNG, CAMERA (cước SIM) — TỔNG TIỀN ÷ TỔNG ĐIỆN PHÁT
+ * ----------------------------------------------------------------------------
+ *  Tiền SIM là tiền THEO MÁY, không theo điện phát: máy nằm im vẫn phải trả đủ SIM truyền thông + camera. Chia riêng cho từng máy
+ *  thì máy không chạy có đ/kWh vọt lên, kéo trung bình dòng máy lên và làm cảnh báo vượt ngưỡng loạn. Nên:
+ *    · backend KHÔNG cộng cước SIM vào cost / costPerKwh của máy (analyzeMaterialCost);
+ *    · ở đây cộng costSim và kwh của TẬP MÁY ĐANG LỌC (khu vực · loại hình · đơn vị · đánh giá · ô tìm — đúng tập đang tính các ô tổng
+ *      ở đầu trang) rồi chia MỘT lần: Σ tiền SIM ÷ Σ kWh. Máy kWh = 0 vẫn góp tiền vào tử số — đó chính là ý nghĩa của “tổng/tổng”.
+ *    · bộ lọc VẬT TƯ không tác động (SIM không phải vật tư).
+ * ========================================================================== */
+function qCostSimAgg_(rows){
+  const a = { tien:0, kwh:0, phieu:0, nMay:0, nRows:(rows||[]).length, byModel:new Map() };
+  (rows||[]).forEach(r => {
+    const t = Number(r.costSim)||0, k = Number(r.kwh)||0, p = Number(r.phieuSim)||0;
+    a.tien += t; a.kwh += k; a.phieu += p; if (t > 0) a.nMay++;
+    const m = String(r.model||'—');
+    const g = a.byModel.get(m) || { model:m, tien:0, kwh:0, nMay:0, nRows:0 };
+    g.tien += t; g.kwh += k; g.nRows++; if (t > 0) g.nMay++;
+    a.byModel.set(m, g);
+  });
+  const per = (t,k) => k > 0 ? Math.round(t/k*100)/100 : null;
+  a.perKwh = per(a.tien, a.kwh);
+  a.models = [...a.byModel.values()].map(g => Object.assign(g, { perKwh:per(g.tien, g.kwh) }));
+  return a;
+}
+
+function qCostSimCardHtml_(rows, d, avgLoc){
+  const a = qCostSimAgg_(rows);
+  const ngoai = Number((d && d.simCost && d.simCost.ngoai) || 0);
+  /* Thứ tự dòng máy theo thẻ “Chi phí vận hành trung bình theo dòng máy” ngay trên để hai dải đọc song song; dòng máy nào có tiền SIM mà
+   * không có ở dải trên (chưa có điện phát) đứng cuối. Dòng máy không có tiền SIM và không có điện thì bỏ. */
+  const ord = new Map((avgLoc||[]).map((x,i) => [String(x.model), i]));
+  const models = a.models.filter(g => g.tien > 0 || g.kwh > 0)
+    .sort((x,y) => (ord.has(x.model)?ord.get(x.model):999) - (ord.has(y.model)?ord.get(y.model):999) || x.model.localeCompare(y.model,'vi'));
+  const unit = 'font-size:9px;color:var(--mu);font-weight:500';
+  const tile = (lbl, big, sub, click, title) => `<div class="es" ${click?`style="cursor:pointer" onclick="${click}"`:''} ${title?`title="${esc(title)}"`:''}>
+      <div class="esl">${lbl}</div><div class="esv">${big} <span style="${unit}">${sub}</span></div></div>`;
+  const head = `<div class="card"><div class="ch"><h3>Chi phí truyền thông, camera</h3>
+      <span class="b bmu">tổng tiền SIM ÷ tổng điện phát · theo bộ lọc đang chọn</span></div><div class="cb">`;
+  const foot = `<div style="font-size:11px;color:var(--mu);line-height:1.7;margin-top:6px">
+      Tiền SIM là tiền <b>theo máy</b>, máy nằm im vẫn phải trả — nên chi phí này được tính bằng <b>tổng tiền SIM ÷ tổng điện phát</b> của cả nhóm,
+      <b>không</b> cộng vào đ/kWh của từng máy và không tham gia cảnh báo “Vượt trung bình”. Chỉ gồm cước đã <b>đóng</b> (bấm “Đã đóng” ở trang Theo dõi SIM),
+      tính vào tháng của ngày chốt cước. Cước SIM văn phòng / nhà xưởng không tính vào đây. Bộ lọc vật tư không tác động tới khối này.
+      ${ngoai > 0 ? `<br><b style="color:var(--amb)">Chưa gồm ${fmtVnd_(ngoai)}</b> cước SIM của máy đã dừng / không còn trong danh sách máy đang vận hành (không có kWh để chia).` : ''}
+    </div>`;
+  if (!a.nRows) return head + '<div class="empty">Không có máy nào khớp bộ lọc.</div>' + foot + '</div></div>';
+  if (!(a.tien > 0)){
+    return head + `<div class="empty" style="padding:10px 0">Tháng ${esc(d.monthLabel)} chưa có cước SIM nào được đóng trong tập máy đang lọc —
+      chi phí này sẽ hiện khi bấm “Đã đóng” ở trang Theo dõi SIM.</div>` + foot + '</div></div>';
+  }
+  return head + `<div class="effstats">
+      ${tile('Phí truyền thông + camera TB 🔍', a.perKwh!=null ? fmt2_(a.perKwh) : '—', 'đ/kWh · ' + nint_(a.nMay) + ' máy có cước',
+             'qCostSimDrill()', 'Bấm để xem từng máy góp bao nhiêu tiền SIM')}
+      ${tile('Tổng tiền SIM', vnd0_(a.tien), 'đ · ' + nint_(a.phieu) + ' kỳ đã đóng', '', '')}
+      ${tile('Tổng điện phát', fmt2_(a.kwh), 'kWh · ' + nint_(a.nRows) + ' máy', '', '')}
+    </div>
+    ${models.length ? `<div style="font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.4px;margin:4px 0 6px">Theo dòng máy (tổng tiền ÷ tổng điện phát của dòng đó)</div>
+    <div class="effstats">${models.map(g => tile(esc(g.model) + ' 🔍', g.perKwh!=null ? fmt2_(g.perKwh) : '—',
+        g.perKwh!=null ? 'đ/kWh · ' + nint_(g.nMay) + '/' + nint_(g.nRows) + ' máy có cước' : 'chưa có điện phát · ' + vnd0_(g.tien) + ' đ',
+        `qCostSimDrill('${esc(g.model)}')`, 'Bấm để xem các máy của dòng này')).join('')}</div>` : ''}
+    ${foot}</div></div>`;
+}
+
+/** Bóc tách: từng máy (trong tập đang lọc) góp bao nhiêu tiền SIM, bao nhiêu kWh. Xuất được Excel. */
+function qCostSimDrill(model){
+  const d = Q.matCost; if (!d || !d.ok){ toast('Chưa có dữ liệu chi phí','err'); return; }
+  let rows = qCostFiltered_();
+  if (model !== undefined && model !== null && model !== '') rows = rows.filter(r => String(r.model) === String(model));
+  const a = qCostSimAgg_(rows);
+  const list = rows.slice().sort((x,y) => (y.costSim||0) - (x.costSim||0) || String(x.code).localeCompare(String(y.code),'vi',{numeric:true}));
+  Q._simDrill = { rows:list, model:model||'' };
+  const body = list.map(r => `<tr>
+      <td><span class="mm">${esc(r.code)}</span></td>
+      <td style="font-size:11px">${esc(r.site || farmOfCode_(r.code) || '—')}</td>
+      <td>${esc(r.model)}</td>
+      <td style="text-align:right;font-family:var(--mono)">${(r.costSim||0) > 0 ? vnd0_(r.costSim) : '—'}</td>
+      <td style="text-align:center">${nint_(r.phieuSim||0)}</td>
+      <td style="text-align:right">${fmt2_(r.kwh)}</td>
+      <td style="font-size:11px;color:var(--mu)">${(r.costSim||0) > 0 && !(r.kwh > 0) ? 'máy chưa có điện phát — tiền SIM vẫn tính vào tử số' : ''}</td>
+    </tr>`).join('') || '<tr><td colspan="7"><div class="empty">Không có máy nào.</div></td></tr>';
+  openOv(`
+    <div class="mh">
+      <div><h2>🔍 Chi phí truyền thông, camera${model ? ' · dòng ' + esc(model) : ''} · tháng ${esc(d.monthLabel)}</h2>
+      <p>Phí bình quân = <b>tổng tiền SIM ÷ tổng điện phát</b> của cả nhóm ${model ? 'dòng máy này' : 'đang lọc'} — không phải trung bình cộng của từng máy.
+      Máy không chạy vẫn phải trả SIM nên vẫn góp tiền vào tử số.</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button>
+    </div>
+    <div class="mb">
+      <div class="krow r1" style="margin-bottom:10px">
+        <div class="kcard"><div class="klbl">Số máy</div><div class="kval">${nint_(a.nRows)}</div>
+          <div class="ksub">${nint_(a.nMay)} máy có cước SIM</div></div>
+        <div class="kcard"><div class="klbl">Tổng tiền SIM</div><div class="kval">${fmtVnd_(a.tien)}</div>
+          <div class="ksub">${nint_(a.phieu)} kỳ đã đóng</div></div>
+        <div class="kcard"><div class="klbl">Tổng điện phát</div><div class="kval">${fmt2_(a.kwh)}</div><div class="ksub">kWh</div></div>
+        <div class="kcard"><div class="klbl">Bình quân</div><div class="kval">${a.perKwh!=null?fmt2_(a.perKwh):'—'}</div>
+          <div class="ksub">đ/kWh = tổng tiền ÷ tổng điện</div></div>
+      </div>
+      <div class="card"><div class="tw" style="max-height:50vh"><table>
+        <thead><tr><th>Mã máy</th><th>Trang trại</th><th>Dòng máy</th><th style="text-align:right">Cước SIM đã đóng (đ)</th>
+          <th style="text-align:center">Số kỳ</th><th style="text-align:right">Điện phát (kWh)</th><th></th></tr></thead>
+        <tbody>${body}</tbody>
+      </table></div></div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" onclick="closeOv()">Đóng</button>
+      <button class="btn bg-g" onclick="qCostSimExport()">⤓ Xuất Excel</button>
+    </div>`);
+}
+
+function qCostSimExport(){
+  const s = Q._simDrill, d = Q.matCost || {};
+  if (!s){ toast('Chưa có bảng nào để xuất','err'); return; }
+  exportXls_(
+    'chi-phi-truyen-thong-camera-' + (s.model ? qSlug_(s.model) + '-' : '') + String(d.monthLabel||'').replace('/','-'),
+    'Chi phí truyền thông, camera' + (s.model ? ' · dòng ' + s.model : '') + ' · tháng ' + (d.monthLabel||''),
+    [{key:'code',label:'Mã máy',type:'text'}, {key:'site',label:'Trang trại',type:'text'},
+     {key:'model',label:'Dòng máy',type:'text'}, {key:'costSim',label:'Cước SIM đã đóng (đ)',type:'money'},
+     {key:'phieuSim',label:'Số kỳ',type:'int'}, {key:'kwh',label:'Điện phát (kWh)',type:'num'}],
+    s.rows.map(r => Object.assign({}, r, { site: r.site || farmOfCode_(r.code) || '' })));
 }
 
 function qCostVtLabel_(){
@@ -14181,11 +14307,12 @@ function qExportCost(){
    * mà nhận về file cả nước sẽ không nhận ra — họ chỉ mở file lên và tin. */
   const rows = qCostFiltered_();
   exportCsv({
-    headers:['Mã máy','Dòng máy','Loại hình','Khu vực','Trại','Chi phí VT (đ)','Điện phát (kWh)','đ/kWh','TB dòng máy','Lệch %','Đánh giá'],
+    headers:['Mã máy','Dòng máy','Loại hình','Khu vực','Trại','Chi phí VT (đ)','Điện phát (kWh)','đ/kWh','TB dòng máy','Lệch %','Đánh giá','Cước SIM đã đóng (đ, không tính vào đ/kWh)'],
     rows: rows.map(r=>({ 'Mã máy':r.code,'Dòng máy':r.model,
       'Loại hình':r.loaiHinh||'','Khu vực':r.region||'','Trại':r.site,
       'Chi phí VT (đ)':r.cost,'Điện phát (kWh)':r.kwh,'đ/kWh':r.costPerKwh??'',
-      'TB dòng máy':r.modelAvg??'','Lệch %':r.devPct??'','Đánh giá':r.flag })),
+      'TB dòng máy':r.modelAvg??'','Lệch %':r.devPct??'','Đánh giá':r.flag,
+      'Cước SIM đã đóng (đ, không tính vào đ/kWh)':r.costSim||0 })),
   }, 'chi-phi-vat-tu-'
      + (qCostVtLabel_() ? qSlug_(qCostVtLabel_()) + '-' : '')
      + String(d.monthLabel).replace('/','-')
@@ -14643,7 +14770,7 @@ function simRowHtml_(s, viewPrice){
   const farm = [r['Đơn vị hợp tác'], r['Tên trại']].filter(Boolean).join(' · ');
   const area = [r['Khu vực'], r['Tỉnh thành']].filter(Boolean).join(' · ');
   const orphan = r._orphan ? '<div style="font-size:10px;color:var(--red)">⚠ Mã máy không còn trong Sheet 1</div>'
-    : (r._diaDiem ? '<div style="font-size:10px;color:var(--bl)">Địa điểm (không phải máy) — cước không tính vào đ/kWh</div>'
+    : (r._diaDiem ? '<div style="font-size:10px;color:var(--bl)">Địa điểm (không phải máy) — cước không tính vào chi phí truyền thông, camera</div>'
     : (r._chuaLap ? '<div style="font-size:10px;color:var(--mu)">Máy chưa lắp đặt</div>'
     : (r._tonKho ? '<div style="font-size:10px;color:var(--mu)">Máy tồn kho</div>' : '')));
   const lv = SIM_LV[s.level];
@@ -15110,7 +15237,7 @@ function simHistoryOpen(code, purpose){
       <td style="font-size:11px">${huy ? (r._cuocCuoi ? `<span class="b ba">còn cước kỳ cuối${vp && r['Số tiền cần thanh toán (đ)'] !== '' ? ' · ' + vnd0_(r['Số tiền cần thanh toán (đ)']) : ''}</span>` : '<span class="b bg">đã trả đủ</span>') : (r['Hạn thanh toán'] ? 'hạn ' + simVn_(r['Hạn thanh toán']) : '—')}</td>
       <td style="font-size:10px;color:var(--mu);white-space:pre-wrap;max-width:260px">${esc(r['Ghi chú'] || '')}</td></tr>`;
   }).join('');
-  openOv(`<div class="mh"><div><h2>🕘 Lịch sử SIM · ${esc(code)}</h2><p>${esc(purpose)} — SIM cũ vẫn phải trả cước tới ngày hủy; mỗi lần đóng cước được ghi vào chi phí vận hành của máy (đ/kWh).</p></div>
+  openOv(`<div class="mh"><div><h2>🕘 Lịch sử SIM · ${esc(code)}</h2><p>${esc(purpose)} — SIM cũ vẫn phải trả cước tới ngày hủy; mỗi lần đóng cước được ghi vào “Chi phí truyền thông, camera” của tháng (tổng tiền SIM ÷ tổng điện phát, không chia riêng từng máy).</p></div>
       <button class="mcl" onclick="closeOv()">✕</button></div>
     <div class="mb"><div class="tw"><table><thead><tr><th>Seri</th><th>Trạng thái</th><th>Đăng ký</th><th>Hủy</th><th>Đã thanh toán đến</th><th>Cước</th><th>Ghi chú</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div style="font-size:10px;color:var(--mu);margin-top:8px">Chi tiết từng lần đóng cước (ngày, số tiền, kỳ) xem ở Sheet “15. Nhật ký nhập xuất vật tư” — mã VT “SIM”, ghi chú có seri. Thao tác Thay SIM xem ở Sheet “${esc((Q.sim && Q.sim.confirmSheet) || '37. Xác nhận SIM máy')}”.</div></div>
@@ -15126,7 +15253,7 @@ function simOpenReplace(row){
       <button class="mcl" onclick="closeOv()">✕</button></div>
     <div class="mb">
       <div style="font-size:11px;color:var(--mu);background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:10px;line-height:1.5">
-        SIM cũ được <b>giữ lại làm lịch sử</b> (trạng thái “Đã hủy” + ngày hủy). Thời gian đã dùng tới ngày hủy <b>vẫn phải đóng cước</b>: khoản này hiện ở “Đề xuất thanh toán” và khi đóng sẽ được tính vào chi phí vận hành đ/kWh của máy.
+        SIM cũ được <b>giữ lại làm lịch sử</b> (trạng thái “Đã hủy” + ngày hủy). Thời gian đã dùng tới ngày hủy <b>vẫn phải đóng cước</b>: khoản này hiện ở “Đề xuất thanh toán” và khi đóng sẽ được tính vào “Chi phí truyền thông, camera” của tháng.
         SIM mới là một dòng mới ngay dưới, kế thừa nhà mạng · loại SIM · giá gói · ngày chốt cước của SIM cũ.</div>
       <div class="fgrid fg2" style="padding:0">
         <div class="iw"><div class="il">Mã seri SIM MỚI *</div><input class="inp" id="rpSerial" autocomplete="off" placeholder="Dãy số in trên SIM mới (19 chữ số)"></div>
@@ -15228,7 +15355,7 @@ function simOpenEdit(row, focus, preset){
         ${editPrice
           ? `<div class="iw"><div class="il">Cước theo hóa đơn kỳ này (đ) <span style="font-weight:400;color:var(--mu)">— nếu khác giá gói</span></div>
               <input class="inp" type="number" min="0" step="1" id="seOver" value="${esc(v('Cước theo hóa đơn kỳ này (đ)'))}" placeholder="Để trống = tính theo giá gói">
-              <div style="font-size:10px;color:var(--mu)">Số tiền THẬT trên hóa đơn nhà mạng của kỳ đang chờ đóng (SIM mới kích hoạt giữa kỳ, phí phát sinh…). Đây là số đi vào chi phí và đ/kWh. Đóng xong ô này tự xóa, kỳ sau về giá gói. SIM đã hủy: nhập hóa đơn kỳ cuối vào đây để còn đóng được.</div></div>`
+              <div style="font-size:10px;color:var(--mu)">Số tiền THẬT trên hóa đơn nhà mạng của kỳ đang chờ đóng (SIM mới kích hoạt giữa kỳ, phí phát sinh…). Đây là số đi vào “Chi phí truyền thông, camera”. Đóng xong ô này tự xóa, kỳ sau về giá gói. SIM đã hủy: nhập hóa đơn kỳ cuối vào đây để còn đóng được.</div></div>`
           : ''}
         <div class="iw"><div class="il">Đã thanh toán đến</div><input class="inp" type="date" id="sePaid" value="${esc(v('Đã thanh toán đến'))}">
           <div style="font-size:10px;color:var(--mu)">Mốc đã trả tiền tới ngày nào. Để trống = tính từ ngày đăng ký. Bấm “Đã đóng” sẽ tự cập nhật ô này.</div></div>
