@@ -21959,5 +21959,417 @@ RP_CT['ls-may'] = function (code, label){
   }, 3000);
 })();
 </script>
+
+<!-- ============================================================================
+     TRỢ LÝ eGreen — KHUNG CHAT HỎI-ĐÁP DỮ LIỆU
+     DÁN NGUYÊN KHỐI NÀY NGAY TRƯỚC thẻ </body> CỦA index.html (sau thẻ </script> cuối cùng).
+     Không sửa gì khác trong index.html. Cần CHATBOT.gs + 2 dòng vá Code.gs ở server.
+     (File index.html giao kèm đã ghép sẵn khối này — không cần dán tay.)
+     Tự ẩn khi chưa đăng nhập / chức danh "Màn hiển thị". Mọi tên đều có tiền tố cb / cb- để
+     không đụng CSS và hàm sẵn có.
+     ========================================================================== -->
+<style id="cbCss">
+#cbFab{position:fixed;right:16px;bottom:104px;z-index:850;width:54px;height:54px;border-radius:50%;border:0;cursor:pointer;
+  background:linear-gradient(135deg,#0d6e3f,#16a05e);color:#fff;display:none;align-items:center;justify-content:center;
+  box-shadow:0 6px 20px rgba(8,61,36,.38);transition:transform .15s ease, box-shadow .15s ease;padding:0}
+#cbFab:hover{transform:translateY(-2px) scale(1.04);box-shadow:0 10px 26px rgba(8,61,36,.45)}
+#cbFab:focus-visible{outline:3px solid #fff;outline-offset:-6px}
+#cbFab svg{width:26px;height:26px}
+#cbPanel{position:fixed;right:16px;bottom:16px;z-index:850;width:410px;max-width:calc(100vw - 32px);
+  height:min(640px,calc(100vh - 32px));display:none;flex-direction:column;background:var(--card,#fff);
+  border-radius:16px;box-shadow:0 12px 44px rgba(0,0,0,.22);overflow:hidden;font-family:var(--font,'Be Vietnam Pro',sans-serif);
+  color:var(--s,#0f172a);font-size:13px}
+#cbPanel.cb-open{display:flex}
+.cb-hd{background:linear-gradient(135deg,#083d24,#0d6e3f 60%,#148f50);color:#fff;padding:11px 12px 11px 16px;display:flex;align-items:center;gap:8px;flex:none}
+.cb-hd .cb-t{flex:1;min-width:0}
+.cb-hd b{display:block;font-size:14px;font-weight:700;letter-spacing:.1px}
+.cb-hd small{display:block;font-size:10.5px;opacity:.82;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cb-ib{background:rgba(255,255,255,.14);border:0;color:#fff;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:15px;line-height:1;padding:0;flex:none}
+.cb-ib:hover{background:rgba(255,255,255,.28)}
+.cb-ib:focus-visible{outline:2px solid #fff}
+.cb-warn{background:#fffbeb;color:#92400e;border-bottom:1px solid #fde68a;padding:8px 14px;font-size:11.5px;line-height:1.45;flex:none;display:none}
+.cb-body{flex:1;overflow-y:auto;overflow-x:hidden;padding:14px 14px 6px;background:var(--bg,#f0f4f2);scroll-behavior:smooth}
+.cb-m{display:flex;flex-direction:column;margin-bottom:12px;max-width:100%}
+.cb-u{align-items:flex-end}
+.cb-a{align-items:flex-start}
+.cb-b{padding:9px 12px;border-radius:14px;line-height:1.55;max-width:94%;word-wrap:break-word;overflow-wrap:anywhere}
+.cb-u .cb-b{background:#0d6e3f;color:#fff;border-bottom-right-radius:4px;white-space:pre-wrap}
+.cb-a .cb-b{background:#fff;border:1px solid var(--bd,#e2e8f0);border-bottom-left-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.cb-a .cb-b p{margin:0 0 7px}
+.cb-a .cb-b p:last-child{margin-bottom:0}
+.cb-a .cb-b ul{margin:2px 0 8px;padding-left:18px}
+.cb-a .cb-b li{margin:3px 0}
+.cb-a .cb-b b{font-weight:700;color:#083d24}
+.cb-a .cb-b .mm{font-family:var(--mono,'JetBrains Mono',monospace);font-size:11px;background:#f5f3ff;color:#5b21b6;padding:1px 6px;border-radius:5px;white-space:nowrap}
+.cb-err .cb-b{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+.cb-meta{font-size:10.5px;color:var(--mu,#64748b);margin:3px 4px 0;line-height:1.45;max-width:94%}
+.cb-meta button{background:none;border:0;color:#0d6e3f;cursor:pointer;font:inherit;font-weight:600;padding:0;margin-left:6px}
+.cb-meta button:hover{text-decoration:underline}
+.cb-meta button[data-copydata]{background:#e8f7f0;border-radius:999px;padding:2px 9px;margin-left:8px;color:#083d24}
+.cb-meta button[data-copydata]:hover{background:#d3f0e2;text-decoration:none}
+.cb-hello{background:#fff;border:1px solid var(--bd,#e2e8f0);border-radius:14px;padding:12px 14px;margin-bottom:12px;line-height:1.55}
+.cb-hello b{color:#083d24}
+.cb-hello small{display:block;margin-top:8px;color:var(--mu,#64748b);font-size:10.8px;line-height:1.5}
+.cb-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.cb-chip{background:#fff;border:1.5px solid var(--bd,#e2e8f0);color:#0d6e3f;border-radius:999px;padding:6px 11px;font:inherit;font-size:11.8px;
+  font-weight:500;cursor:pointer;text-align:left;line-height:1.35}
+.cb-chip:hover{background:#e8f7f0;border-color:#16a05e}
+.cb-wait{display:flex;align-items:center;gap:9px;color:var(--mu,#64748b);font-size:12px}
+.cb-dots{display:inline-flex;gap:4px}
+.cb-dots i{width:6px;height:6px;border-radius:50%;background:#16a05e;animation:cbBlink 1.2s infinite ease-in-out both}
+.cb-dots i:nth-child(2){animation-delay:.18s}
+.cb-dots i:nth-child(3){animation-delay:.36s}
+@keyframes cbBlink{0%,80%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+.cb-ft{flex:none;border-top:1px solid var(--bd,#e2e8f0);background:#fff;padding:9px 10px 10px;display:flex;gap:8px;align-items:flex-end}
+.cb-ft textarea{flex:1;resize:none;border:1.5px solid var(--bd,#e2e8f0);border-radius:12px;padding:9px 11px;font:inherit;font-size:13px;line-height:1.45;
+  max-height:112px;min-height:38px;outline:none;color:inherit;background:#fff}
+.cb-ft textarea:focus{border-color:#16a05e}
+.cb-send{flex:none;height:38px;padding:0 15px;border:0;border-radius:12px;background:#0d6e3f;color:#fff;font:inherit;font-weight:600;cursor:pointer}
+.cb-send:hover{background:#16a05e}
+.cb-send:disabled{background:#cbd5e1;cursor:not-allowed}
+@media (max-width:640px){
+  #cbFab{right:12px;bottom:96px}
+  #cbPanel{right:0;left:0;bottom:0;width:100%;max-width:100%;height:88vh;height:88dvh;border-radius:16px 16px 0 0}
+  .cb-ft textarea{font-size:16px} /* 16px: iOS không tự phóng to khi bấm vào ô nhập */
+}
+@media (prefers-reduced-motion:reduce){#cbFab,.cb-dots i{transition:none;animation:none}.cb-body{scroll-behavior:auto}}
+</style>
+
+<script id="cbJs">
+(function (){
+  'use strict';
+
+  var KEY = 'egreen_chat_v1';        // sessionStorage: hội thoại sống tới khi đóng tab, không rơi sang máy khác
+  var MAXKEEP = 40;                  // số tin giữ lại
+  var SEND_HIST = 8;                 // số tin gần nhất gửi kèm để hiểu câu hỏi nối tiếp
+  var SUGG = [
+    'Máy nào phát nhiều điện nhất tháng 9?',
+    'So sánh tháng 8 và tháng 9: máy nào đứng đầu?',
+    '5 máy phát ít điện nhất tháng này',
+    '10 ngày gần đây máy nào phát nhiều nhất?',
+    'Trại nào phát nhiều điện nhất tháng này?',
+    'Máy nào đang quá hạn bảo dưỡng?',
+    'Trại nào đang thiếu vật tư?'
+  ];
+  var KEEP_COPY = 6;                 // chỉ giữ khối "Sao chép dữ liệu" của N câu trả lời gần nhất khi lưu vào sessionStorage
+  var ST = { open: false, busy: false, msgs: [], owner: '', loadedFor: '', info: null, infoAt: 0,
+             codesRe: null, codesN: 0, t0: 0, timer: 0, wasReady: false, gone: 0 };
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function (c){
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function escRe(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  /* Chỉ hiện khi đã đăng nhập thật. Chốt chặn thật nằm ở server (cbotDoPost_) — đây chỉ là phép lịch sự. */
+  function ready(){
+    try { return !!(typeof S !== 'undefined' && S && S.booted && S.perm && S.perm.authed && S.perm.role !== 'Màn hiển thị'); }
+    catch (e){ return false; }
+  }
+  function who(){ try { return String((S.user && (S.user.login || S.user.name)) || ''); } catch (e){ return ''; } }
+
+  /* ---- lưu hội thoại (sessionStorage có thể bị chặn → bọc try, hỏng thì chỉ mất lịch sử) ---- */
+  function load(){
+    ST.msgs = [];
+    try {
+      var j = JSON.parse(sessionStorage.getItem(KEY) || 'null');
+      if (j && j.owner === who() && Array.isArray(j.msgs)) ST.msgs = j.msgs.slice(-MAXKEEP);
+    } catch (e){}
+    ST.loadedFor = who();
+  }
+  function save(){
+    try {
+      /* Đếm theo số KHỐI COPY (không phải số tin): duyệt từ cuối, giữ N khối gần nhất, các khối cũ hơn bỏ nội dung. */
+      var left = KEEP_COPY;
+      var keep = ST.msgs.slice(-MAXKEEP).reverse().map(function (m){
+        if (!m.copy) return m;
+        if (left > 0){ left--; return m; }
+        return Object.assign({}, m, { copy: '' });
+      }).reverse();
+      sessionStorage.setItem(KEY, JSON.stringify({ owner: who(), msgs: keep }));
+    } catch (e){}
+  }
+  function wipe(){ ST.msgs = []; ST.loadedFor = ''; ST.info = null; try { sessionStorage.removeItem(KEY); } catch (e){} }
+
+  /* ---- tô mã máy: dựng một regex từ Sheet 1 đang có trên web ---- */
+  function codesRe(){
+    var rows = [];
+    try { rows = (S.master && S.master.rows) || []; } catch (e){}
+    if (!rows.length) return null;
+    if (ST.codesRe && ST.codesN === rows.length) return ST.codesRe;
+    var L = (typeof COL !== 'undefined' && COL && COL.MA) || 'B', seen = {}, list = [];
+    rows.forEach(function (r){
+      var v = r && r._byLetter && r._byLetter[L];
+      v = v == null ? '' : String(v).trim();
+      if (v && !seen[v]){ seen[v] = 1; list.push(v); }
+    });
+    if (!list.length) return null;
+    list.sort(function (a, b){ return b.length - a.length; });     // mã dài khớp trước: NS250KVA10 trước NS250KVA1
+    ST.codesRe = new RegExp('(^|[^A-Za-z0-9])(' + list.map(function (c){ return escRe(esc(c)); }).join('|') + ')(?![A-Za-z0-9])', 'g');
+    ST.codesN = rows.length;
+    return ST.codesRe;
+  }
+  function hi(html){
+    var re = codesRe();
+    if (!re) return html;
+    return html.split(/(<[^>]+>)/).map(function (p){
+      return p.charAt(0) === '<' ? p : p.replace(re, function (m, pre, c){ return pre + '<span class="mm">' + c + '</span>'; });
+    }).join('');
+  }
+
+  /* ---- markdown tối giản, AN TOÀN: escape HTML trước, rồi mới thêm thẻ của chính mình ---- */
+  function inline(s){
+    return s.replace(/\*\*([^*\n]+?)\*\*/g, '<b>$1</b>')
+            .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:]|$)/g, '$1<i>$2</i>');
+  }
+  function md(text){
+    var out = [], para = [], inList = false;
+    function flushP(){ if (para.length){ out.push('<p>' + para.join('<br>') + '</p>'); para = []; } }
+    function closeL(){ if (inList){ out.push('</ul>'); inList = false; } }
+    String(text == null ? '' : text).replace(/\r/g, '').split('\n').forEach(function (raw){
+      var m = raw.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+      if (m){
+        flushP();
+        if (!inList){ out.push('<ul>'); inList = true; }
+        out.push('<li>' + hi(inline(esc(m[1]))) + '</li>');
+        return;
+      }
+      if (!raw.trim()){ flushP(); closeL(); return; }
+      closeL();
+      para.push(hi(inline(esc(raw.replace(/^#+\s*/, '')))));
+    });
+    flushP(); closeL();
+    return out.join('');
+  }
+
+  /* ---- dựng giao diện (một lần) ---- */
+  function build(){
+    if ($('cbPanel')) return;
+    var fab = document.createElement('button');
+    fab.id = 'cbFab'; fab.type = 'button';
+    fab.setAttribute('aria-label', 'Mở trợ lý hỏi đáp dữ liệu'); fab.title = 'Hỏi trợ lý về dữ liệu';
+    fab.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01" stroke-width="2.6"/></svg>';
+    fab.onclick = function (){ setOpen(true); };
+
+    var p = document.createElement('div');
+    p.id = 'cbPanel'; p.setAttribute('role', 'dialog'); p.setAttribute('aria-label', 'Trợ lý eGreen');
+    p.innerHTML =
+      '<div class="cb-hd"><div class="cb-t"><b>Trợ lý eGreen</b><small id="cbSub">Hỏi bằng tiếng Việt, trả lời từ dữ liệu thật</small></div>'
+      + '<button class="cb-ib" id="cbClear" type="button" title="Xoá cuộc trò chuyện" aria-label="Xoá cuộc trò chuyện">🗑</button>'
+      + '<button class="cb-ib" id="cbClose" type="button" title="Đóng" aria-label="Đóng">✕</button></div>'
+      + '<div class="cb-warn" id="cbWarn"></div>'
+      + '<div class="cb-body" id="cbBody" aria-live="polite"></div>'
+      + '<div class="cb-ft"><textarea id="cbIn" rows="1" maxlength="1000" placeholder="Hỏi về máy, sản lượng, bảo dưỡng, vật tư… (gõ &quot;giúp&quot; để xem mẫu câu)" aria-label="Câu hỏi"></textarea>'
+      + '<button class="cb-send" id="cbSend" type="button">Gửi</button></div>';
+    document.body.appendChild(fab);
+    document.body.appendChild(p);
+
+    $('cbClose').onclick = function (){ setOpen(false); };
+    $('cbClear').onclick = function (){
+      if (ST.busy) return;
+      ST.msgs = []; save(); render();
+    };
+    $('cbSend').onclick = function (){ submit(); };
+    var ta = $('cbIn');
+    ta.addEventListener('input', grow);
+    ta.addEventListener('keydown', function (e){
+      /* Gõ tiếng Việt bằng Telex/VNI: Enter có thể là phím CHỐT từ (đang compose). Gửi lúc đó là gửi nửa chữ. */
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); submit(); }
+    });
+    document.addEventListener('keydown', function (e){ if (e.key === 'Escape' && ST.open) setOpen(false); });
+    $('cbBody').addEventListener('click', function (e){
+      var t = e.target;
+      if (t && t.getAttribute && t.getAttribute('data-q')){ ask(t.getAttribute('data-q')); }
+      else if (t && t.getAttribute && t.getAttribute('data-copy') != null){ copyMsg(Number(t.getAttribute('data-copy')), t, false); }
+      else if (t && t.getAttribute && t.getAttribute('data-copydata') != null){ copyMsg(Number(t.getAttribute('data-copydata')), t, true); }
+    });
+  }
+  function grow(){
+    var ta = $('cbIn'); if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(112, ta.scrollHeight + 2) + 'px';
+  }
+
+  function setOpen(on){
+    build();
+    ST.open = !!on;
+    $('cbPanel').classList.toggle('cb-open', ST.open);
+    $('cbFab').style.display = (!ST.open && ready()) ? 'flex' : 'none';
+    if (ST.open){
+      if (ST.loadedFor !== who()) load();
+      render(); refreshInfo();
+      setTimeout(function (){ var ta = $('cbIn'); if (ta) ta.focus(); }, 60);
+    }
+  }
+
+  /* ---- chatInfo: đã cài API key chưa, dữ liệu tới ngày nào ---- */
+  function refreshInfo(force){
+    if (!ready()) return;
+    if (!force && ST.info && Date.now() - ST.infoAt < 600000) { paintInfo(); return; }
+    call({ action: 'chatInfo' }).then(function (d){
+      if (d && d.ok){ ST.info = d; ST.infoAt = Date.now(); }
+      paintInfo();
+      if (!ST.msgs.length && !ST.busy) render();      // lời chào phụ thuộc chế độ (quy tắc / AI) nên vẽ lại khi đã biết
+    }).catch(function (){ /* thiếu thông tin phụ không chặn việc hỏi */ });
+  }
+  function paintInfo(){
+    var sub = $('cbSub'), warn = $('cbWarn'), d = ST.info;
+    if (!sub || !warn) return;
+    if (d && d.dataDate){
+      var m = String(d.dataDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      sub.textContent = 'Dữ liệu đến hết ' + (m ? (m[3] + '/' + m[2] + '/' + m[1]) : d.dataDate) + ' · chỉ đọc, không sửa được dữ liệu';
+    }
+    if (d && d.configured === false){
+      warn.style.display = 'block';
+      warn.textContent = (S.perm && S.perm.admin)
+        ? 'Trợ lý đang để chế độ AI nhưng chưa có khoá API. Admin: vào Apps Script › Cài đặt dự án › Thuộc tính tập lệnh, thêm ANTHROPIC_API_KEY — hoặc xoá CHATBOT_MODE / đặt CHATBOT_MODE = rules để dùng chế độ không cần AI (xem TRIEN_KHAI_CHATBOT.md).'
+        : 'Trợ lý chưa được kích hoạt. Báo Admin để bật.';
+    } else { warn.style.display = 'none'; warn.textContent = ''; }
+  }
+
+  /* ---- gọi server: ĐƯỜNG RIÊNG như hqCall_, không qua apiPost (apiPost bật lớp phủ chặn cả màn hình) ---- */
+  function call(body){
+    var b = Object.assign({}, body);
+    try {
+      if (S.token) b.token = S.token;
+      if (S.user && S.user.login) b.user = S.user.login;
+      else if (!b.user && S.user && S.user.name) b.user = S.user.name;
+    } catch (e){}
+    return fetchJson_(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(b) }, 'Trợ lý');
+  }
+
+  function submit(){
+    var ta = $('cbIn'); if (!ta) return;
+    var q = ta.value.trim();
+    if (!q) return;
+    if (ask(q)){ ta.value = ''; grow(); }
+  }
+
+  function ask(q){
+    q = String(q || '').trim();
+    if (!q || ST.busy || !ready()) return false;
+    if (ST.loadedFor !== who()) load();
+    var hist = ST.msgs.filter(function (m){ return !m.err; }).slice(-SEND_HIST)
+      .map(function (m){ return { role: m.role, content: m.content }; });
+    ST.msgs.push({ role: 'user', content: q });
+    save();
+    ST.busy = true; ST.t0 = Date.now();
+    render(); tick();
+    ST.timer = setInterval(tick, 1000);
+
+    call({ action: 'chatAsk', question: q, history: hist }).then(function (d){
+      if (d && d.ok && d.answer){
+        ST.msgs.push({ role: 'assistant', content: String(d.answer), tools: d.tools || [], sources: d.sources || [], ms: d.ms || 0, copy: d.copy ? String(d.copy) : '' });
+      } else {
+        var t;
+        if (d && d.needLogin) t = 'Phiên đăng nhập đã hết hạn — hãy đăng nhập lại rồi hỏi tiếp.';
+        else if (d && d.notConfigured) t = (S.perm && S.perm.admin)
+          ? 'Trợ lý đang để chế độ AI nhưng chưa có khoá API. Thêm ANTHROPIC_API_KEY vào Script Properties, hoặc đặt CHATBOT_MODE = rules (xem TRIEN_KHAI_CHATBOT.md).'
+          : 'Trợ lý chưa được kích hoạt — báo Admin để bật.';
+        else t = (d && d.error) ? String(d.error) : 'Không nhận được câu trả lời. Thử lại sau.';
+        ST.msgs.push({ role: 'assistant', content: t, err: true });
+      }
+    }).catch(function (e){
+      ST.msgs.push({ role: 'assistant', content: (e && e.message) ? e.message : 'Lỗi kết nối.', err: true });
+    }).then(function (){
+      clearInterval(ST.timer); ST.busy = false; save(); render();
+    });
+    return true;
+  }
+
+  function tick(){
+    var el = $('cbWaitT'); if (!el) return;
+    var s = Math.round((Date.now() - ST.t0) / 1000);
+    el.textContent = 'Đang tra cứu dữ liệu… ' + s + ' giây' + (s > 25 ? ' (câu hỏi nhiều bước, chờ thêm chút)' : '');
+  }
+
+  /* data=false: chép câu trả lời. data=true: chép KHỐI DỮ LIỆU gọn (bảng đã tính sẵn, kèm nguồn & quy ước) để dán sang ChatGPT phân tích. */
+  function copyMsg(i, btn, data){
+    var m = ST.msgs[i]; if (!m) return;
+    var text = data ? m.copy : m.content, label = data ? 'Sao chép dữ liệu' : 'Sao chép';
+    if (!text) return;
+    var done = function (ok){ btn.textContent = ok ? 'Đã chép' : 'Không chép được'; setTimeout(function (){ btn.textContent = label; }, 1500); };
+    /* navigator.clipboard cần HTTPS và có thể bị chặn trong iframe (Apps Script web app chạy trong iframe) → lùi về execCommand. */
+    var fallback = function (){
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+        document.body.appendChild(ta); ta.select();
+        var okc = document.execCommand('copy');
+        document.body.removeChild(ta);
+        done(!!okc);
+      } catch (e){ done(false); }
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(function (){ done(true); }, fallback); return; }
+    } catch (e){}
+    fallback();
+  }
+
+  function metaOf(m, i){
+    if (m.err) return '';
+    var bits = [];
+    if (m.tools && m.tools.length) bits.push('Đã tra: ' + m.tools.map(function (t){ return esc(t.label || t.name); }).join(', '));
+    if (m.sources && m.sources.length) bits.push('Nguồn: ' + m.sources.map(esc).join(' · '));
+    if (m.ms) bits.push((Math.round(m.ms / 100) / 10) + ' giây');
+    return (bits.length ? bits.join(' — ') : '') + '<button type="button" data-copy="' + i + '">Sao chép</button>'
+      + (m.copy ? '<button type="button" data-copydata="' + i + '" title="Chép bảng số liệu đã tính sẵn để dán sang ChatGPT phân tích">Sao chép dữ liệu</button>' : '');
+  }
+
+  function render(){
+    var body = $('cbBody'); if (!body) return;
+    var h = '';
+    if (!ST.msgs.length){
+      var mode = ST.info && ST.info.mode, priv = '';
+      if (mode === 'rules') priv = 'Mình chỉ đọc dữ liệu, không sửa được gì. Câu hỏi được xử lý ngay trong hệ thống của công ty, không gửi cho dịch vụ AI nào. '
+        + 'Muốn phân tích sâu hơn, bấm <b>Sao chép dữ liệu</b> dưới câu trả lời rồi dán sang ChatGPT.';
+      else if (mode === 'auto') priv = 'Mình chỉ đọc dữ liệu, không sửa được gì. Câu hỏi mình hiểu theo mẫu thì xử lý ngay trong hệ thống; câu mình không hiểu sẽ được gửi tới Claude (Anthropic) '
+        + 'cùng kết quả tra cứu để soạn câu trả lời. Số điện thoại và Zalo của người dùng không bao giờ được gửi.';
+      else if (mode === 'ai') priv = 'Mình chỉ đọc dữ liệu, không sửa được gì. Câu hỏi và kết quả tra cứu được gửi tới Claude (Anthropic) để soạn câu trả lời; '
+        + 'số điện thoại và Zalo của người dùng không bao giờ được gửi.';
+      h += '<div class="cb-hello"><b>Xin chào!</b> Mình tra giúp số liệu trong hệ thống: sản lượng điện theo tháng/ngày, giờ chạy, hồ sơ từng máy, cảnh báo bảo dưỡng, tồn kho vật tư… '
+        + (mode === 'rules' ? 'Hỏi ngắn gọn, viết có dấu hay không dấu đều được; gõ <b>giúp</b> để xem các mẫu câu hỏi. ' : 'Cứ hỏi tự nhiên như nói chuyện. ')
+        + 'Mình trả lời kèm mã máy, số liệu, trại, khu vực và cách tính.'
+        + (priv ? '<small>' + priv + '</small>' : '') + '</div>'
+        + '<div class="cb-chips">' + SUGG.map(function (s){ return '<button type="button" class="cb-chip" data-q="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div>';
+    }
+    ST.msgs.forEach(function (m, i){
+      if (m.role === 'user'){
+        h += '<div class="cb-m cb-u"><div class="cb-b">' + esc(m.content) + '</div></div>';
+      } else {
+        h += '<div class="cb-m cb-a' + (m.err ? ' cb-err' : '') + '"><div class="cb-b">' + (m.err ? '<p>' + esc(m.content) + '</p>' : md(m.content)) + '</div>'
+          + (m.err ? '' : '<div class="cb-meta">' + metaOf(m, i) + '</div>') + '</div>';
+      }
+    });
+    if (ST.busy){
+      h += '<div class="cb-m cb-a"><div class="cb-b"><div class="cb-wait"><span class="cb-dots"><i></i><i></i><i></i></span><span id="cbWaitT">Đang tra cứu dữ liệu…</span></div></div></div>';
+    }
+    body.innerHTML = h;
+    body.scrollTop = body.scrollHeight;
+    var btn = $('cbSend'); if (btn) btn.disabled = ST.busy;
+    var clr = $('cbClear'); if (clr) clr.style.display = ST.msgs.length ? '' : 'none';
+    if (ST.busy) tick();
+  }
+
+  /* ---- theo dõi đăng nhập / đăng xuất (web không phát sự kiện nên hỏi nhẹ 2 giây/lần như hq*) ---- */
+  setInterval(function (){
+    var r = ready();
+    if (r){
+      ST.wasReady = true; ST.gone = 0;
+      build();
+      if (ST.loadedFor !== who()) load();
+      $('cbFab').style.display = ST.open ? 'none' : 'flex';
+    } else if (ST.wasReady){
+      /* Cần 3 nhịp liên tiếp (~6 giây) mới coi là đã đăng xuất, để một lần tải lại dữ liệu thoáng qua không xoá hội thoại. */
+      if (++ST.gone >= 3){
+        ST.wasReady = false; ST.gone = 0;
+        if (ST.open) setOpen(false);
+        var f = $('cbFab'); if (f) f.style.display = 'none';
+        wipe();
+      }
+    }
+  }, 2000);
+})();
+</script>
 </body>
 </html>
