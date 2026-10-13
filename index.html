@@ -22691,7 +22691,7 @@ function dcRender_(fresh){
     + '<div id="dcPrev"></div></div>'
     + '<div class="mf"><button class="btn bg-gr" onclick="closeOv()">Huỷ</button>'
     + '<button class="btn bg-b" id="dcBtnPrev" onclick="dcDoPreview()">🔍 Xem trước thay đổi</button>'
-    + '<button class="btn bg-g" id="dcGo" onclick="dcDoApply()" disabled>✓ Xác nhận điều chuyển</button></div>');
+    + '<button class="btn bg-g" id="dcGo" onclick="dcDoApply()">✓ Xác nhận điều chuyển</button></div>');
 }
 
 function dcAllToggle_(on){ DC_R.forEach(k => { const el = $('dcR_' + k); if (el) el.checked = on; }); dcDirty_(); }
@@ -22750,18 +22750,20 @@ function dcPayload_(){
 function dcDirty_(){
   if (!DC.res) return;
   DC.res = null;
-  const b = $('dcPrev'); if (b) b.innerHTML = '<div class="dcinfo">Anh vừa sửa form — bấm “Xem trước” lại trước khi xác nhận.</div>';
-  const g = $('dcGo'); if (g) g.disabled = true;
+  const b = $('dcPrev'); if (b) b.innerHTML = '<div class="dcinfo">Anh vừa sửa form — bấm “Xác nhận” là hệ thống tự xem trước lại rồi hỏi xác nhận.</div>';
 }
-function dcBusy_(on){ ['dcBtnPrev', 'dcGo'].forEach(id => { const el = $(id); if (el && on) el.disabled = true; }); }
+/* Khoá cả hai nút trong lúc đang gọi server (chống bấm đúp), nhả lại bằng dcBusy_(false).
+ * Trước đây nút Xác nhận bị khoá sẵn cho tới khi Xem trước chạy xong không lỗi; chỉ cần Xem trước
+ * trả về lỗi hoặc người dùng quên bấm là nút "chết" mà không biết vì sao. Nay nút luôn bấm được và tự xem trước. */
+function dcBusy_(on){ ['dcBtnPrev', 'dcGo'].forEach(id => { const el = $(id); if (el) el.disabled = !!on; }); }
 
 async function dcDoPreview(){
   const p = dcPayload_(); DC.res = null; dcBusy_(true);
   const box = $('dcPrev'); if (box) box.innerHTML = '<div class="dcinfo">⏳ Đang tính…</div>';
   let d; try { d = await apiPost({ action: 'dcPreview', payload: p }); } catch (e){ d = { ok: false, error: e.message }; }
-  const btn = $('dcBtnPrev'); if (btn) btn.disabled = false;
-  if (!$('dcPrev')) return;
-  if (!d || d.ok === false){ $('dcPrev').innerHTML = '<div class="dcerr">' + esc((d && d.error) || 'Không xem trước được') + '</div>'; return; }
+  dcBusy_(false);
+  if (!$('dcPrev')) return null;
+  if (!d || d.ok === false){ $('dcPrev').innerHTML = '<div class="dcerr">' + esc((d && d.error) || 'Không xem trước được') + '</div>'; return null; }
   DC.res = d;
   const li = a => '<ul>' + a.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>';
   const rows = (d.changes || []).map(c => '<tr><td>' + esc(c.sheet) + '</td><td><b>' + esc(c.code) + '</b></td><td>' + esc(c.field)
@@ -22771,11 +22773,14 @@ async function dcDoPreview(){
     + ((d.warnings || []).length ? '<div class="dcwarn"><b>Lưu ý:</b>' + li(d.warnings) + '</div>' : '')
     + (d.valid ? '<div class="dcok">✓ ' + esc(d.label) + ' — ' + (d.changes || []).length + ' thay đổi sẽ được ghi. Kiểm lại bảng dưới rồi bấm “Xác nhận”.</div>' : '')
     + (rows ? '<div class="dcprev"><table><thead><tr><th>Sheet</th><th>Máy</th><th>Trường</th><th>Hiện tại</th><th>Sau khi chuyển</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '');
-  const go = $('dcGo'); if (go) go.disabled = !d.valid;
+  try { $('dcPrev').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e){}
+  return d;
 }
 
 async function dcDoApply(){
-  if (!DC.res || !DC.res.valid){ toast('Bấm “Xem trước” và xử lý hết lỗi trước', 'err'); return; }
+  /* Chưa xem trước (hoặc vừa sửa form) → tự xem trước ngay, không bắt người dùng nhớ bấm nút khác. */
+  if (!DC.res){ await dcDoPreview(); }
+  if (!DC.res || !DC.res.valid){ toast('Chưa điều chuyển được — xem khung đỏ “Chưa làm được” bên trên', 'err'); return; }
   if (!confirm(DC.res.label + ': ghi ' + (DC.res.changes || []).length + ' thay đổi vào Google Sheet?\n\nViệc này được ghi vào “22. Lịch sử điều chuyển máy”.')) return;
   const p = dcPayload_(); dcBusy_(true);
   try {
@@ -22788,7 +22793,7 @@ async function dcDoApply(){
     try { await reloadAll({ withQlvt: true }); } catch (e){}
     try { renderCurrent(); } catch (e){}
   } catch (e){
-    const b = $('dcBtnPrev'); if (b) b.disabled = false;
+    dcBusy_(false);
     toast('Lỗi: ' + e.message, 'err');
   }
 }
