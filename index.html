@@ -1043,6 +1043,8 @@ const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','bdTransfers','mater
                        'diagMonthly','zaloList','zaloPreview','zaloStatus',
                        /* GIONHOT.gs — gói mốc bộ đếm giờ + phân tích hao nhớt: chỉ đọc rồi tính. */
                        'gnData',
+                       /* Gợi ý kỳ của form ✍ + danh sách / xem trước ↩ hoàn tác: chỉ đọc. Khớp EG_READONLY_ACTIONS bên Code.gs. */
+                       'estSuggest','gnOdoUndoList','gnOdoUndoPreview',
                        /* KIỂM KÊ (QLVT.gs mục 12) — xem trước chênh lệch, đọc sổ, dựng cảnh
                         * báo, soát lại. Tất cả chỉ đọc rồi tính. Thiếu 4 tên này thì mỗi lần
                         * ai đó bấm "Xem trước" là web hiện lớp chặn và báo "đã ghi" cho một
@@ -5380,8 +5382,8 @@ function gioNotReady_(){
  * ========================================================================== */
 function gioDashCard_(){
   const pend = (S.gio.pending || []);
-  const stuck = (S.gio.base || []).filter(b => b.stuck);
-  if (!pend.length && !stuck.length) return '';
+  /* Không còn mục "số đọc đứng yên": máy nghỉ vài ngày rồi chạy lại là bình thường, báo ra chỉ là cảnh báo ảo. */
+  if (!pend.length) return '';
 
   /* Ba nhóm, ba mức việc phải làm — xếp theo đúng thứ tự đó:
    *   decide  số đọc tụt / nhảy vọt MỚI — ô E đang bị GIỮ, phải chọn thì máy mới chạy số tiếp
@@ -5427,7 +5429,6 @@ function gioDashCard_(){
           ${decide.length?`<b style="color:var(--red)">${decide.length} máy số đọc tụt / nhảy vọt</b> — số giờ máy chạy đang được GIỮ NGUYÊN, bấm <b>⚠ Chọn</b> thay màn hình / thay máy / không thay gì.<br>`:''}
           ${legacy.length?`<b>${legacy.length} dòng “tự phát hiện” của bản cũ</b> — bản cũ đã tự trừ/cộng giờ mà không hỏi ai; nhiều dòng là báo nhầm do mây trả số trễ. Soát lại để trả đúng số giờ.<br>`:''}
           ${tin.length?`${tin.length} tin báo khác. `:''}
-          ${stuck.length?`<b>${stuck.length} máy đang hoạt động mà số đọc đứng yên ≥ ${nfmt0_(lim)} giờ</b>.`:''}
         </div>
         ${legacyJump.length?`<button class="btn bg-a sm" onclick="openLegacyBulk_()">↩ Soát ${legacyJump.length} bước nhảy cũ</button>`:''}
         ${ackIds.length>1?`<button class="btn bg-g sm" onclick="gioAck(${esc(JSON.stringify(ackIds))})">✓ Xác nhận ${ackIds.length} tin báo</button>`:''}
@@ -5438,12 +5439,6 @@ function gioDashCard_(){
           <th style="text-align:right">Giờ bù</th><th style="text-align:right">Số giờ máy chạy</th><th>Lúc</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div>
         ${order.length>10?`<div style="font-size:11px;color:var(--mu);margin-top:4px">… và ${order.length-10} dòng nữa ở tab Bộ đếm giờ.</div>`:''}`:''}
-      ${stuck.length?`<div style="margin-top:8px;font-size:11px;color:#7c2d12">
-        <b>Số đọc đứng yên</b> (máy đang hoạt động theo Sheet 1, số đọc không đổi ≥ ${nfmt0_(lim)} giờ — mất truyền thông hoặc máy dừng mà Sheet 1 chưa cập nhật;
-        máy vẫn chạy thì bấm <b>✍ Nhập tay</b>):
-        ${stuck.slice(0,14).map(b=>`<span class="mm" style="cursor:pointer" title="Không đổi ${gioSilentTxt_(b.silentH)} — bấm để nhập tay" onclick="openManualOdoForm('${esc(b.code)}')">${esc(b.code)}</span>`).join(', ')}${stuck.length>14?` và ${stuck.length-14} máy nữa`:''}.
-        Có số mới là tự hết, không cần xác nhận.
-      </div>`:''}
     </div>
   </div>`;
 }
@@ -5534,7 +5529,6 @@ function viewHourBase(){
 
   const nReset  = S.gio.base.filter(b => (b.resets||0) > 0).length;
   const nOffset = S.gio.base.filter(b => Math.abs(Number(b.offset)||0) > 0.01).length;
-  const nStuck  = S.gio.base.filter(b => b.stuck).length;
   const nPend   = pend.size;
 
   const rows = list.map(x => {
@@ -5544,10 +5538,10 @@ function viewHourBase(){
     const cap = gioCapDoc_(b, lim);
     const dong = `<tr style="${x.p?'background:#fffbeb':''}">
       <td><span class="mm" style="cursor:pointer;text-decoration:underline" onclick="bdOpenProfile('${esc(x.code)}')">${esc(x.code)}</span>
-        ${b.stuck?'<br><span class="b br" title="Số đọc không đổi qua nhiều lượt đồng bộ — máy dừng, mất truyền thông hoặc màn hình treo">⏸ đứng yên</span>':''}</td>
+</td>
       ${farmCellVal_(x.m._byLetter[COL.TRAI]||'')}
       <td>${esc(x.m._byLetter[COL.DONVI]||'')||'—'}</td>
-      <td style="text-align:right;white-space:nowrap;font-weight:700">${odoCell_(x.code, x.odo)}</td>
+      <td style="text-align:right;white-space:nowrap;font-weight:700">${odoCell_(x.code, x.odo, true)}</td>
       <td style="text-align:right;white-space:nowrap;line-height:1.35">${cap.html}</td>
       <td style="text-align:right;white-space:nowrap;line-height:1.35">${cap.delta}</td>
       <td style="text-align:right">${Math.abs(off)>0.01
@@ -5558,6 +5552,7 @@ function viewHourBase(){
       <td style="white-space:nowrap">
         ${x.p?`<button class="btn bg-a sm" onclick="openPendingResolve('${esc(x.p.id)}')">⚠ Chọn thay màn hình / máy</button>`:''}
         <button class="btn bg-g sm" title="Smartgen/LIXiSE không cập nhật — nhập số giờ đọc tại máy" onclick="openManualOdoForm('${esc(x.code)}')">✍ Nhập tay</button>
+        ${b.tayCuoi?`<button class="btn bg-a sm" title="Nhập nhầm số giờ? Chọn mốc để quay về — điện phát ước tính, phiếu nhớt tự động… hoàn lại theo" onclick="openOdoUndo('${esc(x.code)}')">↩ Hoàn tác</button>`:''}
         <button class="btn bg-b sm" onclick="openResetForm('${esc(x.code)}')">🔁 Khai báo</button></td>
     </tr>`;
     /* Máy đang chờ xác nhận được kèm NGAY một dòng chẩn đoán đầy đủ — không bắt ai phải
@@ -5595,7 +5590,7 @@ function viewHourBase(){
         ${nPend?`<b style="color:var(--amb)">${nPend} máy chờ chọn thay màn hình/thay máy</b> · `:''}
         <b style="color:var(--red)">${nReset}</b> máy đã từng thay bộ đếm ·
         <b style="color:var(--amb)">${nOffset}</b> máy có giờ bù ·
-        <b style="color:var(--red)">${nStuck}</b> máy số đọc đứng yên · cập nhật ${esc(S.gio.at||'—')}
+        cập nhật ${esc(S.gio.at||'—')}
         <br><span style="font-size:11px;color:var(--mu)">
         <b>Số giờ máy chạy</b> = ô cột E Sheet 2 — <b>ODO duy nhất</b>, mọi phép tính bảo dưỡng đọc ô này.
         Các cột còn lại chỉ là <b>hiệu chuẩn đồng hồ</b>: <b>số đọc đồng hồ</b> (Smartgen/LIXiSE trả về) + <b>giờ bù</b> (khi màn hình đã thay)
@@ -5656,7 +5651,6 @@ function viewHourBase(){
  *  chế độ, không có trạng thái riêng. Web tự suy ra nhãn từ những gì đang có:
  *    ✍  ô E cao hơn số đồng bộ quy đổi (số đọc + giờ bù) → đang là số nhập tay
  *    ⚠  máy có dòng "Chờ xác nhận · số đọc tụt/nhảy vọt" → ô E đang được GIỮ
- *    📡 số đọc không đổi quá SILENT_H giờ → máy dừng hoặc mất truyền thông
  * ========================================================================== */
 function gioBaseOf_(code){
   return (S.gio.base||[]).find(b => String(b.code||'').toUpperCase() === String(code||'').trim().toUpperCase()) || null;
@@ -5730,7 +5724,7 @@ function gioCapDoc_(b, lim){
   const raw  = (b && b.raw     != null) ? Number(b.raw)     : null;
   const prev = (b && b.prevRaw != null) ? Number(b.prevRaw) : null;
   const im   = (b && b.silentH != null && b.silentH > (lim||36))
-    ? `<div style="font-size:10px;color:var(--amb)">${gioSilentTxt_(b.silentH)} chưa có số mới</div>` : '';
+    ? `<div style="font-size:10px;color:var(--mu)" title="Thông tin, không phải cảnh báo: máy nghỉ vài ngày rồi chạy lại là bình thường">${gioSilentTxt_(b.silentH)} chưa có số mới</div>` : '';
   if (raw == null)
     return { html:'<span class="b bmu" title="Chưa có lượt đồng bộ nào ghi nhận số đọc">chưa có</span>' + im,
              delta:'<span style="color:var(--mu)">—</span>' };
@@ -5799,7 +5793,7 @@ function gioStatusCell_(r){
   return `<button class="btn bg-g sm" onclick="gioAck(['${esc(r.id)}'])">✓ Xác nhận</button>`;
 }
 /** Ô "Số giờ máy chạy" dùng chung cho bảng Sheet 2 và tab Bộ đếm giờ. */
-function odoCell_(code, odo){
+function odoCell_(code, odo, withTime){
   if (isChuaLap_(code)) return odo == null ? '—' : nfd_(odo);
   const b = gioBaseOf_(code);
   const p = gioPendMap_().get(String(code||'').trim().toUpperCase());
@@ -5810,11 +5804,15 @@ function odoCell_(code, odo){
       title="${esc(p.chieu||'')} lúc ${esc(gioVN_(p.at))} (giờ VN)${p.luat?' — '+esc(p.luat):''} — số giờ đang được GIỮ NGUYÊN, bấm để chọn thay màn hình / thay máy">⚠ chờ xác nhận</span>`;
   } else if (b && b.quyDoi != null && odo != null && odo > b.quyDoi + 0.5){
     tag = ` <span class="b ba" title="Số NHẬP TAY — cao hơn số đồng hồ quy đổi (${nfd_(b.quyDoi)} h) ${nfd_(odo - b.quyDoi)} h. Có sóng lại, số đồng hồ vượt qua thì tự thay.">✍</span>`;
-  } else if (b && b.stuck){
-    tag = ` <span class="b bmu" title="Số đọc không đổi ${gioSilentTxt_(b.silentH)} (từ ${esc(gioVN_(b.at)||'?')} giờ VN) — máy dừng hoặc MẤT TRUYỀN THÔNG. Máy vẫn chạy thì bấm số để nhập tay.">📡 ${gioSilentTxt_(b.silentH)}</span>`;
   }
   return `<span style="cursor:pointer;text-decoration:underline dotted" title="Bấm để nhập tay số giờ máy chạy"
-    onclick="openManualOdoForm('${esc(code)}')">${odo==null?'—':nfd_(odo)}</span>${tag}`;
+    onclick="openManualOdoForm('${esc(code)}')">${odo==null?'—':nfd_(odo)}</span>${tag}${withTime ? odoUpdTxt_(b) : ''}`;
+}
+/** "Cập nhật số giờ lần cuối": lần MỚI HƠN của đồng bộ Smartgen/LIXiSE và nhập tay (kèm tài khoản). */
+function odoUpdTxt_(b){
+  if (!b || !b.capNhat) return '';
+  const who = b.capNguon === 'tay' ? ` · ✍ ${esc(b.capNguoi||'nhập tay')}` : (b.capNguon === 'hoantac' ? ` · ↩ hoàn tác ${esc(b.capNguoi||'')}` : ' · đồng bộ');
+  return `<div style="font-size:9px;font-weight:400;color:var(--mu)" title="Lần cập nhật số giờ gần nhất (đồng bộ Smartgen/LIXiSE hoặc nhập tay), giờ VN">cập nhật ${esc(gioVN_(b.capNhat))}${who}</div>`;
 }
 
 function openManualOdoForm(code){
@@ -5830,7 +5828,7 @@ function openManualOdoForm(code){
   const yst = ymdAdd_(now,-1);
   window._odoCtx = { code, cur, off, quy: b.quyDoi==null ? null : Number(b.quyDoi), kw: odoKwOf_(code), sug: null, yst };
   const box = (lbl, val) => `<div class="iw"><div class="il">${lbl}</div><div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px">${val}</div></div>`;
-  const pre = b.stuck ? 'matTT' : '';          // máy đang im số đọc → gợi ý "mất truyền thông", người dùng vẫn đổi được
+  const pre = '';                              // không đoán hộ: người nhập tự chọn (mất truyền thông / sửa số)
   const kind = (v, title, sub) => `<label style="display:flex;gap:9px;align-items:flex-start;padding:9px 10px;border:1.5px solid var(--bd);border-radius:8px;margin:5px 0;cursor:pointer">
       <input type="radio" name="odoKind" value="${v}" ${pre===v?'checked':''} style="margin-top:3px" onchange="odoKindChange_()">
       <span style="font-size:12px"><b>${title}</b><br><span style="color:var(--mu);font-size:11px">${sub}</span></span></label>`;
@@ -5846,7 +5844,9 @@ function openManualOdoForm(code){
       <div class="fgrid fg3" style="margin-bottom:8px">
         ${box('Số giờ máy chạy hiện tại', `<b>${cur==null?'—':nfd_(cur)+' h'}</b>`)}
         ${box('Số đồng bộ quy đổi', b.quyDoi==null?'chưa có':nfd_(b.quyDoi)+' h'+(Math.abs(off)>0.01?` <span style="font-size:10px;color:var(--mu)">(đồng hồ ${nfd_(b.raw)} + bù ${nfd_(off)})</span>`:''))}
-        ${box('Số đọc đổi lần cuối', esc(b.at||'—') + (b.silentH!=null?` <span style="font-size:10px;color:var(--mu)">(${gioSilentTxt_(b.silentH)} trước)</span>`:''))}
+        ${box('Cập nhật số giờ lần cuối', b.capNhat
+          ? `<b>${esc(gioVN_(b.capNhat))}</b> <span style="font-size:10px;color:var(--mu)">(${gioSilentTxt_(b.capGioTruoc)} trước)</span><div style="font-size:10px;color:var(--mu)">${b.capNguon==='tay' ? '✍ nhập tay · ' + esc(b.capNguoi||'?') : (b.capNguon==='hoantac' ? '↩ hoàn tác nhập tay · ' + esc(b.capNguoi||'?') : 'đồng bộ Smartgen/LIXiSE')}${b.at && (b.capNguon==='tay' || b.capNguon==='hoantac') ? ' · số đọc đồng hồ đổi lần cuối ' + esc(gioVN_(b.at)) : ''}</div>`
+          : '—')}
       </div>
       ${kind('matTT','📡 Máy MẤT TRUYỀN THÔNG — không có dữ liệu Smartgen/LIXiSE',
         'Đây là số giờ KTV <b>đọc tại máy</b>. Hệ thống tự tính <b>điện phát = số giờ tăng thêm × công suất thiết kế</b>, <b>chia đều theo kỳ số liệu</b> bạn chọn, ghi vào Sheet 5 (ô tô vàng, đánh dấu ƯỚC TÍNH).')}
@@ -5875,6 +5875,7 @@ function openManualOdoForm(code){
       <div id="odoEst" class="msg" style="margin-top:10px;font-size:11px;display:none"></div>
     </div>
     <div class="mf">
+      ${b.tayCuoi?`<button class="btn bg-gr" style="margin-right:auto" title="Nhập nhầm ở lần trước? Quay về một mốc cũ" onclick="closeOv();setTimeout(()=>openOdoUndo('${esc(code)}'),60)">↩ Hoàn tác lần nhập trước</button>`:''}
       <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
       <button class="btn bg-g" onclick="saveManualOdo()">💾 Lưu số giờ</button>
     </div>`);
@@ -5997,6 +5998,110 @@ async function saveManualOdo(choGiam){
       + (d.quyDoi != null && d.total < d.quyDoi ? ` · lưu ý: thấp hơn số đồng bộ ${nfd_(d.quyDoi)} h — lượt đồng bộ có số mới sẽ ghi lại số đồng bộ` : '')
       + (em.text && !em.warn ? ' · ' + em.text : ''), 'ok');
     if (em.text && em.warn) alert(`Số giờ ${C.code} đã được lưu.\n\nNhưng điện phát ước tính CHƯA được ghi:\n${em.text}`);
+  } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
+}
+
+/* ---- ↩ HOÀN TÁC SỐ GIỜ NHẬP TAY --------------------------------------------------------------
+ * Chọn một lần nhập tay → máy quay về số giờ NGAY TRƯỚC lần đó; lần đó và mọi lần nhập MỚI HƠN bị gỡ.
+ * Server hoàn lại luôn: điện phát ước tính (Sheet 5 ô vàng, Sheet 9), trạng thái ước tính, phiếu nhớt tự động.
+ * Danh sách: action gnOdoUndoList · xem trước / thực hiện: action gnOdoUndo (preview:true|false). */
+function odoKieuTxt_(k){ return k === 'matTT' ? '📡 mất truyền thông' : (k === 'sua' ? '🔧 sửa số' : 'nhập tay'); }
+async function openOdoUndo(code){
+  code = String(code||'').trim().toUpperCase();
+  openOv(`<div class="mh"><div><h2>↩ Hoàn tác số giờ nhập tay · ${codeFarmLine_(code)}</h2>
+      <p>Đang tải các lần nhập tay…</p></div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb"><div class="empty">Đang tải…</div></div>`);
+  let d;
+  try { d = await apiPost({ action:'gnOdoUndoList', maCode:code, user:S.user.name }); }
+  catch(e){ d = { ok:false, error:e.message }; }
+  if (!d || !d.ok){
+    openOv(`<div class="mh"><div><h2>↩ Hoàn tác số giờ nhập tay · ${esc(code)}</h2></div><button class="mcl" onclick="closeOv()">✕</button></div>
+      <div class="mb"><div class="msg" style="background:#fef2f2;color:#991b1b">${esc((d&&d.error)||'Không tải được danh sách')}</div></div>
+      <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`);
+    return;
+  }
+  window._undoCtx = { code, list:d.items, cur:d.cur };
+  const rows = d.items.map((e, i) => `<tr${i===0?' style="background:#fffbeb"':''}>
+      <td style="white-space:nowrap;font-size:11px">${esc(gioVN_(e.at))}<div style="font-size:10px;color:var(--mu)">${esc(e.nguoi||'?')}</div></td>
+      <td style="font-size:11px">${odoKieuTxt_(e.kieu)}${e.ngayTu&&e.ngayDen?`<div style="font-size:10px;color:var(--mu)">kỳ ${esc(gioNgayVN_(e.ngayTu))} → ${esc(gioNgayVN_(e.ngayDen))}</div>`:''}</td>
+      <td style="text-align:right;font-weight:700;white-space:nowrap">${e.gio==null?'—':nfd_(e.gio)+' h'}</td>
+      <td style="text-align:right;white-space:nowrap;font-size:11px">${e.ngay?`−${nfd_(e.kwh)} kWh<div style="font-size:10px;color:var(--mu)">${e.ngay} ngày ước tính</div>`:'<span style="color:var(--mu)">—</span>'}</td>
+      <td style="text-align:right;white-space:nowrap"><button class="btn bg-a sm" onclick="odoUndoPreview_('${esc(e.id)}')">${e.veGio==null?'↩ Hoàn tác…':'↩ Về '+nfd_(e.veGio)+' h'}</button>
+        ${e.luuCu?'':`<div style="font-size:9px;color:var(--mu)">${e.veGio==null?'chưa biết số trước':'suy từ lần nhập trước'}</div>`}</td>
+    </tr>`).join('');
+  openOv(`<div class="mh"><div><h2>↩ Hoàn tác số giờ nhập tay · ${codeFarmLine_(code)}</h2>
+      <p>Số giờ máy chạy hiện tại: <b>${d.cur==null?'—':nfd_(d.cur)+' h'}</b>. Bấm nút ở dòng nào thì <b>máy quay về số giờ ngay trước lần nhập đó</b>; lần đó và <b>mọi lần nhập mới hơn</b> bị gỡ, kèm điện phát ước tính, phiếu nhớt tự động… sinh ra từ chúng. Có bước xem trước trước khi áp dụng.</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      ${d.items.length ? `<table class="tbl"><thead><tr><th>Nhập lúc / bởi</th><th>Kiểu</th><th style="text-align:right">Số đã nhập</th><th style="text-align:right">Điện ước tính</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="font-size:10px;color:var(--mu);margin-top:8px">Dòng trên cùng là lần nhập mới nhất. Lịch sử không bị xoá: các lần bị gỡ vẫn nằm ở Sheet 31 với trạng thái “đã hoàn tác”, kèm dòng ghi tài khoản hoàn tác.</div>`
+        : '<div class="empty">Máy này chưa có lần nhập tay nào còn hiệu lực để hoàn tác.</div>'}
+    </div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Đóng</button></div>`);
+}
+async function odoUndoPreview_(entryId, veGio){
+  const C = window._undoCtx || {};
+  setStatus(true,'Đang tính phần sẽ hoàn lại…');
+  let p;
+  try { p = await apiPost({ action:'gnOdoUndoPreview', maCode:C.code, entryId, veGio:veGio, user:S.user.name }); }
+  catch(e){ p = { ok:false, error:e.message }; }
+  setStatus(false,'Sẵn sàng');
+  if (p && p.needVeGio){
+    const v = prompt(p.error + '\n\nSố giờ muốn quay về (h):', '');
+    if (v === null) return;
+    const n = numOrNull_(v); if (n === null || n < 0){ toast('Số giờ không hợp lệ','err'); return; }
+    return odoUndoPreview_(entryId, n);
+  }
+  if (!p || !p.ok){ toast((p&&p.error)||'Không xem trước được','err'); return; }
+  C.plan = p; C.entryId = entryId; C.veGio = veGio;
+  const e = p.est || {}, oil = p.oil;
+  const li = (t) => `<li style="margin:3px 0">${t}</li>`;
+  const mo = (e.months||[]).length ? ` (tháng ${e.months.map(esc).join(', ')})` : '';
+  openOv(`<div class="mh"><div><h2>↩ Xác nhận hoàn tác · ${codeFarmLine_(C.code)}</h2>
+      <p>Kiểm tra kỹ rồi ghi lý do. Việc này ghi thẳng vào Sheet 2, Sheet 5/9 và sổ vật tư.</p></div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div class="msg" style="background:#fffbeb;border-left:3px solid var(--amb);font-size:12px;color:#78350f;margin-bottom:10px">
+        Số giờ máy chạy: <b>${p.cur==null?'—':nfd_(p.cur)+' h'}</b> → <b style="font-size:14px">${nfd_(p.target)} h</b>
+        <div style="font-size:10px;margin-top:2px">căn cứ: ${esc(p.nguon)}</div></div>
+      <div style="font-size:12px;font-weight:700;margin:4px 0">Các lần nhập tay sẽ bị gỡ (${p.undo.length}):</div>
+      <ul style="margin:0 0 8px 18px;padding:0;font-size:12px">${p.undo.map(u => li(`${esc(gioVN_(u.at))} · ${esc(u.nguoi||'?')} · ${odoKieuTxt_(u.kieu)} · <b>${u.gio==null?'—':nfd_(u.gio)+' h'}</b>`)).join('')}</ul>
+      <div style="font-size:12px;font-weight:700;margin:4px 0">Dữ liệu tính toán / lưu trữ sẽ hoàn lại theo:</div>
+      <ul style="margin:0 0 8px 18px;padding:0;font-size:12px">
+        ${li(e.days ? `Điện phát <b>ước tính −${nfd_(e.kwh)} kWh</b> / ${nfd_(e.hours)} h, ${e.days} ngày${mo}: xoá ô vàng Sheet 5 (${e.sheet5} ngày)${e.closed?`, trừ khỏi Sheet 9 tháng đã chốt (${e.closed} ngày)`:''}; ô nào đã bị sửa tay hoặc thay bằng số thật thì <b>giữ nguyên</b>.` : 'Không có điện phát ước tính nào cần gỡ.')}
+        ${e.needs?li(`${e.needs} lần “Cần xác nhận” (chưa tính được điện phát) của các lần nhập này được bỏ.`):''}
+        ${li(oil && oil.ok !== false ? (oil.n ? `Phiếu <b>hao nhớt tự động</b>: xoá ${oil.n} phiếu (${nfd_(oil.lit)} lít), trả mốc trừ nhớt về ${oil.lastAfter==null?'—':nfd_(oil.lastAfter)+' h'}; tồn kho tính lại. Phiếu bị xoá khôi phục được ở Sheet 34.` : 'Không có phiếu nhớt tự động nào sinh ra từ phần giờ này.') : 'Không kiểm tra được phiếu nhớt tự động' + (oil&&oil.error?': '+esc(oil.error):'') + '.')}
+        ${li('Mốc bảo dưỡng tự đúng theo số giờ mới (tính trực tiếp từ Sheet 2).')}
+        ${li('Sheet 31: các dòng bị gỡ chuyển “đã hoàn tác” (không xoá) + 1 dòng ghi tài khoản hoàn tác. Số đọc thô Smartgen/LIXiSE (Sheet 30) không đổi.')}
+      </ul>
+      ${(p.warns||[]).map(w => `<div class="msg" style="background:#fef2f2;border-left:3px solid var(--red);font-size:11px;color:#991b1b;margin:6px 0">⚠ ${esc(w)}</div>`).join('')}
+      <div class="iw" style="margin-top:8px"><div class="il">Lý do hoàn tác <span style="color:var(--red)">*</span></div>
+        <input class="inp" id="undoWhy" placeholder="VD: KTV nhập nhầm 7000 h, số đúng là 6.681 h"></div>
+    </div>
+    <div class="mf">
+      <button class="btn bg-gr" style="margin-right:auto" onclick="openOdoUndo('${esc(C.code)}')">← Chọn mốc khác</button>
+      <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
+      <button class="btn bg-r" onclick="odoUndoDo_()">↩ Hoàn tác về ${nfd_(p.target)} h</button>
+    </div>`);
+}
+async function odoUndoDo_(){
+  const C = window._undoCtx || {};
+  const lyDo = String(($('undoWhy')||{}).value||'').trim();
+  if (lyDo.length < 3){ toast('Ghi lý do hoàn tác (ít nhất 3 ký tự)','err'); return; }
+  if (!confirm(`Hoàn tác ${C.code} về ${nfd_(C.plan.target)} h?\nCác lần nhập tay mới hơn mốc này sẽ bị gỡ.`)) return;
+  setStatus(true,'Đang hoàn tác…');
+  try {
+    const p = await apiPost({ action:'gnOdoUndo', maCode:C.code, entryId:C.entryId, veGio:C.veGio, lyDo, user:S.user.name });
+    if (!p || !p.ok) throw new Error((p && p.error) || 'Lỗi hoàn tác');
+    closeOv();
+    S.gio.loaded = false;
+    await reloadAll();
+    loadGio_();
+    const e = p.est || {}, oil = (p.done && p.done.oil) || null;
+    toast(`✓ ${C.code}: đã hoàn tác về ${nfd_(p.target)} h`
+      + (e.days ? ` · gỡ điện ước tính ${nfd_(e.kwh)} kWh` : '')
+      + (oil && oil.deleted ? ` · xoá ${oil.deleted} phiếu nhớt tự động` : ''), 'ok');
+    const w = (p.warns||[]).filter(Boolean);
+    if (w.length) alert(`Đã hoàn tác ${C.code}.\n\nLưu ý:\n- ` + w.join('\n- '));
   } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
 }
 
