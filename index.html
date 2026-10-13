@@ -22371,5 +22371,428 @@ RP_CT['ls-may'] = function (code, label){
   }, 2000);
 })();
 </script>
+
+<!-- ============================================================================
+  DIEUCHUYEN_WEB.html — GIAO DIỆN CHO 3 VIỆC: ĐIỀU CHUYỂN MÁY · CHI PHÍ Đ/KWH THEO BỘ LỌC · SỔ NHẬP XUẤT ĐỦ PHIẾU
+  DÁN NGUYÊN KHỐI NÀY VÀO index.html, NGAY TRƯỚC THẺ </body> (sau script chính của app).
+
+  Không sửa một dòng nào bên trong các hàm cũ. Khối này BỌC các hàm view đang có
+  (viewMaster · viewStockLog_ · viewMatCost) — renderPage() gọi chúng theo tên nên hàm bọc có
+  hiệu lực ngay; muốn gỡ thì xoá khối này là app về y như cũ.
+============================================================================ -->
+<style>
+  .dcck{display:block;font-size:12px;line-height:1.6;margin:8px 0}
+  .dcinfo{font-size:11px;color:var(--mu);margin:4px 0 8px;line-height:1.6}
+  .dcerr{background:#fee2e2;color:#991b1b;padding:8px 12px;border-radius:7px;font-size:12px;margin:8px 0}
+  .dcwarn{background:#fef3c7;color:#92400e;padding:8px 12px;border-radius:7px;font-size:12px;margin:8px 0}
+  .dcok{background:#dcfce7;color:#166534;padding:8px 12px;border-radius:7px;font-size:12px;margin:8px 0}
+  .dcerr ul,.dcwarn ul{margin:0;padding-left:18px}
+  .dcprev{max-height:260px;overflow:auto;border:1px solid var(--bd);border-radius:7px;margin-top:8px}
+  .dcprev table{width:100%;font-size:11px}
+  .dcsec{font-weight:700;font-size:12px;margin:14px 0 6px}
+</style>
+<script>
+/* ============================================================================
+ *  0 · NỐI DÂY
+ *  Ba action chỉ ĐỌC (xem thông tin máy, xem trước, tra sổ) → không hiện lớp chặn "đang ghi".
+ *  Phải khớp EG_READONLY_ACTIONS bên Code.gs (xem TRIEN_KHAI_DIEUCHUYEN.md).
+ * ========================================================================== */
+if (typeof POST_READONLY !== 'undefined')
+  ['dcInfo', 'dcPreview', 'qlvtMoveLog'].forEach(a => { if (POST_READONLY.indexOf(a) < 0) POST_READONLY.push(a); });
+
+/* ============================================================================
+ *  1 · NÚT "ĐIỀU CHUYỂN MÁY" Ở TRANG "DANH SÁCH & ĐỊNH MỨC MÁY"
+ * ========================================================================== */
+const _dcViewMaster = viewMaster;
+viewMaster = function(){
+  let h = _dcViewMaster();
+  if (S.perm && S.perm.editData && h.indexOf('dcOpen(') < 0)
+    h = h.replace('Định mức máy</h1>',
+      'Định mức máy <button class="btn bg-b sm" style="margin-left:12px;vertical-align:middle" onclick="dcOpen()" '
+      + 'title="Đổi máy · Thu hồi hệ thống · Lắp đặt mới">🔄 Điều chuyển máy</button></h1>');
+  return h;
+};
+
+/* ============================================================================
+ *  2 · SỔ NHẬP XUẤT: TÌM TRÊN TOÀN BỘ SHEET 15, KHÔNG CHỈ 800 PHIẾU CUỐI
+ *  Gói tải về chỉ có 800 phiếu cuối sheet. Phiếu nhập nằm ở dòng cũ thì không có trên web, trong khi
+ *  cột "Tồn sau" vẫn tăng — trông như tồn tăng mà không có phiếu nhập. Khi người dùng lọc / tìm
+ *  thì hỏi server quét cả sổ rồi đưa kết quả vào đúng hàm vẽ cũ (hoán tạm Q.moveLog, vẽ xong trả lại).
+ * ========================================================================== */
+const DCM = { key: '', res: null, pending: '', timer: null };
+function dcMoveKey_(){ return JSON.stringify([Q.f.moveQ || '', Q.f.moveType || '', Q.f.moveVt || '']); }
+function dcMoveNeed_(){
+  const m = Q.moveLog || {};
+  if (!(Number(m.total) > (m.rows || []).length)) return false;        // sổ đã tải đủ
+  return !!(String(Q.f.moveQ || '').trim() || Q.f.moveType || Q.f.moveVt);
+}
+function dcMoveEnsure_(){
+  if (!dcMoveNeed_()) return;
+  const key = dcMoveKey_();
+  if (DCM.key === key || DCM.pending === key) return;
+  clearTimeout(DCM.timer);
+  DCM.pending = key;
+  DCM.timer = setTimeout(async () => {
+    try {
+      const a = JSON.parse(key);
+      const d = await apiPost({ action: 'qlvtMoveLog', payload: { q: a[0], loai: a[1], vt: a[2], limit: 2000 } });
+      if (d && d.ok){ DCM.key = key; DCM.res = d; }
+    } catch (e){ /* mạng chập chờn: giữ 800 phiếu đang có */ }
+    finally { if (DCM.pending === key) DCM.pending = ''; }
+    if (Q.f.stockTab === 'so' && dcMoveKey_() === key) renderPage('stock');
+  }, 350);
+}
+const _dcViewStockLog = viewStockLog_;
+viewStockLog_ = function(){
+  try { dcMoveEnsure_(); } catch (e){}
+  if (!(DCM.res && DCM.key === dcMoveKey_() && dcMoveNeed_())) return _dcViewStockLog();
+  const keep = Q.moveLog, r = DCM.res;
+  Q.moveLog = Object.assign({}, keep, { headers: r.headers || keep.headers, rows: r.rows, total: r.rows.length });
+  try {
+    return '<div class="msg" style="margin-bottom:8px;font-size:11px;color:var(--mu)">🔎 Đã tìm trên TOÀN BỘ sổ ('
+      + nint_(r.scanned) + ' phiếu): ' + nint_(r.total) + ' phiếu khớp bộ lọc'
+      + (r.truncated ? ' — hiện ' + nint_(r.rows.length) + ' phiếu mới nhất' : '') + '.</div>' + _dcViewStockLog();
+  } finally { Q.moveLog = keep; }
+};
+
+/* ============================================================================
+ *  3 · CHI PHÍ: TỔNG TIỀN VÀ Đ/KWH THEO ĐÚNG BỘ LỌC
+ *  Dùng đúng tập máy đang hiện ở bảng "Chi tiết theo máy" (qCostFiltered_: khu vực · loại hình ·
+ *  đơn vị · đánh giá · ô tìm · loại vật tư) nên chọn "Nhớt" + gõ "NS150KVA9" + tháng 09 là ra tiền
+ *  nhớt của đúng máy đó chia cho điện phát của đúng máy đó trong tháng đó.
+ *  đ/kWh chính = TỔNG TIỀN ÷ TỔNG KWH của tập đang lọc (cùng cách thẻ "Chi phí truyền thông, camera"
+ *  đã chốt), không phải trung bình các tỉ lệ từng máy — máy chạy ít không được nặng bằng máy chạy nhiều.
+ * ========================================================================== */
+function dcCostAgg_(){
+  if (!(Q.perm && Q.perm.viewPrice) || !Q.matCost || !Q.matCost.ok) return null;
+  let rows; try { rows = qCostFiltered_(); } catch (e){ return null; }
+  const A = { rows: rows, tien: 0, kwh: 0, tienDien: 0, kwhDien: 0, nDien: 0, nKo: 0, tienKo: 0, per: [],
+              byVt: new Map(), byModel: new Map() };
+  rows.forEach(r => {
+    const c = Number(r.cost) || 0, k = Number(r.kwh) || 0;
+    A.tien += c; A.kwh += k;
+    if (k > 0){ A.nDien++; A.tienDien += c; A.kwhDien += k; } else if (c > 0){ A.nKo++; A.tienKo += c; }
+    if (r.costPerKwh != null) A.per.push(Number(r.costPerKwh));
+    (r.items || []).forEach(x => {
+      const vt = String(x.vt || '').toUpperCase(); if (!vt) return;
+      const a = A.byVt.get(vt) || { vt: vt, ten: x.ten || vt, dvt: x.dvt || '', sl: 0, tien: 0, phieu: 0, may: new Set() };
+      a.sl += x.sl || 0; a.tien += x.tien || 0; a.phieu += x.phieu || 0; a.may.add(r.code); A.byVt.set(vt, a);
+    });
+    const m = String(r.model || '—');
+    const g = A.byModel.get(m) || { model: m, n: 0, tien: 0, kwh: 0 };
+    g.n++; g.tien += c; g.kwh += k; A.byModel.set(m, g);
+  });
+  const r2 = v => Math.round(v * 100) / 100;
+  A.dTT = A.kwh > 0 ? r2(A.tien / A.kwh) : null;
+  A.dDien = A.kwhDien > 0 ? r2(A.tienDien / A.kwhDien) : null;
+  A.dTB = A.per.length ? r2(A.per.reduce((s, v) => s + v, 0) / A.per.length) : null;
+  A.vtRows = [...A.byVt.values()].map(a => ({
+    vt: a.vt, ten: a.ten, dvt: a.dvt, sl: r2(a.sl), tien: r2(a.tien), nMay: a.may.size, phieu: a.phieu,
+    pct: A.tien > 0 ? r2(a.tien / A.tien * 100) : null, dKwh: A.kwh > 0 ? r2(a.tien / A.kwh) : null
+  })).sort((x, y) => y.tien - x.tien);
+  A.mdRows = [...A.byModel.values()].map(g => ({
+    model: g.model, nMay: g.n, tien: r2(g.tien), kwh: r2(g.kwh), dKwh: g.kwh > 0 ? r2(g.tien / g.kwh) : null
+  })).sort((x, y) => y.tien - x.tien);
+  const d = [];
+  d.push('tháng ' + (Q.matCost.monthLabel || ''));
+  let vt = ''; try { vt = qCostVtLabel_(); } catch (e){}
+  if (vt) d.push('chỉ tính ' + vt);
+  if (Q.f.costQ) d.push('tìm “' + Q.f.costQ + '”');
+  [Q.f.costRegion, Q.f.costType, Q.f.costUnit].forEach(s => { if (s && s.size) d.push([...s].join('/')); });
+  if (Q.f.costFlag) d.push('đánh giá: ' + ({ over: 'vượt TB', under: 'thấp bất thường', ok: 'bình thường', nodata: 'chưa có số' }[Q.f.costFlag] || Q.f.costFlag));
+  A.desc = d.join(' · ');
+  return A;
+}
+
+function dcCostCard_(){
+  const A = dcCostAgg_(); if (!A) return '';
+  const tile = (l, v, u, tip) => '<div class="es" title="' + esc(tip || '') + '"><div class="esl">' + l + '</div><div class="esv">' + v
+    + (u ? ' <span style="font-size:9px;color:var(--mu);font-weight:500">' + u + '</span>' : '') + '</div></div>';
+  const dash = '<span style="color:var(--mu)">—</span>';
+  let note = '';
+  if (A.nKo > 0)
+    note = '<div class="dcwarn">' + nint_(A.nKo) + ' máy có chi phí ' + fmtVnd_(A.tienKo) + ' nhưng <b>chưa có điện phát</b> trong tháng nên không chia được. '
+      + 'Số đ/kWh chính vẫn tính cả khoản này (tổng ÷ tổng); nếu chỉ tính máy có điện thì là <b>'
+      + (A.dDien == null ? '—' : fmt2_(A.dDien)) + ' đ/kWh</b>.</div>';
+  else if (A.rows.length && A.kwh <= 0)
+    note = '<div class="dcwarn">Tập máy đang lọc chưa có điện phát trong tháng — chưa chia được đ/kWh.</div>';
+  const vtTbl = A.vtRows.length ? '<div class="tw" style="max-height:260px"><table><thead><tr><th>Loại vật tư</th>'
+    + '<th style="text-align:right">Số lượng</th><th style="text-align:right">Thành tiền (đ)</th><th style="text-align:right">% tổng</th>'
+    + '<th style="text-align:right" title="Thành tiền loại này ÷ tổng điện phát của tập đang lọc">đ/kWh</th><th style="text-align:right">Số máy</th></tr></thead><tbody>'
+    + A.vtRows.map(x => '<tr><td><b>' + esc(x.ten) + '</b> <span style="font-size:10px;color:var(--mu)">' + esc(x.vt) + '</span></td>'
+      + '<td style="text-align:right">' + fmt2_(x.sl) + ' ' + esc(x.dvt) + '</td><td style="text-align:right;font-family:var(--mono)">' + fmtVnd_(x.tien) + '</td>'
+      + '<td style="text-align:right">' + (x.pct == null ? '—' : fmt2_(x.pct) + '%') + '</td>'
+      + '<td style="text-align:right;font-weight:700">' + (x.dKwh == null ? '—' : fmt2_(x.dKwh)) + '</td><td style="text-align:right">' + nint_(x.nMay) + '</td></tr>').join('')
+    + '</tbody></table></div>' : '<div class="empty">Tập máy đang lọc chưa xuất loại vật tư nào trong tháng.</div>';
+  const mdTbl = A.mdRows.length > 1 ? '<div class="dcsec">Theo dòng máy (tổng ÷ tổng trong dòng)</div><div class="tw" style="max-height:200px"><table><thead><tr>'
+    + '<th>Dòng máy</th><th style="text-align:right">Số máy</th><th style="text-align:right">Chi phí (đ)</th><th style="text-align:right">Điện phát (kWh)</th><th style="text-align:right">đ/kWh</th></tr></thead><tbody>'
+    + A.mdRows.map(x => '<tr><td><b>' + esc(x.model) + '</b></td><td style="text-align:right">' + nint_(x.nMay) + '</td><td style="text-align:right;font-family:var(--mono)">'
+      + fmtVnd_(x.tien) + '</td><td style="text-align:right">' + fmt2_(x.kwh) + '</td><td style="text-align:right;font-weight:700">' + (x.dKwh == null ? '—' : fmt2_(x.dKwh)) + '</td></tr>').join('')
+    + '</tbody></table></div>' : '';
+  return '<div class="card"><div class="ch"><h3>Tổng hợp theo bộ lọc</h3><span class="b bmu">' + esc(A.desc) + '</span>'
+    + '<button class="btn bg-gr sm" onclick="dcCostExport_()">⤓ Excel</button></div><div class="cb">'
+    + '<div class="effstats">'
+    + tile('Chi phí vật tư', fmtVnd_(A.tien), '', nint_(A.rows.length) + ' máy trong tập đang lọc')
+    + tile('Điện phát', fmt2_(A.kwh), 'kWh', 'Tổng điện phát của tập máy đang lọc')
+    + tile('đ/kWh (tổng ÷ tổng)', A.dTT == null ? dash : fmt2_(A.dTT), 'đ/kWh', 'Tổng tiền ÷ tổng điện phát — con số để báo cáo')
+    + tile('đ/kWh trung bình các máy', A.dTB == null ? dash : fmt2_(A.dTB), 'đ/kWh · ' + A.per.length + ' máy', 'Trung bình cộng đ/kWh từng máy (mỗi máy một phiếu bầu)')
+    + '</div>' + note
+    + '<div class="dcsec">Theo loại vật tư (đ/kWh = tiền loại đó ÷ điện phát cả tập)</div>' + vtTbl + mdTbl
+    + '<div style="font-size:11px;color:var(--mu);margin-top:8px;line-height:1.7">Chỉ gồm phiếu <b>Xuất – Sử dụng</b> và <b>Bù kiểm kê</b>; phiếu <b>Mang đi</b> và cước SIM không tính vào chi phí máy. '
+    + 'Muốn xem một loại vật tư riêng thì bấm chip ở dải “Vật tư”; muốn một máy thì gõ mã máy vào ô tìm.</div>'
+    + '</div></div>';
+}
+
+function dcCostExport_(){
+  const A = dcCostAgg_(); if (!A || !A.vtRows.length){ toast('Không có dữ liệu trong tập đang lọc', 'err'); return; }
+  const th = String((Q.matCost && Q.matCost.monthLabel) || '').replace('/', '-');
+  exportXls_('tong-hop-chi-phi-' + th, 'Tổng hợp chi phí vật tư · ' + A.desc
+      + ' · tổng ' + Math.round(A.tien) + ' đ · ' + (A.dTT == null ? '—' : A.dTT) + ' đ/kWh (tổng ÷ tổng)',
+    [{ key: 'vt', label: 'Mã VT', type: 'text' }, { key: 'ten', label: 'Tên vật tư', type: 'text' }, { key: 'sl', label: 'Số lượng', type: 'num' },
+     { key: 'dvt', label: 'ĐVT', type: 'text' }, { key: 'tien', label: 'Thành tiền (đ)', type: 'money' }, { key: 'pct', label: '% tổng', type: 'num' },
+     { key: 'dKwh', label: 'đ/kWh', type: 'num' }, { key: 'nMay', label: 'Số máy', type: 'int' }, { key: 'phieu', label: 'Số phiếu', type: 'int' }],
+    A.vtRows);
+}
+
+const _dcViewMatCost = viewMatCost;
+viewMatCost = function(){
+  const h = _dcViewMatCost();
+  let card = ''; try { card = dcCostCard_(); } catch (e){ card = ''; }
+  if (!card) return h;
+  const i = h.indexOf('<h3>Chi tiết theo máy</h3>');
+  const j = i < 0 ? -1 : h.lastIndexOf('<div class="card">', i);
+  return j < 0 ? h + card : h.slice(0, j) + card + '\n' + h.slice(j);
+};
+
+/* ============================================================================
+ *  4 · ĐIỀU CHUYỂN MÁY — ba chế độ, luôn "Xem trước" rồi mới "Xác nhận"
+ * ========================================================================== */
+const DC = { mode: 'swap', f: {}, info: {}, res: null, itemsFor: '' };
+const DC_R = ['mpd', 'loc', 'ong', 'day', 'lan'];
+const DC_R_LABEL = { mpd: 'MPĐ', loc: 'Bộ lọc khí', ong: 'Đường ống khí', day: 'Đường dây điện', lan: 'Lán mái che' };
+
+const dcV = id => ((($(id) || {}).value) || '').trim();
+const dcC = id => !!(($(id) || {}).checked);
+function dcCodes_(){ try { return S.master.rows.map(r => String(r._byLetter[COL.MA] || '').trim()).filter(Boolean); } catch (e){ return []; } }
+function dcUniq_(L){ try { return [...new Set(S.master.rows.map(r => String(r._byLetter[L] || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi')); } catch (e){ return []; } }
+function dcToday_(){ const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+
+function dcOpen(mode, code){
+  DC.mode = mode || 'swap'; DC.f = {}; DC.res = null; DC.itemsFor = '';
+  if (code){ DC.f.dcA = code; DC.f.dcCode = code; }
+  dcRender_(true);                       // true = dựng mới, KHÔNG nhặt giá trị từ hộp thoại cũ còn sót trong DOM
+  if (code) dcLoad_(code);
+}
+function dcMode(m){ dcCollect_(); DC.mode = m; DC.res = null; DC.itemsFor = ''; dcRender_(); }
+
+/** Nhớ lại giá trị đang gõ trước khi dựng lại hộp thoại (đổi chế độ / bật tắt ô chọn). */
+function dcCollect_(){
+  const f = DC.f;
+  document.querySelectorAll('#dcForm input[id], #dcForm select[id]').forEach(el => {
+    f[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+}
+
+function dcInfoHtml_(code){
+  code = String(code || '').trim().toUpperCase(); if (!code) return '';
+  const i = DC.info[code];
+  if (!i) return '<div class="dcinfo">Đang đọc ' + esc(code) + '…</div>';
+  if (!i.ok) return '<div class="dcerr">' + esc(i.error || 'Không đọc được máy này') + '</div>';
+  const c = i.ctx || {};
+  return '<div class="dcinfo"><b>' + esc(i.code) + '</b> · ' + esc([c.donVi, c.trai, c.khu, c.tinh].filter(Boolean).join(' · ') || 'chưa có vị trí')
+    + ' · <span class="b bmu">' + esc(i.trangThai || '—') + '</span>'
+    + (i.odo == null ? '' : ' · ' + nfd_(i.odo) + ' h')
+    + (i.coDongSheet2 ? '' : ' · <b style="color:var(--red)">chưa có dòng ở Sheet 2</b>')
+    + '<br>Smartgen: ' + esc(i.ids.sg || '—') + ' · Lixise: ' + esc(i.ids.lx || '—') + '</div>';
+}
+
+function dcItemsHtml_(code){
+  code = String(code || '').trim().toUpperCase();
+  const i = DC.info[code];
+  if (!i || !i.ok) return '<div class="dcinfo">Chọn mã máy để hiện các mốc bảo dưỡng.</div>';
+  const list = i.items.concat(i.hatLoc ? [i.hatLoc] : []);
+  if (!list.length) return '<div class="dcinfo">Máy này chưa có mốc nào ở Sheet 2.</div>';
+  return '<div class="tw" style="max-height:300px"><table><thead><tr><th>Hạng mục</th><th style="text-align:right">Mốc hiện tại (h)</th>'
+    + '<th style="text-align:right">Đã chạy (h)</th><th>Mốc mới (h)</th></tr></thead><tbody>'
+    + list.map((it, k) => '<tr><td>' + esc(it.ten) + '</td><td style="text-align:right">' + (it.na ? 'X' : esc(it.moc || '—')) + '</td>'
+      + '<td style="text-align:right">' + (it.na || it.daChay == null ? '—' : nfd_(it.daChay)) + '</td><td>'
+      + (it.na ? '<span class="b bmu">không có hạng mục</span>'
+        : '<input class="inp dcm" id="dcM' + k + '" data-col="' + esc(it.col) + '" data-w="' + (it.daChay == null ? '' : it.daChay) + '" inputmode="decimal" style="max-width:110px" '
+          + 'value="' + esc(DC.f['dcM' + k] || '') + '" oninput="dcDirty_()">') + '</td></tr>').join('')
+    + '</tbody></table></div>';
+}
+
+function dcRender_(fresh){
+  if (!fresh) dcCollect_();
+  const f = DC.f, m = DC.mode;
+  const val = (id, d) => esc(f[id] !== undefined ? f[id] : (d || ''));
+  const chk = (id, d) => (f[id] !== undefined ? f[id] : d) ? 'checked' : '';
+  const chip = (k, label) => '<button class="fchip ' + (m === k ? 'on' : '') + '" onclick="dcMode(\'' + k + '\')">' + label + '</button>';
+  const dl = (id, arr) => '<datalist id="' + id + '">' + arr.map(v => '<option value="' + esc(v) + '">').join('') + '</datalist>';
+  const inp = (id, label, d, list, ph) => '<div class="iw"><div class="il">' + label + '</div><input class="inp" id="' + id + '" autocomplete="off" '
+    + (list ? 'list="' + list + '" ' : '') + 'placeholder="' + esc(ph || '') + '" value="' + val(id, d) + '" oninput="dcDirty_()"></div>';
+  const codeInp = (id, label, d) => '<div class="iw"><div class="il">' + label + '</div><input class="inp" id="' + id + '" list="dcCodes" autocomplete="off" '
+    + 'value="' + val(id, d) + '" placeholder="vd. NS200KVA4" onchange="dcLoad_(this.value);dcDirty_()"></div>';
+
+  let body = '';
+  if (m === 'swap'){
+    const scr = f.dcScr !== undefined ? f.dcScr : false;
+    body = '<div class="fgrid fg2">' + codeInp('dcA', 'Mã máy chuyển đi', '') + codeInp('dcB', 'Mã máy chuyển đến', '') + '</div>'
+      + '<div id="dcInfoA">' + dcInfoHtml_(f.dcA) + '</div><div id="dcInfoB">' + dcInfoHtml_(f.dcB) + '</div>'
+      + '<div class="dcinfo">Hai máy <b>đổi vị trí cho nhau</b>: đơn vị, trại, khu vực, tỉnh, loại hình, trạng thái, người vận hành ở Sheet 1; mốc đại tu · nhớt · lọc nhớt · lọc gió · bugi · turbo · két nước · ổ bi '
+      + 'đi theo từng máy (giữ nguyên số giờ đã chạy kể từ lần làm).</div>'
+      + '<label class="dcck"><input type="checkbox" id="dcScr" ' + (scr ? 'checked' : '') + ' onchange="dcDirty_();dcRender_()"> <b>Đổi cả màn hình điều khiển</b> — '
+      + 'màn hình (Unit ID, số giờ, SIM) đi theo máy. <i>Bỏ chọn (mặc định)</i>: màn hình ở lại trại, chỉ máy đổi chỗ — Sheet 2 đổi tên mã máy ở cột B cho nhau, số giờ + Unit ID + bộ đếm giờ ở lại vị trí.</label>';
+    if (scr){
+      body += '<div class="dcsec">Unit ID mới (chỉ điền nếu có thay màn hình)</div><div class="fgrid fg2">'
+        + inp('dcSgA', 'Smartgen Unit ID · máy chuyển đi', '') + inp('dcLxA', 'Lixise ID · máy chuyển đi', '')
+        + inp('dcSgB', 'Smartgen Unit ID · máy chuyển đến', '') + inp('dcLxB', 'Lixise ID · máy chuyển đến', '') + '</div>';
+    } else {
+      body += '<label class="dcck"><input type="checkbox" id="dcSim" ' + chk('dcSim', true) + ' onchange="dcDirty_()"> SIM ở lại trại cùng màn hình (đổi mã máy ở Sheet SIM cho nhau)</label>';
+    }
+  } else if (m === 'recall'){
+    const all = f.dcAll !== undefined ? f.dcAll : false;
+    body = '<div class="fgrid fg2">' + codeInp('dcCode', 'Mã máy thu hồi', '') + '</div><div id="dcInfoC">' + dcInfoHtml_(f.dcCode) + '</div>'
+      + '<div class="dcsec">Hạng mục thu hồi</div>'
+      + '<label class="dcck"><input type="checkbox" id="dcAll" ' + (all ? 'checked' : '') + ' onchange="dcAllToggle_(this.checked)"> <b>Chọn tất cả</b></label>'
+      + DC_R.map(k => '<label class="dcck" style="display:inline-block;margin-right:16px"><input type="checkbox" id="dcR_' + k + '" ' + (f['dcR_' + k] || all ? 'checked' : '')
+        + ' onchange="dcDirty_()"> ' + DC_R_LABEL[k] + '</label>').join('')
+      + '<div class="dcinfo">Thu hồi <b>MPĐ</b> thì máy chuyển sang trạng thái thu hồi và <b>mọi cảnh báo (bảo dưỡng, tồn kho, hao nhớt) bị đóng băng</b> cho tới khi lắp lại bằng chế độ “Lắp đặt mới”. '
+      + 'Không tích MPĐ thì chỉ ghi nhận hạng mục đã thu hồi, trạng thái giữ nguyên. Cước SIM vẫn nhắc như cũ.</div>'
+      + '<div class="dcsec">Nơi để máy sau khi thu hồi (để trống = giữ nguyên)</div><div class="fgrid fg2">'
+      + inp('dcLH', 'Loại hình', 'Tồn kho', 'dcLHs') + inp('dcTR', 'Trang trại / nơi để', 'Xưởng', 'dcTRs')
+      + inp('dcDV', 'Đơn vị hợp tác', '', 'dcDVs') + inp('dcKV', 'Khu vực', '', 'dcKVs') + inp('dcTI', 'Tỉnh thành', '', 'dcTIs') + '</div>';
+  } else {
+    body = '<div class="fgrid fg2">' + codeInp('dcCode', 'Mã máy lắp đặt', '') + '</div><div id="dcInfoC">' + dcInfoHtml_(f.dcCode) + '</div>'
+      + '<div class="dcinfo">Từ kho lên trại, hoặc từ trại cũ sang thẳng trại mới. Mọi số liệu đang theo mã máy được <b>giữ nguyên</b>; chỉ ô nào anh điền ở dưới mới đổi.</div>'
+      + '<div class="dcsec">Trại đích</div><div class="fgrid fg2">'
+      + inp('dcLH', 'Loại hình', '', 'dcLHs') + inp('dcDV', 'Đơn vị hợp tác', '', 'dcDVs') + inp('dcTR', 'Trang trại', '', 'dcTRs')
+      + inp('dcKV', 'Khu vực', '', 'dcKVs') + inp('dcTI', 'Tỉnh thành', '', 'dcTIs') + inp('dcVH', 'Tên vận hành', '') + inp('dcSDT', 'SĐT vận hành', '') + '</div>'
+      + '<div class="dcsec">Thiết bị giám sát</div><div class="fgrid fg2">'
+      + inp('dcSg', 'Smartgen Unit ID', '') + inp('dcLx', 'Lixise ID', '') + '</div>'
+      + '<div class="dcsec">Số giờ &amp; mốc bảo dưỡng theo màn hình mới</div>'
+      + '<div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap"><div class="iw" style="margin:0"><div class="il">Số giờ màn hình đang báo (h)</div>'
+      + '<input class="inp" id="dcGio" inputmode="decimal" style="max-width:160px" value="' + val('dcGio', '') + '" oninput="dcDirty_()" placeholder="vd. 1000"></div>'
+      + '<button class="btn bg-b sm" onclick="dcApplyAll_()" title="Mọi mốc = số giờ màn hình → các vật tư coi như còn nguyên hạn dùng">Áp dụng cho tất cả</button>'
+      + '<button class="btn bg-gr sm" onclick="dcKeepW_()" title="Mốc = giờ màn hình − số giờ đã chạy hiện tại → giữ nguyên hạn dùng đang có">Giữ nguyên hạn dùng hiện tại</button></div>'
+      + '<div class="dcinfo">Ví dụ màn hình cũ đang báo 1000 h: điền 1000 rồi “Áp dụng cho tất cả” → mọi mốc = 1000, số giờ đã chạy = 0. Ô mốc để trống = giữ nguyên mốc cũ.</div>'
+      + '<div id="dcItems">' + dcItemsHtml_(f.dcCode) + '</div>';
+  }
+  const lists = dl('dcCodes', dcCodes_()) + dl('dcLHs', dcUniq_(COL.LOAI)) + dl('dcDVs', dcUniq_(COL.DONVI)) + dl('dcTRs', dcUniq_(COL.TRAI))
+    + dl('dcKVs', dcUniq_(COL.KHU)) + dl('dcTIs', dcUniq_(COL.TINH));
+  DC.itemsFor = String(f.dcCode || '').toUpperCase();
+
+  openOv('<div class="mh"><div><h2>🔄 Điều chuyển máy</h2><p>Xem trước từng ô sẽ đổi rồi mới ghi vào Google Sheet · lịch sử ghi ở “22. Lịch sử điều chuyển máy”</p></div>'
+    + '<button class="mcl" onclick="closeOv()">✕</button></div>'
+    + '<div class="mb" id="dcForm">' + lists
+    + '<div class="msg" style="margin-bottom:10px">' + chip('swap', '🔁 Đổi máy') + chip('recall', '📤 Thu hồi hệ thống') + chip('install', '📥 Lắp đặt mới') + '</div>'
+    + body
+    + '<div class="fgrid fg2" style="margin-top:10px">' + inp('dcNgay', 'Ngày điều chuyển', dcToday_()) + inp('dcNote', 'Ghi chú / lý do', '') + '</div>'
+    + '<div id="dcPrev"></div></div>'
+    + '<div class="mf"><button class="btn bg-gr" onclick="closeOv()">Huỷ</button>'
+    + '<button class="btn bg-b" id="dcBtnPrev" onclick="dcDoPreview()">🔍 Xem trước thay đổi</button>'
+    + '<button class="btn bg-g" id="dcGo" onclick="dcDoApply()" disabled>✓ Xác nhận điều chuyển</button></div>');
+}
+
+function dcAllToggle_(on){ DC_R.forEach(k => { const el = $('dcR_' + k); if (el) el.checked = on; }); dcDirty_(); }
+
+function dcApplyAll_(){
+  const g = dcV('dcGio');
+  if (g === '' || isNaN(Number(g.replace(',', '.')))){ toast('Điền số giờ màn hình trước', 'err'); return; }
+  document.querySelectorAll('.dcm').forEach(el => { el.value = g.replace(',', '.'); });
+  dcDirty_();
+}
+function dcKeepW_(){
+  const g = Number(dcV('dcGio').replace(',', '.'));
+  if (!isFinite(g) || dcV('dcGio') === ''){ toast('Điền số giờ màn hình trước', 'err'); return; }
+  document.querySelectorAll('.dcm').forEach(el => {
+    const w = Number(el.dataset.w);
+    el.value = (el.dataset.w === '' || !isFinite(w)) ? '' : String(Math.round((g - w) * 100) / 100);
+  });
+  dcDirty_();
+}
+
+async function dcLoad_(code){
+  code = String(code || '').trim().toUpperCase(); if (!code) return;
+  if (!DC.info[code]){
+    try { DC.info[code] = await apiPost({ action: 'dcInfo', payload: { code: code } }); }
+    catch (e){ DC.info[code] = { ok: false, error: e.message }; }
+  }
+  dcRefreshInfo_();
+}
+function dcRefreshInfo_(){
+  const set = (id, h) => { const el = $(id); if (el) el.innerHTML = h; };
+  set('dcInfoA', dcInfoHtml_(dcV('dcA'))); set('dcInfoB', dcInfoHtml_(dcV('dcB'))); set('dcInfoC', dcInfoHtml_(dcV('dcCode')));
+  const c = dcV('dcCode').toUpperCase();
+  if ($('dcItems') && c !== DC.itemsFor){ DC.itemsFor = c; set('dcItems', dcItemsHtml_(c)); }
+  else if ($('dcItems') && !document.querySelector('.dcm') && DC.info[c]) set('dcItems', dcItemsHtml_(c));
+}
+
+function dcPayload_(){
+  const p = { mode: DC.mode, ngay: dcV('dcNgay'), ghiChu: dcV('dcNote') };
+  if (DC.mode === 'swap'){
+    p.codeA = dcV('dcA'); p.codeB = dcV('dcB'); p.doiManHinh = dcC('dcScr'); p.simTheoViTri = $('dcSim') ? dcC('dcSim') : true;
+    if (p.doiManHinh){ p.idA = { sg: dcV('dcSgA'), lx: dcV('dcLxA') }; p.idB = { sg: dcV('dcSgB'), lx: dcV('dcLxB') }; }
+  } else if (DC.mode === 'recall'){
+    p.code = dcV('dcCode'); p.items = { all: dcC('dcAll') }; DC_R.forEach(k => { p.items[k] = dcC('dcR_' + k); });
+    p.dich = { loaiHinh: dcV('dcLH'), trai: dcV('dcTR'), donVi: dcV('dcDV'), khu: dcV('dcKV'), tinh: dcV('dcTI') };
+  } else {
+    p.code = dcV('dcCode');
+    p.dich = { loaiHinh: dcV('dcLH'), donVi: dcV('dcDV'), trai: dcV('dcTR'), khu: dcV('dcKV'), tinh: dcV('dcTI'), vanHanh: dcV('dcVH'), sdt: dcV('dcSDT') };
+    p.ids = { sg: dcV('dcSg'), lx: dcV('dcLx') };
+    p.gio = dcV('dcGio').replace(',', '.');
+    p.moc = [...document.querySelectorAll('.dcm')].map(el => ({ col: el.dataset.col, v: String(el.value).replace(',', '.') }));
+  }
+  return p;
+}
+
+/** Sửa bất kỳ ô nào sau khi đã xem trước → bản xem trước cũ hết hiệu lực. */
+function dcDirty_(){
+  if (!DC.res) return;
+  DC.res = null;
+  const b = $('dcPrev'); if (b) b.innerHTML = '<div class="dcinfo">Anh vừa sửa form — bấm “Xem trước” lại trước khi xác nhận.</div>';
+  const g = $('dcGo'); if (g) g.disabled = true;
+}
+function dcBusy_(on){ ['dcBtnPrev', 'dcGo'].forEach(id => { const el = $(id); if (el && on) el.disabled = true; }); }
+
+async function dcDoPreview(){
+  const p = dcPayload_(); DC.res = null; dcBusy_(true);
+  const box = $('dcPrev'); if (box) box.innerHTML = '<div class="dcinfo">⏳ Đang tính…</div>';
+  let d; try { d = await apiPost({ action: 'dcPreview', payload: p }); } catch (e){ d = { ok: false, error: e.message }; }
+  const btn = $('dcBtnPrev'); if (btn) btn.disabled = false;
+  if (!$('dcPrev')) return;
+  if (!d || d.ok === false){ $('dcPrev').innerHTML = '<div class="dcerr">' + esc((d && d.error) || 'Không xem trước được') + '</div>'; return; }
+  DC.res = d;
+  const li = a => '<ul>' + a.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>';
+  const rows = (d.changes || []).map(c => '<tr><td>' + esc(c.sheet) + '</td><td><b>' + esc(c.code) + '</b></td><td>' + esc(c.field)
+    + '</td><td>' + esc(c.old) + '</td><td>' + esc(c.nw) + '</td></tr>').join('');
+  $('dcPrev').innerHTML =
+    ((d.errors || []).length ? '<div class="dcerr"><b>Chưa làm được:</b>' + li(d.errors) + '</div>' : '')
+    + ((d.warnings || []).length ? '<div class="dcwarn"><b>Lưu ý:</b>' + li(d.warnings) + '</div>' : '')
+    + (d.valid ? '<div class="dcok">✓ ' + esc(d.label) + ' — ' + (d.changes || []).length + ' thay đổi sẽ được ghi. Kiểm lại bảng dưới rồi bấm “Xác nhận”.</div>' : '')
+    + (rows ? '<div class="dcprev"><table><thead><tr><th>Sheet</th><th>Máy</th><th>Trường</th><th>Hiện tại</th><th>Sau khi chuyển</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '');
+  const go = $('dcGo'); if (go) go.disabled = !d.valid;
+}
+
+async function dcDoApply(){
+  if (!DC.res || !DC.res.valid){ toast('Bấm “Xem trước” và xử lý hết lỗi trước', 'err'); return; }
+  if (!confirm(DC.res.label + ': ghi ' + (DC.res.changes || []).length + ' thay đổi vào Google Sheet?\n\nViệc này được ghi vào “22. Lịch sử điều chuyển máy”.')) return;
+  const p = dcPayload_(); dcBusy_(true);
+  try {
+    const d = await apiPost({ action: 'dcApply', payload: p });
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Không ghi được');
+    closeOv(); DC.info = {}; DC.res = null;
+    try { S.transfers.loaded = false; } catch (e){}
+    toast('✓ ' + d.label + ': đã ghi ' + d.changed + ' ô · ' + d.logged + ' dòng lịch sử', 'ok');
+    (d.warnings || []).forEach(w => toast('⚠ ' + w, 'err'));
+    try { await reloadAll({ withQlvt: true }); } catch (e){}
+    try { renderCurrent(); } catch (e){}
+  } catch (e){
+    const b = $('dcBtnPrev'); if (b) b.disabled = false;
+    toast('Lỗi: ' + e.message, 'err');
+  }
+}
+</script>
+
 </body>
 </html>
