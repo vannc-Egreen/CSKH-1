@@ -5057,7 +5057,9 @@ async function saveTracking(rowId){
     clearDraftContext();
     closeOv();
     await reloadAll();
-    toast(`✓ Đã cập nhật ${Object.keys(updates).length} trường`,'ok');
+    const em = estMsg_(res.uocTinh);
+    toast(`✓ Đã cập nhật ${Object.keys(updates).length} trường` + (em.text && !em.warn ? ' · ' + em.text : ''),'ok');
+    if (em.text && em.warn) alert(`Đã lưu.\n\nNhưng điện phát ước tính CHƯA được ghi:\n${em.text}`);
   } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
 }
 
@@ -5607,7 +5609,7 @@ function viewHourBase(){
         nghỉ lễ không ai đăng nhập thì số dồn mấy ngày vẫn hợp lệ.
         <br>Mọi mốc thời gian dưới đây là <b>giờ Việt Nam</b>. Dòng cảnh báo hiện ngay
         <b>số cũ nạp ngày nào → số mới nạp ngày nào → chênh bao nhiêu → vi phạm luật nào</b>.
-        <br><b>Mất truyền thông</b>: bấm <b>✍ Nhập tay</b>, ghi thẳng ô E. Có sóng lại, số đồng bộ vượt số nhập tay thì tự thay — không cộng trùng giờ.</span></p>
+        <br><b>Mất truyền thông</b>: bấm <b>✍ Nhập tay</b>, chọn “Máy mất truyền thông” và điền <b>kỳ số liệu</b> (Từ ngày – Đến ngày); ghi thẳng ô E, điện phát ước tính chia đều theo kỳ. Dòng lịch sử ghi rõ kỳ, số kWh và tài khoản nhập. Có sóng lại, số đồng bộ vượt số nhập tay thì tự thay — không cộng trùng giờ.</span></p>
     </div>
     <div class="fbar">
       <input class="si" id="gioSearch" autocomplete="off" placeholder="🔍 Tìm mã máy, đơn vị, trại…" value="${esc(S.filters.gioQ||'')}"
@@ -5825,53 +5827,161 @@ function openManualOdoForm(code){
   const off = Number(b.offset)||0;
   const now = new Date(); const pad = n => String(n).padStart(2,'0');
   const nowLocal = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  window._odoCtx = { code, cur, off };
+  const yst = ymdAdd_(now,-1);
+  window._odoCtx = { code, cur, off, quy: b.quyDoi==null ? null : Number(b.quyDoi), kw: odoKwOf_(code), sug: null, yst };
   const box = (lbl, val) => `<div class="iw"><div class="il">${lbl}</div><div style="padding:8px 11px;background:#f8fafc;border:1.5px solid var(--bd);border-radius:8px">${val}</div></div>`;
+  const pre = b.stuck ? 'matTT' : '';          // máy đang im số đọc → gợi ý "mất truyền thông", người dùng vẫn đổi được
+  const kind = (v, title, sub) => `<label style="display:flex;gap:9px;align-items:flex-start;padding:9px 10px;border:1.5px solid var(--bd);border-radius:8px;margin:5px 0;cursor:pointer">
+      <input type="radio" name="odoKind" value="${v}" ${pre===v?'checked':''} style="margin-top:3px" onchange="odoKindChange_()">
+      <span style="font-size:12px"><b>${title}</b><br><span style="color:var(--mu);font-size:11px">${sub}</span></span></label>`;
   openOv(`
     <div class="mh"><div><h2>✍ Nhập tay số giờ máy chạy · ${codeFarmLine_(String(code))}</h2>
-      <p>Dùng khi Smartgen/LIXiSE <b>không cập nhật</b> (mất truyền thông). Số nhập ghi <b>thẳng vào ô “Số giờ máy chạy”</b> (cột E Sheet 2) —
-      có sóng lại, khi số đồng bộ vượt số này thì hệ thống tự thay, không cộng trùng.</p></div>
+      <p>Số nhập ghi <b>thẳng vào ô “Số giờ máy chạy”</b> (cột E Sheet 2). Có sóng lại, khi số đồng bộ vượt số này thì hệ thống tự thay, không cộng trùng.
+      <b>Chọn đúng một trong hai việc dưới đây</b> — hệ thống không tự đoán.</p></div>
       <button class="mcl" onclick="closeOv()">✕</button></div>
     <div class="mb">
       ${p ? `<div class="msg" style="background:#fffbeb;border-left:3px solid var(--amb);font-size:11px;color:#78350f;margin-bottom:10px">
         Máy này đang <b>chờ xác nhận thay màn hình / thay máy</b> (${esc(p.chieu||'')}). Nếu đúng là đã thay, xử lý bằng nút
         <button class="btn bg-a sm" onclick="closeOv();setTimeout(()=>openPendingResolve('${esc(p.id)}'),60)">⚠ Chọn</button> — nhập tay không thay được bước đó.</div>` : ''}
-      <div class="fgrid fg3" style="margin-bottom:10px">
+      <div class="fgrid fg3" style="margin-bottom:8px">
         ${box('Số giờ máy chạy hiện tại', `<b>${cur==null?'—':nfd_(cur)+' h'}</b>`)}
         ${box('Số đồng bộ quy đổi', b.quyDoi==null?'chưa có':nfd_(b.quyDoi)+' h'+(Math.abs(off)>0.01?` <span style="font-size:10px;color:var(--mu)">(đồng hồ ${nfd_(b.raw)} + bù ${nfd_(off)})</span>`:''))}
         ${box('Số đọc đổi lần cuối', esc(b.at||'—') + (b.silentH!=null?` <span style="font-size:10px;color:var(--mu)">(${gioSilentTxt_(b.silentH)} trước)</span>`:''))}
       </div>
-      <div class="fgrid fg2">
+      ${kind('matTT','📡 Máy MẤT TRUYỀN THÔNG — không có dữ liệu Smartgen/LIXiSE',
+        'Đây là số giờ KTV <b>đọc tại máy</b>. Hệ thống tự tính <b>điện phát = số giờ tăng thêm × công suất thiết kế</b>, <b>chia đều theo kỳ số liệu</b> bạn chọn, ghi vào Sheet 5 (ô tô vàng, đánh dấu ƯỚC TÍNH).')}
+      ${kind('sua','🔧 SỬA SỐ GIỜ — Smartgen/LIXiSE đọc sai / lệch',
+        'Chỉ chỉnh lại con số cho đúng. <b>Không tính điện phát</b>, không đụng số liệu Sheet 5.')}
+      <div class="fgrid fg2" style="margin-top:8px">
         ${Math.abs(off)>0.01 ? `<div class="iw"><div class="il">Số đang hiện trên màn hình máy (h)</div>
           <input class="inp" id="odoScreen" type="number" step="any" min="0" oninput="odoFromScreen_()" placeholder="Điền số trên màn hình">
           <div style="font-size:9px;color:var(--mu);margin-top:3px">Màn hình máy này đã từng thay: <b>số giờ máy chạy = số trên màn hình ${off>0?'+':'−'} ${nfd_(Math.abs(off))} h</b> — ô bên cạnh tự tính.</div></div>` : ''}
         <div class="iw"><div class="il">Số giờ máy chạy (h) <span style="color:var(--red)">*</span></div>
-          <input class="inp" id="odoH" type="number" step="any" min="0" placeholder="${cur==null?'VD: 12345.6':'≥ '+nfd_(cur)}"></div>
+          <input class="inp" id="odoH" type="number" step="any" min="0" oninput="odoPreview_()" placeholder="${cur==null?'VD: 12345.6':'≥ '+nfd_(cur)}"></div>
         <div class="iw"><div class="il">Đọc tại máy lúc</div>
           <input class="inp" id="odoAt" type="datetime-local" value="${nowLocal}"></div>
         <div class="iw"><div class="il">Ghi chú</div>
           <input class="inp" id="odoWhy" placeholder="VD: Mất sóng 4G từ 18/9 · KTV Hùng đọc màn hình"></div>
       </div>
+      <div id="odoPeriod" style="display:${pre==='matTT'?'block':'none'};margin-top:8px;padding:10px;border:1.5px solid #f59e0b;border-radius:8px;background:#fffbeb">
+        <div style="font-size:12px;font-weight:700;color:#92400e;margin-bottom:6px">Kỳ số liệu: số giờ tăng thêm này là của những ngày nào? <span style="color:var(--red)">*</span></div>
+        <div class="fgrid fg2">
+          <div class="iw"><div class="il">Từ ngày</div><input class="inp" id="odoFrom" type="date" max="${yst}" oninput="odoPreview_()"></div>
+          <div class="iw"><div class="il">Đến ngày</div><input class="inp" id="odoTo" type="date" max="${yst}" value="${yst}" oninput="odoPreview_()"></div>
+        </div>
+        <div id="odoSug" style="font-size:10px;color:var(--mu);margin-top:4px">Đang lấy gợi ý kỳ…</div>
+        <div style="font-size:10px;color:var(--mu);margin-top:2px">KTV 3–4 ngày mới nhập một lần thì chọn đúng kỳ đó: giờ và điện phát được <b>chia đều từng ngày</b> trong kỳ, không dồn vào một ngày (dồn sẽ làm sai cảnh báo). Ngày trong kỳ đã có số thật sẽ được bỏ qua.</div>
+      </div>
+      <div id="odoEst" class="msg" style="margin-top:10px;font-size:11px;display:none"></div>
     </div>
     <div class="mf">
       <button class="btn bg-gr" onclick="closeOv()">Huỷ</button>
       <button class="btn bg-g" onclick="saveManualOdo()">💾 Lưu số giờ</button>
     </div>`);
+  odoLoadSuggest_(code);
+}
+/** Gợi ý kỳ số liệu + mốc tính từ server (chỉ đọc) — điền sẵn Từ ngày, người dùng vẫn sửa được. */
+async function odoLoadSuggest_(code){
+  try {
+    const d = await apiPost({ action:'estSuggest', maCode:code });
+    const C = window._odoCtx; if (!C || C.code !== code) return;
+    if (!d || d.ok === false) throw new Error((d && d.error) || 'không lấy được gợi ý');
+    C.sug = d; if (d.kw) C.kw = d.kw;
+    const f = $('odoFrom'); if (f && !f.value && d.from && !d.noDays) f.value = d.from;
+    const fd = s => String(s||'').split('-').reverse().join('/');
+    const el = $('odoSug');
+    if (el) el.innerHTML = d.noDays
+      ? `<b style="color:var(--amb)">Máy đã có số tới hôm qua</b> (lần có số gần nhất ${esc(fd(d.lastReal||d.lastEst)||'?')}) — không còn ngày nào để chia.`
+      : `Gợi ý: từ <b>${esc(fd(d.from))}</b> (ngày sau lần có số gần nhất${d.lastEst?' / kỳ ước tính trước':''}) đến <b>${esc(fd(d.to))}</b>. Mốc tính: ${d.base==null?'chưa có':nfd_(d.base)+' h'} · công suất thiết kế: ${d.kw?nfd_(d.kw)+' kW':'<b style="color:var(--red)">chưa có</b>'}.`;
+    odoPreview_();
+  } catch(e){ const el = $('odoSug'); if (el) el.textContent = 'Không lấy được gợi ý kỳ (' + e.message + ') — tự chọn Từ ngày / Đến ngày.'; }
+}
+function odoKind_(){ const r = document.querySelector('input[name="odoKind"]:checked'); return r ? r.value : ''; }
+function odoKindChange_(){
+  const k = odoKind_(), el = $('odoPeriod');
+  if (el) el.style.display = k === 'matTT' ? 'block' : 'none';
+  odoPreview_();
+}
+/** yyyy-MM-dd của ngày d lệch n ngày (giờ máy người dùng). */
+function ymdAdd_(d, n){
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate() + n), p = v => String(v).padStart(2,'0');
+  return x.getFullYear() + '-' + p(x.getMonth()+1) + '-' + p(x.getDate());
+}
+/** Công suất thiết kế (kW) của máy từ Sheet 1 (cột I) — null nếu chưa điền. */
+function odoKwOf_(code){
+  const k = String(code||'').trim().toUpperCase();
+  const r = ((S.master||{}).rows||[]).find(x => String(x._byLetter[COL.MA]||'').trim().toUpperCase() === k);
+  if (!r) return null;
+  const raw = r._byLetter[COL.KW];
+  const m = String(raw == null ? '' : raw).replace(',', '.').match(/\d+(\.\d+)?/);
+  const n = m ? Number(m[0]) : null;
+  return n > 0 ? n : null;
+}
+/** Xem trước ngay khi gõ (chỉ là ước lượng; con số chính thức do server tính khi lưu). */
+function odoPreview_(){
+  const C = window._odoCtx || {}, el = $('odoEst'); if (!el) return;
+  const k = odoKind_();
+  const h = numOrNull_(($('odoH')||{}).value);
+  const set = (bg, fg, html) => { el.style.display = 'block'; el.style.background = bg; el.style.color = fg; el.innerHTML = html; };
+  if (!k){ set('#fffbeb', '#78350f', 'Chọn <b>một trong hai</b>: máy mất truyền thông (tính điện phát) hoặc sửa số giờ do Smartgen/LIXiSE đọc sai (không tính điện phát).'); return; }
+  if (h === null){ el.style.display = 'none'; return; }
+  if (k === 'sua'){ set('#f1f5f9', '#475569', `Chỉ cập nhật số giờ ${C.cur==null?'':nfd_(C.cur)+' → '}<b>${nfd_(h)} h</b>. <b>Không tính điện phát</b>, không ghi Sheet 5.`); return; }
+  const base = C.sug && C.sug.base != null ? C.sug.base : Math.max(C.cur == null ? -Infinity : C.cur, C.quy == null ? -Infinity : C.quy);
+  const delta = isFinite(base) ? Math.round((h - base) * 100) / 100 : null;
+  if (delta === null){ set('#f1f5f9', '#475569', 'Chưa có mốc số giờ trước đó để so — lần này chỉ lưu số giờ, chưa tính điện phát.'); return; }
+  if (delta < 1){ set('#f1f5f9', '#475569', `Số giờ không tăng so với mốc đã tính (${nfd_(base)} h) → không có điện phát ước tính.`); return; }
+  if (!C.kw){ set('#fffbeb', '#78350f', `⚠ Tăng <b>${nfd_(delta)} h</b> nhưng máy này <b>chưa có công suất thiết kế (kW)</b> ở Sheet 1 → chưa tính được điện phát. Điền công suất rồi nhập lại số giờ.`); return; }
+  const f = ($('odoFrom')||{}).value, t = ($('odoTo')||{}).value;
+  if (!f || !t){ set('#fffbeb', '#78350f', `Tăng <b>${nfd_(delta)} h</b> (so với mốc ${nfd_(base)} h). Điền <b>Từ ngày – Đến ngày</b> của kỳ số liệu để chia điện phát theo từng ngày.`); return; }
+  const dt = x => { const m = String(x).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? Date.UTC(+m[1], +m[2]-1, +m[3]) : NaN; };
+  const n = Math.round((dt(t) - dt(f)) / 86400000) + 1;
+  if (!(n >= 1)){ set('#fef2f2', '#991b1b', 'Kỳ số liệu sai: <b>Từ ngày</b> phải trước hoặc bằng <b>Đến ngày</b>.'); return; }
+  const perH = delta / n, perKwh = perH * C.kw;
+  const bad = perH > 24.005 || perKwh > 2500;
+  const fdv = s => String(s).split('-').reverse().join('/');
+  set(bad ? '#fef2f2' : '#ecfdf5', bad ? '#991b1b' : '#065f46',
+    `Kỳ <b>${fdv(f)} → ${fdv(t)}</b> (${n} ngày): tăng <b>${nfd_(delta)} h</b> ÷ ${n} = <b>${nfd_(perH)} h/ngày</b> × ${nfd_(C.kw)} kW ≈ <b>${nfd_(perKwh)} kWh/ngày</b> · tổng ≈ <b>${nfd_(delta * C.kw)} kWh</b> điện phát ước tính.`
+    + (bad ? '<br>⚠ Vượt 24 h/ngày hoặc 2,500 kWh/ngày — kỳ quá ngắn so với số giờ hoặc công suất sai. Hệ thống sẽ không ghi; chọn lại kỳ cho đúng.' : '')
+    + (C.sug && C.sug.lastEst && f <= C.sug.lastEst ? `<br>⚠ Kỳ trùng kỳ đã ước tính trước (đến ${fdv(C.sug.lastEst)}) — hệ thống sẽ không ghi.` : ''));
+}
+/** Kết quả tính điện ước tính (server trả trong uocTinh) → câu cho người dùng. warn = cần chú ý. */
+function estMsg_(u){
+  const none = { warn:false, text:'' };
+  if (!u) return none;
+  const fd = s => String(s||'').split('-').reverse().join('/');
+  if (u.sua) return { warn:false, text:'ghi nhận là SỬA SỐ GIỜ — không tính điện phát' };
+  if (u.need) return { warn:true, text:u.reason || 'Chưa tính được điện phát ước tính.' };
+  if (u.ok === false) return { warn:true, text:u.error || 'Lỗi khi tính điện phát ước tính.' };
+  if (u.skipped) return u.deferred ? { warn:false, text:u.reason||'' } : none;
+  if (u.kwh == null) return none;
+  return { warn:!!u.warning,
+    text:`điện phát ước tính +${nfd_(u.kwh)} kWh (kỳ ${fd(u.from)}→${fd(u.to)}: ${nfd_(u.hours)} h ÷ ${u.days} ngày × ${nfd_(u.kw)} kW)`
+      + (u.realDays ? ` · bỏ qua ${u.realDays} ngày đã có số thật` : '') + (u.warning ? ' · ⚠ ' + u.warning : '') };
 }
 function odoFromScreen_(){
   const C = window._odoCtx || {}; const sc = numOrNull_(($('odoScreen')||{}).value);
   if ($('odoH')) $('odoH').value = sc == null ? '' : Math.round((sc + (C.off||0)) * 100) / 100;
+  odoPreview_();
 }
 
 async function saveManualOdo(choGiam){
   const C = window._odoCtx || {};
   const h = numOrNull_(($('odoH')||{}).value);
   if (h === null || h < 0){ toast('Nhập số giờ ≥ 0','err'); return; }
+  const loai = odoKind_();
+  if (!loai){ toast('Chọn: máy MẤT TRUYỀN THÔNG hay SỬA SỐ GIỜ do Smartgen/LIXiSE đọc sai','err'); return; }
   const docLuc = String(($('odoAt')||{}).value||'').replace('T',' ');
   const lyDo = String(($('odoWhy')||{}).value||'').trim();
+  const tuNgay = loai === 'matTT' ? String(($('odoFrom')||{}).value||'').trim() : '';
+  const denNgay = loai === 'matTT' ? String(($('odoTo')||{}).value||'').trim() : '';
+  if (loai === 'matTT'){
+    if (!tuNgay || !denNgay){ toast('Điền kỳ số liệu: Từ ngày – Đến ngày','err'); return; }
+    if (tuNgay > denNgay){ toast('Từ ngày phải trước hoặc bằng Đến ngày','err'); return; }
+    if (C.yst && denNgay > C.yst){ toast('Đến ngày không được quá hôm qua','err'); return; }
+  }
   setStatus(true,'Đang lưu số giờ…');
   try {
-    const d = await apiPost({ action:'gnManualOdo', maCode:C.code, gio:h, docLuc, lyDo, choGiam:!!choGiam, user:S.user.name });
+    const d = await apiPost({ action:'gnManualOdo', maCode:C.code, gio:h, docLuc, lyDo, loai, tuNgay, denNgay, choGiam:!!choGiam, user:S.user.name });
     if (d && d.ok === false && d.needConfirm){
       setStatus(false);
       if (confirm(d.error + '\n\nVẫn lưu số thấp hơn?')) return saveManualOdo(true);
@@ -5882,8 +5992,11 @@ async function saveManualOdo(choGiam){
     S.gio.loaded = false;
     await reloadAll();
     loadGio_();
+    const em = estMsg_(d.uocTinh);
     toast(`✓ ${C.code}: số giờ máy chạy ${d.truoc==null?'':nfd_(d.truoc)+' → '}${nfd_(d.total)} h`
-      + (d.quyDoi != null && d.total < d.quyDoi ? ` · lưu ý: thấp hơn số đồng bộ ${nfd_(d.quyDoi)} h — lượt đồng bộ có số mới sẽ ghi lại số đồng bộ` : ''), 'ok');
+      + (d.quyDoi != null && d.total < d.quyDoi ? ` · lưu ý: thấp hơn số đồng bộ ${nfd_(d.quyDoi)} h — lượt đồng bộ có số mới sẽ ghi lại số đồng bộ` : '')
+      + (em.text && !em.warn ? ' · ' + em.text : ''), 'ok');
+    if (em.text && em.warn) alert(`Số giờ ${C.code} đã được lưu.\n\nNhưng điện phát ước tính CHƯA được ghi:\n${em.text}`);
   } catch(e){ toast('Lỗi: '+e.message,'err'); setStatus(false,'❌ '+e.message,true); }
 }
 
@@ -21962,9 +22075,9 @@ RP_CT['ls-may'] = function (code, label){
 
 <!-- ============================================================================
      TRỢ LÝ eGreen — KHUNG CHAT HỎI-ĐÁP DỮ LIỆU
-     DÁN NGUYÊN KHỐI NÀY NGAY TRƯỚC thẻ </body> CỦA index.html (sau thẻ </script> cuối cùng).
-     Không sửa gì khác trong index.html. Cần CHATBOT.gs + 2 dòng vá Code.gs ở server.
-     (File index.html giao kèm đã ghép sẵn khối này — không cần dán tay.)
+     Khối này đã ghép sẵn trong index.html (không cần dán tay). Cần CHATBOT.gs + Code.gs mới ở server.
+     Có: chọn bot quy tắc / GPT-4o / cả hai, nút "Phân tích sâu", thẻ báo cáo (xem trước · Word · Excel · In),
+     nhãn "≈ có số ước tính" cho điện phát của máy mất truyền thông.
      Tự ẩn khi chưa đăng nhập / chức danh "Màn hiển thị". Mọi tên đều có tiền tố cb / cb- để
      không đụng CSS và hàm sẵn có.
      ========================================================================== -->
@@ -22027,6 +22140,33 @@ RP_CT['ls-may'] = function (code, label){
 .cb-send{flex:none;height:38px;padding:0 15px;border:0;border-radius:12px;background:#0d6e3f;color:#fff;font:inherit;font-weight:600;cursor:pointer}
 .cb-send:hover{background:#16a05e}
 .cb-send:disabled{background:#cbd5e1;cursor:not-allowed}
+.cb-eng{display:inline-block;background:#f1f5f9;color:#334155;border-radius:999px;padding:1px 8px;font-weight:600;margin-right:2px}
+.cb-eng-g{background:#ecfdf5;color:#065f46}
+.cb-eng-d{background:#f0fdf4;color:#14532d;border:1px solid #bbf7d0}
+.cb-est{display:inline-block;background:#fef3c7;color:#92400e;border-radius:999px;padding:1px 8px;font-weight:600;margin-right:2px}
+.cb-meta button.cb-b2{background:#eef2ff;border-radius:999px;padding:2px 9px;margin-left:8px;color:#3730a3}
+.cb-meta button.cb-b2:hover{background:#e0e7ff;text-decoration:none}
+.cb-aierr{color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:5px 8px;margin-top:5px}
+.cb-tag{text-align:right}
+.cb-rep{width:94%;max-width:94%;margin:6px 0 0;background:#fff;border:1.5px solid #bbf7d0;border-radius:12px;overflow:hidden}
+.cb-rep-h{padding:9px 12px 7px;background:#f0fdf4;display:flex;flex-direction:column;gap:2px}
+.cb-rep-h b{font-size:12.5px;color:#083d24;line-height:1.35}
+.cb-rep-h small{font-size:10.5px;color:var(--mu,#64748b)}
+.cb-rep-s{padding:8px 12px 0;font-size:12px;line-height:1.5}
+.cb-rep-act{display:flex;flex-wrap:wrap;gap:6px;padding:9px 12px}
+.cb-rep-act button{background:#0d6e3f;color:#fff;border:0;border-radius:8px;padding:6px 11px;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}
+.cb-rep-act button:hover{background:#16a05e}
+.cb-rep-act button[data-rprev]{background:#fff;color:#0d6e3f;border:1.5px solid #16a05e}
+.cb-rep-act button[data-rprev]:hover{background:#e8f7f0}
+.cb-rep-prev{display:none;max-height:300px;overflow:auto;border-top:1px solid var(--bd,#e2e8f0);padding:10px 12px;font-size:12px;line-height:1.5;background:#fff}
+.cb-rep-prev h4{font-size:12.5px;margin:10px 0 4px;color:#083d24}
+.cb-rep-prev h4 small{font-weight:400;color:#64748b}
+.cb-rep-prev p{margin:0 0 6px}
+.cb-rep-prev ul{margin:2px 0 6px;padding-left:18px}
+.cb-rep-prev .mt,.cb-rep-prev .nt{color:#64748b;font-size:11px}
+.cb-rep-prev table.g{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 8px}
+.cb-rep-prev table.g th{background:#0d6e3f;color:#fff;text-align:left;font-weight:600}
+.cb-rep-prev table.g th,.cb-rep-prev table.g td{border:1px solid #cbd5e1;padding:3px 6px}
 @media (max-width:640px){
   #cbFab{right:12px;bottom:96px}
   #cbPanel{right:0;left:0;bottom:0;width:100%;max-width:100%;height:88vh;height:88dvh;border-radius:16px 16px 0 0}
@@ -22043,22 +22183,31 @@ RP_CT['ls-may'] = function (code, label){
   var MAXKEEP = 40;                  // số tin giữ lại
   var SEND_HIST = 8;                 // số tin gần nhất gửi kèm để hiểu câu hỏi nối tiếp
   var SUGG = [
-    'Máy nào phát nhiều điện nhất tháng 9?',
-    'So sánh tháng 8 và tháng 9: máy nào đứng đầu?',
+    'Máy nào phát nhiều điện nhất tháng này?',
+    'So sánh tháng này với tháng trước: máy nào đứng đầu?',
     '5 máy phát ít điện nhất tháng này',
     '10 ngày gần đây máy nào phát nhiều nhất?',
     'Trại nào phát nhiều điện nhất tháng này?',
+    'Máy nào đang có điện phát ước tính?',
     'Máy nào đang quá hạn bảo dưỡng?',
-    'Trại nào đang thiếu vật tư?'
+    'Tạo báo cáo điện phát tháng này theo trại'
   ];
+  var SUGG_AI = 'Phân tích sản lượng điện tháng này và đề xuất';   // chỉ hiện khi đã bật AI
   var KEEP_COPY = 6;                 // chỉ giữ khối "Sao chép dữ liệu" của N câu trả lời gần nhất khi lưu vào sessionStorage
+  var KEEP_REP = 2;                  // chỉ giữ báo cáo / bảng của N câu trả lời gần nhất (nặng): các câu cũ hơn phải hỏi lại để xuất
   var ST = { open: false, busy: false, msgs: [], owner: '', loadedFor: '', info: null, infoAt: 0,
-             codesRe: null, codesN: 0, t0: 0, timer: 0, wasReady: false, gone: 0 };
+             codesRe: null, codesN: 0, t0: 0, timer: 0, wasReady: false, gone: 0, waitLbl: '' };
 
   function $(id){ return document.getElementById(id); }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function (c){
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function escRe(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  function p2(n){ return ('0' + n).slice(-2); }
+  function fnum(v){
+    if (typeof v === 'number') return isFinite(v) ? v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '';
+    return v == null ? '' : String(v);
+  }
+  function keyProp(d){ return d && d.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'; }
 
   /* Chỉ hiện khi đã đăng nhập thật. Chốt chặn thật nằm ở server (cbotDoPost_) — đây chỉ là phép lịch sự. */
   function ready(){
@@ -22066,8 +22215,10 @@ RP_CT['ls-may'] = function (code, label){
     catch (e){ return false; }
   }
   function who(){ try { return String((S.user && (S.user.login || S.user.name)) || ''); } catch (e){ return ''; } }
+  function whoName(){ try { return String((S.user && (S.user.name || S.user.login)) || ''); } catch (e){ return ''; } }
+  function note(msg, kind){ try { if (typeof toast === 'function') toast(msg, kind || 'info'); } catch (e){} }
 
-  /* ---- lưu hội thoại (sessionStorage có thể bị chặn → bọc try, hỏng thì chỉ mất lịch sử) ---- */
+  /* ---- lưu hội thoại (sessionStorage có thể bị chặn / đầy → bọc try, hỏng thì chỉ mất lịch sử) ---- */
   function load(){
     ST.msgs = [];
     try {
@@ -22076,17 +22227,23 @@ RP_CT['ls-may'] = function (code, label){
     } catch (e){}
     ST.loadedFor = who();
   }
+  function slim(dropAllHeavy){
+    /* Đếm từ CUỐI: giữ N khối copy và N báo cáo/bảng gần nhất, các khối cũ hơn bỏ nội dung nặng (báo cáo cũ phải hỏi lại để xuất). */
+    var copyLeft = KEEP_COPY, repLeft = dropAllHeavy ? 0 : KEEP_REP, copyAll = dropAllHeavy ? 0 : KEEP_COPY;
+    return ST.msgs.slice(-MAXKEEP).reverse().map(function (m){
+      if (m.role !== 'assistant') return m;
+      var o = m;
+      if (m.copy){ if (copyLeft > 0 && copyAll > 0) copyLeft--; else o = Object.assign({}, o, { copy: '' }); }
+      if (m.report || (m.tables && m.tables.length)){
+        if (repLeft > 0) repLeft--;
+        else o = Object.assign({}, o, { report: null, tables: [], hadRep: true });
+      }
+      return o;
+    }).reverse();
+  }
   function save(){
-    try {
-      /* Đếm theo số KHỐI COPY (không phải số tin): duyệt từ cuối, giữ N khối gần nhất, các khối cũ hơn bỏ nội dung. */
-      var left = KEEP_COPY;
-      var keep = ST.msgs.slice(-MAXKEEP).reverse().map(function (m){
-        if (!m.copy) return m;
-        if (left > 0){ left--; return m; }
-        return Object.assign({}, m, { copy: '' });
-      }).reverse();
-      sessionStorage.setItem(KEY, JSON.stringify({ owner: who(), msgs: keep }));
-    } catch (e){}
+    try { sessionStorage.setItem(KEY, JSON.stringify({ owner: who(), msgs: slim(false) })); return; } catch (e){}
+    try { sessionStorage.setItem(KEY, JSON.stringify({ owner: who(), msgs: slim(true) })); } catch (e2){}
   }
   function wipe(){ ST.msgs = []; ST.loadedFor = ''; ST.info = null; try { sessionStorage.removeItem(KEY); } catch (e){} }
 
@@ -22141,6 +22298,226 @@ RP_CT['ls-may'] = function (code, label){
     return out.join('');
   }
 
+  /* ============================================================================
+   *  BÁO CÁO — dựng HTML dùng chung cho xem trước, Word (.doc), Excel (.xls) và In
+   *  rep = { title, generatedAt, author, question, dataDate, summary, sections:[{heading,paragraphs,bullets,table}],
+   *          recommendations[], tables:[{title,columns,rows,notes}], sources[], notes[], kind }
+   *  Bảng trong tables do SERVER tính bằng code từ Google Sheet; phần chữ do AI (hoặc bot quy tắc) soạn.
+   * ========================================================================== */
+  function plain(s){ return String(s == null ? '' : s).replace(/\*\*/g, '').replace(/^#+\s*/, '').replace(/\s+/g, ' ').trim(); }
+
+  /** Báo cáo dựng NGAY trên máy từ một câu trả lời + bảng số liệu server đã trả (không tốn thêm lượt AI). */
+  function localReport(i){
+    var m = ST.msgs[i], u = ST.msgs[i - 1];
+    var q = (u && u.role === 'user') ? String(u.content || '') : '';
+    var sec = { heading: 'Kết quả tra cứu', paragraphs: [], bullets: [] };
+    String(m.content || '').split('\n').forEach(function (line){
+      var b = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+      var t = plain(b ? b[1] : line);
+      if (!t) return;
+      (b ? sec.bullets : sec.paragraphs).push(t);
+    });
+    var now = new Date();
+    var d = ST.info && ST.info.dataDate ? String(ST.info.dataDate).match(/^(\d{4})-(\d{2})-(\d{2})/) : null;
+    var notes = ['Báo cáo dựng từ câu trả lời của trợ lý và bảng số liệu tính bằng code từ Google Sheet; không có phần nhận định riêng của AI.'];
+    if (m.estimated) notes.push('Một số số liệu kWh là ƯỚC TÍNH cho máy mất truyền thông (số giờ kỹ thuật nhập tay chia đều các ngày thiếu số × công suất thiết kế), không phải số đo của Smartgen / LIXiSE.');
+    return { kind: 'local', title: 'Báo cáo: ' + plain(q).slice(0, 120),
+             generatedAt: p2(now.getDate()) + '/' + p2(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + p2(now.getHours()) + ':' + p2(now.getMinutes()),
+             author: whoName(), question: plain(q), dataDate: d ? (d[3] + '/' + d[2] + '/' + d[1]) : '', summary: '',
+             sections: [sec], recommendations: [], tables: Array.isArray(m.tables) ? m.tables : [], sources: m.sources || [], notes: notes };
+  }
+  function repOf(i){
+    var m = ST.msgs[i];
+    if (!m) return null;
+    return m.report || localReport(i);
+  }
+
+  function tblHtml(cols, rows, cap){
+    var s = cap ? '<p class="cap"><b>' + esc(cap) + '</b></p>' : '';
+    s += '<table class="g" border="1" cellspacing="0" cellpadding="4"><thead><tr>'
+      + cols.map(function (c){ return '<th>' + esc(c) + '</th>'; }).join('') + '</tr></thead><tbody>';
+    rows.forEach(function (r, i){
+      s += '<tr' + (i % 2 ? ' bgcolor="#f5f7f6"' : '') + '>' + cols.map(function (_, j){
+        var v = r[j];
+        return '<td' + (typeof v === 'number' ? ' align="right"' : '') + '>' + esc(fnum(v)) + '</td>';
+      }).join('') + '</tr>';
+    });
+    return s + '</tbody></table>';
+  }
+
+  /** mode 'chat' = xem trước gọn trong khung chat (bảng phụ lục chỉ liệt kê tên); 'doc' = đầy đủ cho Word / In. */
+  function repBody(rep, mode){
+    var full = mode !== 'chat', h = '';
+    var meta = [];
+    if (rep.generatedAt) meta.push('Lập lúc: ' + rep.generatedAt);
+    if (rep.author) meta.push('Người lập: ' + rep.author);
+    if (rep.dataDate) meta.push('Dữ liệu đến hết: ' + rep.dataDate);
+    if (meta.length) h += '<p class="mt">' + esc(meta.join(' · ')) + '</p>';
+    if (rep.question) h += '<p class="mt"><i>Câu hỏi: ' + esc(rep.question) + '</i></p>';
+    if (rep.summary) h += '<h4>Tóm tắt</h4><p>' + esc(rep.summary) + '</p>';
+    (rep.sections || []).forEach(function (s){
+      if (s.heading) h += '<h4>' + esc(s.heading) + '</h4>';
+      (s.paragraphs || []).forEach(function (t){ h += '<p>' + esc(t) + '</p>'; });
+      if (s.bullets && s.bullets.length) h += '<ul>' + s.bullets.map(function (t){ return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>';
+      if (s.table && s.table.columns) h += tblHtml(s.table.columns, s.table.rows || []);
+    });
+    if (rep.recommendations && rep.recommendations.length){
+      h += '<h4>Đề xuất của trợ lý <small>(ý kiến của AI, không phải số liệu)</small></h4><ul>'
+        + rep.recommendations.map(function (t){ return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>';
+    }
+    var tabs = rep.tables || [];
+    if (tabs.length){
+      if (full){
+        h += '<h4>Phụ lục · Số liệu gốc</h4>';
+        tabs.forEach(function (t){
+          h += tblHtml(t.columns || [], t.rows || [], t.title);
+          (t.notes || []).forEach(function (n){ h += '<p class="nt">' + esc(n) + '</p>'; });
+        });
+      } else {
+        h += '<h4>Phụ lục · Số liệu gốc</h4><p class="nt">' + tabs.length + ' bảng đi kèm trong file tải về: '
+          + tabs.map(function (t){ return esc(t.title) + ' (' + (t.rows || []).length + ' dòng)'; }).join('; ') + '.</p>';
+      }
+    }
+    if (rep.notes && rep.notes.length) h += '<h4>Ghi chú</h4><ul>' + rep.notes.map(function (t){ return '<li class="nt">' + esc(t) + '</li>'; }).join('') + '</ul>';
+    if (rep.sources && rep.sources.length) h += '<p class="nt">Nguồn dữ liệu: ' + rep.sources.map(esc).join(' · ') + '</p>';
+    return h;
+  }
+
+  var DOC_CSS = '@page WordSection1 { size:21.0cm 29.7cm; margin:2.0cm 1.5cm 2.0cm 2.0cm; }'
+    + 'div.WordSection1 { page:WordSection1; }'
+    + 'body,p,td,th,div,li { font-family:"Times New Roman",Times,serif; font-size:12pt; }'
+    + 'h1 { font-size:16pt; text-align:center; margin:6pt 0 2pt 0; } h4 { font-size:13pt; margin:14pt 0 5pt 0; color:#083d24; }'
+    + 'h4 small { font-size:10pt; font-weight:normal; color:#666; }'
+    + 'p { margin:0 0 6pt 0; text-align:justify; } p.mt { margin:0 0 3pt 0; color:#444; font-size:11pt; text-align:left; }'
+    + 'p.cap { margin:10pt 0 3pt 0; text-align:left; } p.nt, li.nt { font-size:10pt; color:#555; }'
+    + 'p.c { text-align:center; margin:0; }'
+    + 'table { border-collapse:collapse; } table.g { width:100%; font-size:10.5pt; }'
+    + 'table.g td, table.g th { border:1px solid #666; vertical-align:top; padding:3pt; }'
+    + 'table.g th { background:#0d6e3f; color:#ffffff; font-weight:bold; text-align:left; }'
+    + 'ul { margin:2pt 0 6pt 0; }';
+
+  function docHtml(rep){
+    var b = '<p class="c">CÔNG TY CP CÔNG NGHỆ EGREEN</p><p class="c" style="margin-bottom:10pt">Khối sản xuất — Máy phát điện biogas</p>'
+      + '<h1>' + esc(rep.title) + '</h1>' + repBody(rep, 'doc')
+      + '<p class="nt" style="margin-top:14pt;text-align:center">Báo cáo do hệ thống eGreen tự sinh từ dữ liệu Google Sheet tại thời điểm lập. '
+      + (rep.kind === 'ai' ? 'Phần nhận định do AI soạn — cần người phụ trách kiểm tra trước khi dùng chính thức.' : '') + '</p>';
+    return '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head>'
+      + '<meta http-equiv="Content-Type" content="text/html; charset=utf-8"><title>' + esc(rep.title) + '</title>'
+      + '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->'
+      + '<style>' + DOC_CSS + '</style></head><body><div class="WordSection1">' + b + '</div></body></html>';
+  }
+
+  /** Excel: một trang tính HTML (như exportXls_ của app) — số được ghi ở dạng SỐ để cộng / lọc được. */
+  function xlsHtml(rep){
+    var maxC = 6;
+    (rep.tables || []).forEach(function (t){ maxC = Math.max(maxC, (t.columns || []).length); });
+    (rep.sections || []).forEach(function (s){ if (s.table) maxC = Math.max(maxC, (s.table.columns || []).length); });
+    var h = '', span = ' colspan="' + maxC + '"';
+    var text = function (t, st, minH){
+      t = String(t == null ? '' : t);
+      var lines = Math.max(1, Math.ceil(t.length / (maxC * 16)));
+      return '<tr style="height:' + Math.max(minH || 15, lines * 15) + 'pt"><td' + span + ' style="white-space:normal;vertical-align:top;mso-number-format:\\@;' + (st || '') + '">' + esc(t) + '</td></tr>';
+    };
+    var cell = function (v, head){
+      if (head) return '<th>' + esc(v) + '</th>';
+      if (v === null || v === undefined || v === '') return '<td></td>';
+      if (typeof v === 'number' && isFinite(v)) return '<td style="mso-number-format:\'#,##0.00\'">' + v + '</td>';
+      return '<td style="mso-number-format:\\@">' + esc(v) + '</td>';
+    };
+    var table = function (cols, rows, cap){
+      var s = '';
+      if (cap) s += text(cap, 'font-weight:bold;color:#083d24');
+      s += '<tr>' + cols.map(function (c){ return cell(c, true); }).join('') + '</tr>';
+      rows.forEach(function (r){ s += '<tr>' + cols.map(function (_, j){ return cell(r[j]); }).join('') + '</tr>'; });
+      return s + '<tr><td' + span + '></td></tr>';
+    };
+    h += text(rep.title, 'font-weight:bold;font-size:14pt');
+    var meta = [];
+    if (rep.generatedAt) meta.push('Lập lúc: ' + rep.generatedAt);
+    if (rep.author) meta.push('Người lập: ' + rep.author);
+    if (rep.dataDate) meta.push('Dữ liệu đến hết: ' + rep.dataDate);
+    if (meta.length) h += text(meta.join(' · '), 'color:#444');
+    if (rep.question) h += text('Câu hỏi: ' + rep.question, 'color:#444;font-style:italic');
+    if (rep.summary) { h += text('Tóm tắt', 'font-weight:bold;color:#083d24'); h += text(rep.summary); }
+    (rep.sections || []).forEach(function (s){
+      if (s.heading) h += text(s.heading, 'font-weight:bold;color:#083d24');
+      (s.paragraphs || []).forEach(function (t){ h += text(t); });
+      (s.bullets || []).forEach(function (t){ h += text('• ' + t); });
+      if (s.table && s.table.columns) h += table(s.table.columns, s.table.rows || []);
+    });
+    if (rep.recommendations && rep.recommendations.length){
+      h += text('Đề xuất của trợ lý (ý kiến của AI, không phải số liệu)', 'font-weight:bold;color:#083d24');
+      rep.recommendations.forEach(function (t){ h += text('• ' + t); });
+    }
+    (rep.tables || []).forEach(function (t){
+      h += table(t.columns || [], t.rows || [], t.title);
+      (t.notes || []).forEach(function (n){ h += text(n, 'color:#666;font-size:9pt'); });
+    });
+    if (rep.notes && rep.notes.length){ h += text('Ghi chú', 'font-weight:bold;color:#083d24'); rep.notes.forEach(function (n){ h += text(n, 'color:#555'); }); }
+    if (rep.sources && rep.sources.length) h += text('Nguồn dữ liệu: ' + rep.sources.join(' · '), 'color:#555');
+    return '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
+      + '<style>td,th{border:1px solid #ccc;padding:3px 6px;font-family:Calibri,Arial;vertical-align:top}th{background:#1e6f4c;color:#fff;font-weight:bold}</style></head><body><table>'
+      + h + '</table></body></html>';
+  }
+
+  function slug(s){
+    return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'bao-cao';
+  }
+  function fileName(rep, ext){
+    var n = new Date();
+    return 'bao-cao-' + slug(rep.title.replace(/^Báo cáo:?\s*/i, '')) + '-' + n.getFullYear() + p2(n.getMonth() + 1) + p2(n.getDate()) + '-' + p2(n.getHours()) + p2(n.getMinutes()) + ext;
+  }
+  function saveBlob(html, mime, name){
+    try {
+      var blob = new Blob(['﻿' + html], { type: mime + ';charset=utf-8' });
+      var url = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = url; a.download = name; document.body.appendChild(a); a.click();
+      setTimeout(function (){ URL.revokeObjectURL(url); a.remove(); }, 4000);
+      note('✓ Đã xuất ' + name, 'ok');
+    } catch (e){ note('Không tạo được file: ' + (e && e.message), 'err'); }
+  }
+  function printHtml(html){
+    try {
+      var f = document.createElement('iframe');
+      f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+      document.body.appendChild(f);
+      var d = f.contentWindow.document; d.open(); d.write(html); d.close();
+      setTimeout(function (){
+        try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e){ note('Không mở được hộp thoại in: ' + (e && e.message), 'err'); }
+        setTimeout(function (){ try { f.remove(); } catch (e){} }, 60000);
+      }, 400);
+    } catch (e){ note('Không in được: ' + (e && e.message), 'err'); }
+  }
+
+  function repAction(i, what, btn){
+    var rep = repOf(i);
+    if (!rep) return;
+    if (what === 'doc') saveBlob(docHtml(rep), 'application/msword', fileName(rep, '.doc'));
+    else if (what === 'xls') saveBlob(xlsHtml(rep), 'application/vnd.ms-excel', fileName(rep, '.xls'));
+    else if (what === 'prt') printHtml(docHtml(rep));
+    else if (what === 'prev'){
+      var card = btn && btn.closest ? btn.closest('.cb-rep') : null;
+      var box = card && card.querySelector('.cb-rep-prev');
+      if (!box) return;
+      if (!box.getAttribute('data-ok')){ box.innerHTML = repBody(rep, 'chat'); box.setAttribute('data-ok', '1'); box.style.display = 'block'; btn.textContent = 'Ẩn xem trước'; }
+      else if (box.style.display === 'block'){ box.style.display = 'none'; btn.textContent = 'Xem trước'; }
+      else { box.style.display = 'block'; btn.textContent = 'Ẩn xem trước'; }
+    }
+  }
+
+  function repCard(m, i){
+    var rep = repOf(i);
+    if (!rep) return '';
+    var kindTxt = rep.kind === 'ai' ? 'Báo cáo có nhận định của AI' : (rep.kind === 'rules' ? 'Báo cáo từ số liệu hệ thống' : 'Báo cáo từ câu trả lời này');
+    return '<div class="cb-rep" data-ri="' + i + '"><div class="cb-rep-h"><b>📄 ' + esc(rep.title) + '</b><small>' + esc(kindTxt)
+      + ((rep.tables && rep.tables.length) ? ' · ' + rep.tables.length + ' bảng số liệu' : '') + '</small></div>'
+      + (rep.summary ? '<div class="cb-rep-s">' + esc(rep.summary.length > 320 ? rep.summary.slice(0, 317) + '…' : rep.summary) + '</div>' : '')
+      + '<div class="cb-rep-act"><button type="button" data-rprev="' + i + '">Xem trước</button>'
+      + '<button type="button" data-rdoc="' + i + '">⬇ Word</button><button type="button" data-rxls="' + i + '">⬇ Excel</button>'
+      + '<button type="button" data-rprt="' + i + '">In / PDF</button></div><div class="cb-rep-prev"></div></div>';
+  }
+
   /* ---- dựng giao diện (một lần) ---- */
   function build(){
     if ($('cbPanel')) return;
@@ -22159,7 +22536,7 @@ RP_CT['ls-may'] = function (code, label){
       + '<button class="cb-ib" id="cbClose" type="button" title="Đóng" aria-label="Đóng">✕</button></div>'
       + '<div class="cb-warn" id="cbWarn"></div>'
       + '<div class="cb-body" id="cbBody" aria-live="polite"></div>'
-      + '<div class="cb-ft"><textarea id="cbIn" rows="1" maxlength="1000" placeholder="Hỏi về máy, sản lượng, bảo dưỡng, vật tư… (gõ &quot;giúp&quot; để xem mẫu câu)" aria-label="Câu hỏi"></textarea>'
+      + '<div class="cb-ft"><textarea id="cbIn" rows="1" maxlength="1000" placeholder="Hỏi về máy, sản lượng, bảo dưỡng, vật tư… (gõ &quot;giúp&quot; để xem mẫu câu; &quot;tạo báo cáo …&quot; để lập file)" aria-label="Câu hỏi"></textarea>'
       + '<button class="cb-send" id="cbSend" type="button">Gửi</button></div>';
     document.body.appendChild(fab);
     document.body.appendChild(p);
@@ -22179,9 +22556,17 @@ RP_CT['ls-may'] = function (code, label){
     document.addEventListener('keydown', function (e){ if (e.key === 'Escape' && ST.open) setOpen(false); });
     $('cbBody').addEventListener('click', function (e){
       var t = e.target;
-      if (t && t.getAttribute && t.getAttribute('data-q')){ ask(t.getAttribute('data-q')); }
-      else if (t && t.getAttribute && t.getAttribute('data-copy') != null){ copyMsg(Number(t.getAttribute('data-copy')), t, false); }
-      else if (t && t.getAttribute && t.getAttribute('data-copydata') != null){ copyMsg(Number(t.getAttribute('data-copydata')), t, true); }
+      if (!t || !t.getAttribute) return;
+      var g = function (n){ return t.getAttribute(n); };
+      if (g('data-q')){ ask(g('data-q')); }
+      else if (g('data-copy') != null){ copyMsg(Number(g('data-copy')), t, false); }
+      else if (g('data-copydata') != null){ copyMsg(Number(g('data-copydata')), t, true); }
+      else if (g('data-deep') != null){ deepen(Number(g('data-deep'))); }
+      else if (g('data-rep') != null){ var mi = ST.msgs[Number(g('data-rep'))]; if (mi){ mi.showRep = true; render(true); } }
+      else if (g('data-rprev') != null){ repAction(Number(g('data-rprev')), 'prev', t); }
+      else if (g('data-rdoc') != null){ repAction(Number(g('data-rdoc')), 'doc', t); }
+      else if (g('data-rxls') != null){ repAction(Number(g('data-rxls')), 'xls', t); }
+      else if (g('data-rprt') != null){ repAction(Number(g('data-rprt')), 'prt', t); }
     });
   }
   function grow(){
@@ -22202,7 +22587,7 @@ RP_CT['ls-may'] = function (code, label){
     }
   }
 
-  /* ---- chatInfo: đã cài API key chưa, dữ liệu tới ngày nào ---- */
+  /* ---- chatInfo: chế độ, nhà cung cấp AI, đã cài API key chưa, dữ liệu tới ngày nào ---- */
   function refreshInfo(force){
     if (!ready()) return;
     if (!force && ST.info && Date.now() - ST.infoAt < 600000) { paintInfo(); return; }
@@ -22217,12 +22602,14 @@ RP_CT['ls-may'] = function (code, label){
     if (!sub || !warn) return;
     if (d && d.dataDate){
       var m = String(d.dataDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
-      sub.textContent = 'Dữ liệu đến hết ' + (m ? (m[3] + '/' + m[2] + '/' + m[1]) : d.dataDate) + ' · chỉ đọc, không sửa được dữ liệu';
+      sub.textContent = 'Dữ liệu đến hết ' + (m ? (m[3] + '/' + m[2] + '/' + m[1]) : d.dataDate) + ' · chỉ đọc'
+        + (d.aiReady ? ' · AI: ' + (d.model || d.providerName || '') : ' · không dùng AI');
     }
     if (d && d.configured === false){
       warn.style.display = 'block';
       warn.textContent = (S.perm && S.perm.admin)
-        ? 'Trợ lý đang để chế độ AI nhưng chưa có khoá API. Admin: vào Apps Script › Cài đặt dự án › Thuộc tính tập lệnh, thêm ANTHROPIC_API_KEY — hoặc xoá CHATBOT_MODE / đặt CHATBOT_MODE = rules để dùng chế độ không cần AI (xem TRIEN_KHAI_CHATBOT.md).'
+        ? 'Trợ lý đang để chế độ AI nhưng chưa có khoá API. Admin: vào Apps Script › Cài đặt dự án › Thuộc tính tập lệnh, thêm ' + keyProp(d)
+          + ' — hoặc xoá CHATBOT_MODE / đặt CHATBOT_MODE = rules để dùng chế độ không cần AI (xem TRIEN_KHAI_CHATBOT.md).'
         : 'Trợ lý chưa được kích hoạt. Báo Admin để bật.';
     } else { warn.style.display = 'none'; warn.textContent = ''; }
   }
@@ -22245,26 +22632,45 @@ RP_CT['ls-may'] = function (code, label){
     if (ask(q)){ ta.value = ''; grow(); }
   }
 
-  function ask(q){
+  /** Nút "Phân tích sâu": đưa lại đúng câu hỏi vừa rồi cho AI (kèm kết quả bot quy tắc đã tra) — không đổi nội dung câu hỏi. */
+  function deepen(i){
+    var u = ST.msgs[i - 1];
+    if (!u || u.role !== 'user') return;
+    ask(String(u.content || ''), { deep: true, histUpTo: i - 1 });
+  }
+
+  function ask(q, opt){
+    opt = opt || {};
     q = String(q || '').trim();
     if (!q || ST.busy || !ready()) return false;
     if (ST.loadedFor !== who()) load();
-    var hist = ST.msgs.filter(function (m){ return !m.err; }).slice(-SEND_HIST)
+    var upto = opt.histUpTo != null ? opt.histUpTo : ST.msgs.length;
+    var hist = ST.msgs.slice(0, upto).filter(function (m){ return !m.err; }).slice(-SEND_HIST)
       .map(function (m){ return { role: m.role, content: m.content }; });
-    ST.msgs.push({ role: 'user', content: q });
+    var um = { role: 'user', content: q };
+    if (opt.deep) um.deep = true;
+    ST.msgs.push(um);
     save();
     ST.busy = true; ST.t0 = Date.now();
+    ST.waitLbl = opt.deep ? 'AI đang phân tích sâu…' : ((ST.info && ST.info.aiReady) ? 'Đang tra cứu và phân tích…' : 'Đang tra cứu dữ liệu…');
     render(); tick();
     ST.timer = setInterval(tick, 1000);
 
-    call({ action: 'chatAsk', question: q, history: hist }).then(function (d){
+    var body = { action: 'chatAsk', question: q, history: hist };
+    if (opt.deep) body.deep = true;
+    call(body).then(function (d){
       if (d && d.ok && d.answer){
-        ST.msgs.push({ role: 'assistant', content: String(d.answer), tools: d.tools || [], sources: d.sources || [], ms: d.ms || 0, copy: d.copy ? String(d.copy) : '' });
+        ST.msgs.push({
+          role: 'assistant', content: String(d.answer), tools: d.tools || [], sources: d.sources || [], ms: d.ms || 0,
+          copy: d.copy ? String(d.copy) : '', engine: d.engine || '', provider: d.provider || '', model: d.model || '',
+          estimated: !!d.estimated, tables: Array.isArray(d.tables) ? d.tables : [], report: d.report || null,
+          canDeepen: !!d.canDeepen, aiError: d.aiError ? String(d.aiError) : ''
+        });
       } else {
         var t;
         if (d && d.needLogin) t = 'Phiên đăng nhập đã hết hạn — hãy đăng nhập lại rồi hỏi tiếp.';
         else if (d && d.notConfigured) t = (S.perm && S.perm.admin)
-          ? 'Trợ lý đang để chế độ AI nhưng chưa có khoá API. Thêm ANTHROPIC_API_KEY vào Script Properties, hoặc đặt CHATBOT_MODE = rules (xem TRIEN_KHAI_CHATBOT.md).'
+          ? 'Trợ lý đang để chế độ AI nhưng chưa có khoá API. Thêm ' + keyProp(ST.info) + ' vào Script Properties, hoặc đặt CHATBOT_MODE = rules (xem TRIEN_KHAI_CHATBOT.md).'
           : 'Trợ lý chưa được kích hoạt — báo Admin để bật.';
         else t = (d && d.error) ? String(d.error) : 'Không nhận được câu trả lời. Thử lại sau.';
         ST.msgs.push({ role: 'assistant', content: t, err: true });
@@ -22280,7 +22686,7 @@ RP_CT['ls-may'] = function (code, label){
   function tick(){
     var el = $('cbWaitT'); if (!el) return;
     var s = Math.round((Date.now() - ST.t0) / 1000);
-    el.textContent = 'Đang tra cứu dữ liệu… ' + s + ' giây' + (s > 25 ? ' (câu hỏi nhiều bước, chờ thêm chút)' : '');
+    el.textContent = (ST.waitLbl || 'Đang tra cứu dữ liệu…') + ' ' + s + ' giây' + (s > 25 ? ' (câu hỏi nhiều bước, chờ thêm chút)' : '');
   }
 
   /* data=false: chép câu trả lời. data=true: chép KHỐI DỮ LIỆU gọn (bảng đã tính sẵn, kèm nguồn & quy ước) để dán sang ChatGPT phân tích. */
@@ -22289,7 +22695,7 @@ RP_CT['ls-may'] = function (code, label){
     var text = data ? m.copy : m.content, label = data ? 'Sao chép dữ liệu' : 'Sao chép';
     if (!text) return;
     var done = function (ok){ btn.textContent = ok ? 'Đã chép' : 'Không chép được'; setTimeout(function (){ btn.textContent = label; }, 1500); };
-    /* navigator.clipboard cần HTTPS và có thể bị chặn trong iframe (Apps Script web app chạy trong iframe) → lùi về execCommand. */
+    /* navigator.clipboard cần HTTPS và có thể bị chặn trong iframe → lùi về execCommand. */
     var fallback = function (){
       try {
         var ta = document.createElement('textarea');
@@ -22306,46 +22712,80 @@ RP_CT['ls-may'] = function (code, label){
     fallback();
   }
 
+  /** Ai trả lời: bot quy tắc / GPT / cả hai — để người dùng biết số này đến từ đâu. */
+  function engLabel(m){
+    var mdl = m.model ? esc(m.model) : 'AI';
+    if (m.engine === 'duo') return '<span class="cb-eng cb-eng-d" title="Bot quy tắc tra số liệu bằng code, ' + mdl + ' phân tích trên đúng số đó">⚙ Bot quy tắc + 🤖 ' + mdl + '</span>';
+    if (m.engine === 'gpt') return '<span class="cb-eng cb-eng-g" title="' + mdl + ' tự gọi các công cụ tra dữ liệu">🤖 ' + mdl + '</span>';
+    if (m.engine === 'rules') return '<span class="cb-eng" title="Trả lời bằng quy tắc trong hệ thống, không gọi AI">⚙ Bot quy tắc</span>';
+    return '';
+  }
+
   function metaOf(m, i){
     if (m.err) return '';
     var bits = [];
+    var eg = engLabel(m);
+    if (eg) bits.push(eg);
+    if (m.estimated) bits.push('<span class="cb-est" title="Có số kWh ƯỚC TÍNH cho máy mất truyền thông (giờ kỹ thuật nhập tay × công suất thiết kế), không phải số đo">≈ có số ước tính</span>');
     if (m.tools && m.tools.length) bits.push('Đã tra: ' + m.tools.map(function (t){ return esc(t.label || t.name); }).join(', '));
     if (m.sources && m.sources.length) bits.push('Nguồn: ' + m.sources.map(esc).join(' · '));
     if (m.ms) bits.push((Math.round(m.ms / 100) / 10) + ' giây');
+    var hasRep = !!(m.report || m.showRep);
+    var canMakeRep = !hasRep && !m.hadRep && (m.content || '').length > 0;
     return (bits.length ? bits.join(' — ') : '') + '<button type="button" data-copy="' + i + '">Sao chép</button>'
-      + (m.copy ? '<button type="button" data-copydata="' + i + '" title="Chép bảng số liệu đã tính sẵn để dán sang ChatGPT phân tích">Sao chép dữ liệu</button>' : '');
+      + (m.copy ? '<button type="button" data-copydata="' + i + '" title="Chép bảng số liệu đã tính sẵn để dán sang ChatGPT phân tích">Sao chép dữ liệu</button>' : '')
+      + (canMakeRep ? '<button type="button" data-rep="' + i + '" class="cb-b2" title="Xuất câu trả lời + bảng số liệu ra Word / Excel / In — không tốn lượt AI">📄 Xuất báo cáo</button>' : '')
+      + (m.canDeepen ? '<button type="button" data-deep="' + i + '" class="cb-b2" title="Đưa câu hỏi này cho AI phân tích, dựa trên đúng số liệu bot quy tắc vừa tra">🔎 Phân tích sâu</button>' : '');
   }
 
-  function render(){
+  function helloPriv(){
+    var d = ST.info, mode = d && d.mode, pn = (d && d.providerName) || 'dịch vụ AI';
+    var base = 'Mình chỉ đọc dữ liệu, không sửa được gì. ';
+    if (mode === 'rules') return base + 'Câu hỏi được xử lý ngay trong hệ thống của công ty, không gửi cho dịch vụ AI nào. '
+      + 'Gõ <b>tạo báo cáo …</b> để lập file Word / Excel; muốn phân tích sâu hơn, bấm <b>Sao chép dữ liệu</b> dưới câu trả lời rồi dán sang ChatGPT.';
+    if (mode === 'auto') return base + 'Câu hỏi mình hiểu theo mẫu thì xử lý ngay trong hệ thống; câu mình không hiểu sẽ được gửi tới ' + esc(pn)
+      + ' cùng kết quả tra cứu để soạn câu trả lời. Số điện thoại và Zalo của người dùng không bao giờ được gửi.';
+    if (mode === 'ai') return base + 'Câu hỏi và kết quả tra cứu được gửi tới ' + esc(pn) + ' để soạn câu trả lời; số điện thoại và Zalo của người dùng không bao giờ được gửi. '
+      + 'Gõ <b>tạo báo cáo …</b> để lập file Word / Excel ngay trong khung này.';
+    if (mode === 'duo') return base + 'Hai trợ lý dùng chung dữ liệu: <b>bot quy tắc</b> tra số chính xác ngay trong hệ thống; câu cần <b>phân tích / báo cáo</b> hoặc bot không hiểu sẽ được chuyển tới '
+      + esc(pn) + (d.model ? ' (' + esc(d.model) + ')' : '') + ' cùng số liệu đã tra. Số điện thoại và Zalo của người dùng không bao giờ được gửi. '
+      + 'Gõ <b>tạo báo cáo …</b> để lập file Word / Excel ngay trong khung này.';
+    return '';
+  }
+
+  function render(keepScroll){
     var body = $('cbBody'); if (!body) return;
+    var prevTop = body.scrollTop;
     var h = '';
     if (!ST.msgs.length){
-      var mode = ST.info && ST.info.mode, priv = '';
-      if (mode === 'rules') priv = 'Mình chỉ đọc dữ liệu, không sửa được gì. Câu hỏi được xử lý ngay trong hệ thống của công ty, không gửi cho dịch vụ AI nào. '
-        + 'Muốn phân tích sâu hơn, bấm <b>Sao chép dữ liệu</b> dưới câu trả lời rồi dán sang ChatGPT.';
-      else if (mode === 'auto') priv = 'Mình chỉ đọc dữ liệu, không sửa được gì. Câu hỏi mình hiểu theo mẫu thì xử lý ngay trong hệ thống; câu mình không hiểu sẽ được gửi tới Claude (Anthropic) '
-        + 'cùng kết quả tra cứu để soạn câu trả lời. Số điện thoại và Zalo của người dùng không bao giờ được gửi.';
-      else if (mode === 'ai') priv = 'Mình chỉ đọc dữ liệu, không sửa được gì. Câu hỏi và kết quả tra cứu được gửi tới Claude (Anthropic) để soạn câu trả lời; '
-        + 'số điện thoại và Zalo của người dùng không bao giờ được gửi.';
+      var mode = ST.info && ST.info.mode, priv = helloPriv();
+      var chips = SUGG.slice();
+      if (ST.info && ST.info.aiReady) chips.splice(1, 0, SUGG_AI);
       h += '<div class="cb-hello"><b>Xin chào!</b> Mình tra giúp số liệu trong hệ thống: sản lượng điện theo tháng/ngày, giờ chạy, hồ sơ từng máy, cảnh báo bảo dưỡng, tồn kho vật tư… '
         + (mode === 'rules' ? 'Hỏi ngắn gọn, viết có dấu hay không dấu đều được; gõ <b>giúp</b> để xem các mẫu câu hỏi. ' : 'Cứ hỏi tự nhiên như nói chuyện. ')
         + 'Mình trả lời kèm mã máy, số liệu, trại, khu vực và cách tính.'
         + (priv ? '<small>' + priv + '</small>' : '') + '</div>'
-        + '<div class="cb-chips">' + SUGG.map(function (s){ return '<button type="button" class="cb-chip" data-q="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div>';
+        + '<div class="cb-chips">' + chips.map(function (s){ return '<button type="button" class="cb-chip" data-q="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div>';
     }
     ST.msgs.forEach(function (m, i){
       if (m.role === 'user'){
-        h += '<div class="cb-m cb-u"><div class="cb-b">' + esc(m.content) + '</div></div>';
+        h += '<div class="cb-m cb-u"><div class="cb-b">' + esc(m.content) + '</div>' + (m.deep ? '<div class="cb-meta cb-tag">🔎 phân tích sâu</div>' : '') + '</div>';
       } else {
-        h += '<div class="cb-m cb-a' + (m.err ? ' cb-err' : '') + '"><div class="cb-b">' + (m.err ? '<p>' + esc(m.content) + '</p>' : md(m.content)) + '</div>'
-          + (m.err ? '' : '<div class="cb-meta">' + metaOf(m, i) + '</div>') + '</div>';
+        h += '<div class="cb-m cb-a' + (m.err ? ' cb-err' : '') + '"><div class="cb-b">' + (m.err ? '<p>' + esc(m.content) + '</p>' : md(m.content)) + '</div>';
+        if (!m.err){
+          if (m.aiError) h += '<div class="cb-meta cb-aierr">⚠ Phần AI không chạy được nên đây là kết quả của bot quy tắc: ' + esc(m.aiError) + '</div>';
+          if (m.report || m.showRep) h += repCard(m, i);
+          else if (m.hadRep) h += '<div class="cb-meta">Báo cáo / bảng của câu này đã được dọn khỏi bộ nhớ trình duyệt — hỏi lại để xuất.</div>';
+          h += '<div class="cb-meta">' + metaOf(m, i) + '</div>';
+        }
+        h += '</div>';
       }
     });
     if (ST.busy){
-      h += '<div class="cb-m cb-a"><div class="cb-b"><div class="cb-wait"><span class="cb-dots"><i></i><i></i><i></i></span><span id="cbWaitT">Đang tra cứu dữ liệu…</span></div></div></div>';
+      h += '<div class="cb-m cb-a"><div class="cb-b"><div class="cb-wait"><span class="cb-dots"><i></i><i></i><i></i></span><span id="cbWaitT">' + esc(ST.waitLbl || 'Đang tra cứu dữ liệu…') + '</span></div></div></div>';
     }
     body.innerHTML = h;
-    body.scrollTop = body.scrollHeight;
+    body.scrollTop = keepScroll ? prevTop : body.scrollHeight;
     var btn = $('cbSend'); if (btn) btn.disabled = ST.busy;
     var clr = $('cbClear'); if (clr) clr.style.display = ST.msgs.length ? '' : 'none';
     if (ST.busy) tick();
