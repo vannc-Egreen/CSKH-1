@@ -23258,7 +23258,7 @@ RP_CT['ls-may'] = function (code, label){
     if (d && d.dataDate){
       var m = String(d.dataDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
       sub.textContent = 'Dữ liệu đến hết ' + (m ? (m[3] + '/' + m[2] + '/' + m[1]) : d.dataDate) + ' · chỉ đọc'
-        + (d.aiReady ? ' · AI: ' + (d.model || d.providerName || '') : ' · không dùng AI');
+        + (d.aiReady ? ' · AI: ' + (d.model || d.providerName || '') : ' · ⚠ AI chưa bật (chỉ trả lời theo mẫu câu)');
     }
     if (d && d.configured === false){
       warn.style.display = 'block';
@@ -23266,6 +23266,13 @@ RP_CT['ls-may'] = function (code, label){
         ? 'Trợ lý đang để chế độ AI nhưng chưa có khoá API. Admin: vào Apps Script › Cài đặt dự án › Thuộc tính tập lệnh, thêm ' + keyProp(d)
           + ' — hoặc xoá CHATBOT_MODE / đặt CHATBOT_MODE = rules để dùng chế độ không cần AI (xem TRIEN_KHAI_CHATBOT.md).'
         : 'Trợ lý chưa được kích hoạt. Báo Admin để bật.';
+    } else if (d && !d.chatV){
+      warn.style.display = 'block';
+      warn.textContent = '⚠ Máy chủ đang chạy CHATBOT.gs bản cũ — chưa có chế độ trò chuyện với AI và trí nhớ phiên. Dán lại file CHATBOT.gs mới, Lưu, rồi Triển khai → Quản lý bản triển khai → ✏ → Phiên bản mới.';
+    } else if (d && !d.aiReady && d.aiWhy){
+      warn.style.display = 'block';
+      warn.textContent = '⚠ AI chưa bật nên đây chỉ là bot quy tắc trong code (trả lời theo mẫu câu, không trò chuyện được). '
+        + ((S.perm && S.perm.admin) ? (d.aiWhyText || '') : 'Báo Admin bật AI.');
     } else { warn.style.display = 'none'; warn.textContent = ''; }
   }
 
@@ -23345,7 +23352,7 @@ RP_CT['ls-may'] = function (code, label){
           copy: d.copy ? String(d.copy) : '', engine: d.engine || '', provider: d.provider || '', model: d.model || '',
           estimated: !!d.estimated, tables: Array.isArray(d.tables) ? d.tables : [], charts: Array.isArray(d.charts) ? d.charts : [], report: d.report || null,
           canDeepen: !!d.canDeepen, aiError: d.aiError ? String(d.aiError) : '',
-          mem: (d.memV && d.mem && d.mem.v === 1) ? d.mem : null, inherit: d.inherit || null, noMem: !d.memV       // noMem: máy chủ chưa nạp CHATBOT.gs có trí nhớ phiên
+          mem: (d.memV && d.mem && d.mem.v === 1) ? d.mem : null, inherit: d.inherit || null, noMem: !(d.memV || (ST.info && ST.info.memV))       // noMem: máy chủ chưa nạp CHATBOT.gs có trí nhớ phiên
         });
       } else {
         var t;
