@@ -23330,7 +23330,7 @@ RP_CT['ls-may'] = function (code, label){
     ST.msgs.push(um);
     save();
     ST.busy = true; ST.t0 = Date.now();
-    ST.waitLbl = opt.deep ? 'AI đang phân tích sâu…' : ((ST.info && ST.info.aiReady) ? 'Đang tra cứu và phân tích…' : 'Đang tra cứu dữ liệu…');
+    ST.waitLbl = opt.deep ? 'AI đang phân tích sâu…' : ((ST.info && ST.info.aiReady) ? 'AI đang trả lời…' : 'Đang tra cứu dữ liệu…');
     render(); tick();
     ST.timer = setInterval(tick, 1000);
 
@@ -23397,7 +23397,7 @@ RP_CT['ls-may'] = function (code, label){
   function engLabel(m){
     var mdl = m.model ? esc(m.model) : 'AI';
     if (m.engine === 'duo') return '<span class="cb-eng cb-eng-d" title="Bot quy tắc tra số liệu bằng code, ' + mdl + ' phân tích trên đúng số đó">⚙ Bot quy tắc + 🤖 ' + mdl + '</span>';
-    if (m.engine === 'gpt') return '<span class="cb-eng cb-eng-g" title="' + mdl + ' tự gọi các công cụ tra dữ liệu">🤖 ' + mdl + '</span>';
+    if (m.engine === 'gpt') return '<span class="cb-eng cb-eng-g" title="' + mdl + ' trả lời trực tiếp, tự ra lệnh cho hệ thống tra dữ liệu khi cần">🤖 ' + mdl + '</span>';
     if (m.engine === 'rules') return '<span class="cb-eng" title="Trả lời bằng quy tắc trong hệ thống, không gọi AI">⚙ Bot quy tắc</span>';
     if (m.engine === 'mem') return '<span class="cb-eng" title="Dựng lại từ bộ nhớ của cuộc trò chuyện, không gọi AI nên không tốn token">🧠 Bộ nhớ phiên</span>';
     return '';
@@ -23434,9 +23434,9 @@ RP_CT['ls-may'] = function (code, label){
       + ' cùng kết quả tra cứu để soạn câu trả lời. Số điện thoại và Zalo của người dùng không bao giờ được gửi.';
     if (mode === 'ai') return base + 'Câu hỏi và kết quả tra cứu được gửi tới ' + esc(pn) + ' để soạn câu trả lời; số điện thoại và Zalo của người dùng không bao giờ được gửi. '
       + 'Gõ <b>tạo báo cáo …</b> để lập file Word / Excel ngay trong khung này.';
-    if (mode === 'duo') return base + 'Hai trợ lý dùng chung dữ liệu: <b>bot quy tắc</b> tra số chính xác ngay trong hệ thống; câu cần <b>phân tích / báo cáo</b> hoặc bot không hiểu sẽ được chuyển tới '
-      + esc(pn) + (d.model ? ' (' + esc(d.model) + ')' : '') + ' cùng số liệu đã tra. Số điện thoại và Zalo của người dùng không bao giờ được gửi. '
-      + 'Gõ <b>tạo báo cáo …</b> để lập file Word / Excel ngay trong khung này.';
+    if (mode === 'duo') return base + 'Bạn trao đổi trực tiếp với ' + esc(pn) + (d.model ? ' (' + esc(d.model) + ')' : '')
+      + '; khi cần số liệu, hệ thống tự tra sheet / Smartgen / LIXiSE rồi trả số về cho AI. Câu hỏi và kết quả tra được gửi tới ' + esc(pn)
+      + '; số điện thoại và Zalo của người dùng không bao giờ được gửi. Cần file thì nhờ <b>tạo báo cáo …</b> (Word / Excel / In).';
     return '';
   }
 
@@ -23447,10 +23447,13 @@ RP_CT['ls-may'] = function (code, label){
     if (!ST.msgs.length){
       var mode = ST.info && ST.info.mode, priv = helloPriv();
       var chips = SUGG.slice();
-      if (ST.info && ST.info.aiReady) chips.splice(1, 0, SUGG_AI);
-      h += '<div class="cb-hello"><b>Xin chào!</b> Mình tra giúp số liệu trong hệ thống: sản lượng điện theo tháng/ngày, giờ chạy, hồ sơ từng máy, cảnh báo bảo dưỡng, tồn kho vật tư… '
-        + (mode === 'rules' ? 'Hỏi ngắn gọn, viết có dấu hay không dấu đều được; gõ <b>giúp</b> để xem các mẫu câu hỏi. ' : 'Cứ hỏi tự nhiên như nói chuyện. ')
-        + 'Mình trả lời kèm mã máy, số liệu, trại, khu vực và cách tính.'
+      if (ST.info && ST.info.aiReady){ chips.splice(1, 0, SUGG_AI); chips.splice(3, 0, 'Nên ưu tiên bảo dưỡng máy nào trước? Mình nên làm gì với chúng?'); }
+      var talk = ST.info && ST.info.aiReady && mode !== 'auto';
+      h += (talk
+          ? '<div class="cb-hello"><b>Xin chào!</b> Mình là trợ lý AI của eGreen. Cứ trao đổi tự nhiên như chat trực tiếp với một AI: hỏi số liệu máy, trại, sản lượng, bảo dưỡng, tồn kho; nhờ phân tích, bàn cách xử lý, giải thích kỹ thuật hay soạn nội dung. Cần số liệu thì mình tự tra, không cần bạn dán gì.'
+          : '<div class="cb-hello"><b>Xin chào!</b> Mình tra giúp số liệu trong hệ thống: sản lượng điện theo tháng/ngày, giờ chạy, hồ sơ từng máy, cảnh báo bảo dưỡng, tồn kho vật tư… '
+            + (mode === 'rules' ? 'Hỏi ngắn gọn, viết có dấu hay không dấu đều được; gõ <b>giúp</b> để xem các mẫu câu hỏi. ' : 'Cứ hỏi tự nhiên như nói chuyện. ')
+            + 'Mình trả lời kèm mã máy, số liệu, trại, khu vực và cách tính.')
         + (priv ? '<small>' + priv + '</small>' : '') + '</div>'
         + '<div class="cb-chips">' + chips.map(function (s){ return '<button type="button" class="cb-chip" data-q="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div>';
     }
