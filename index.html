@@ -17484,7 +17484,7 @@ function wXuat_(tenFile, tieuDe, phuDe, than){
   const ten = tenFile + '-' + now.getFullYear()+p(now.getMonth()+1)+p(now.getDate())
             + '-' + p(now.getHours())+p(now.getMinutes()) + '.doc';
   try {
-    const blob = new Blob(['﻿' + html], { type:'application/msword;charset=utf-8' });
+    const blob = new Blob(['\uFEFF' + html], { type:'application/msword;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = ten;
@@ -17532,7 +17532,7 @@ function rpQua_(r, F, boQua){
   return true;
 }
 function rpKhongDau_(s){
-  return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g,'')
+  return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/đ/gi,'d').toLowerCase().trim();
 }
 
@@ -17758,7 +17758,7 @@ const RP_NHOM = {
 
 /** Chuỗi tiếng Việt → mẩu tên file an toàn (bỏ dấu, gạch nối). */
 function rpSlug_(s){
-  return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
+  return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/đ/gi,'d').toLowerCase()
     .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40);
 }
@@ -19673,7 +19673,7 @@ function kkVeSo_(){
  *  CỐ Ý KHÔNG dùng nfd_ — tên gần giống nhưng nfd_ là hàm ĐỊNH DẠNG SỐ (1.234,5),
  *  gọi nhầm thì ô tìm im lặng không lọc được gì mà cũng không báo lỗi. */
 function kkSlug_(s){
-  return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g,'')
+  return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/đ/gi,'d').toLowerCase().trim();
 }
 
@@ -22258,6 +22258,7 @@ RP_CT['ls-may'] = function (code, label){
 .cb-rep-h b{font-size:12.5px;color:#083d24;line-height:1.35}
 .cb-rep-h small{font-size:10.5px;color:var(--mu,#64748b)}
 .cb-rep-s{padding:8px 12px 0;font-size:12px;line-height:1.5}
+.cb-rep-w{margin:8px 12px 0;padding:6px 8px;border:1px solid #f59e0b;background:#fffbeb;color:#92400e;border-radius:6px;font-size:11.5px;line-height:1.45}
 .cb-rep-act{display:flex;flex-wrap:wrap;gap:6px;padding:9px 12px}
 .cb-rep-act button{background:#0d6e3f;color:#fff;border:0;border-radius:8px;padding:6px 11px;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}
 .cb-rep-act button:hover{background:#16a05e}
@@ -22315,6 +22316,8 @@ RP_CT['ls-may'] = function (code, label){
   var SUGG_AI = 'Phân tích sản lượng điện tháng này và đề xuất';   // chỉ hiện khi đã bật AI
   var KEEP_COPY = 6;                 // chỉ giữ khối "Sao chép dữ liệu" của N câu trả lời gần nhất khi lưu vào sessionStorage
   var KEEP_REP = 2;                  // chỉ giữ báo cáo / bảng của N câu trả lời gần nhất (nặng): các câu cũ hơn phải hỏi lại để xuất
+  var KEEP_MEM = 3;                  // trí nhớ phiên: giữ và gửi lại bản ghi (mem) của N câu trả lời gần nhất — để câu sau kế thừa / chỉnh sửa được câu trước
+  var MEM_TTL = 6 * 3600 * 1000;     // bản ghi quá 6 giờ thì bỏ (máy chủ cũng bỏ)
   var ST = { open: false, busy: false, msgs: [], owner: '', loadedFor: '', info: null, infoAt: 0,
              codesRe: null, codesN: 0, t0: 0, timer: 0, wasReady: false, gone: 0, waitLbl: '' };
 
@@ -22323,8 +22326,27 @@ RP_CT['ls-may'] = function (code, label){
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function escRe(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
   function p2(n){ return ('0' + n).slice(-2); }
+  /** Số kiểu Việt Nam cho báo cáo: dấu chấm ngăn nghìn, dấu phẩy thập phân, bỏ số 0 thừa (94.037 · 4,3). Tự viết, không phụ thuộc ICU của trình duyệt. */
+  function fvi(v, md){
+    if (typeof v !== 'number' || !isFinite(v)) return '';
+    var s = Math.abs(v).toFixed(md == null ? 2 : md);
+    if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    var p = s.split('.');
+    p[0] = p[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return (v < 0 && Number(s) !== 0 ? '-' : '') + p.join(',');
+  }
+  /** Đổi số kiểu Anh trong đoạn chữ ("94,037.00 kWh", "4.30%") sang kiểu Việt. Cùng quy tắc với cbotViNum_ phía máy chủ. */
+  function viText(s){
+    var t = String(s == null ? '' : s);
+    t = t.replace(/(^|[^\d.,])(\d{1,3}(?:,\d{3})+)(\.\d+)?(?!\d)/g, function (m, pre, ints, dec){
+      return pre + fvi(parseFloat(ints.replace(/,/g, '') + (dec || '')), dec ? Math.min(2, dec.length - 1) : 0);
+    });
+    return t.replace(/(^|[^\d.,])(\d+)\.(\d{1,2})(?!\d)(?=\s*(?:%|kWh|kW|MW|giờ|h\b|đ\b|VND|VNĐ|ngày|lít|lần|điểm))/g, function (m, pre, a, b){
+      return pre + fvi(parseFloat(a + '.' + b), b.length);
+    });
+  }
   function fnum(v){
-    if (typeof v === 'number') return isFinite(v) ? v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '';
+    if (typeof v === 'number') return isFinite(v) ? fvi(v, 2) : '';
     return v == null ? '' : String(v);
   }
   function keyProp(d){ return d && d.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'; }
@@ -22350,9 +22372,19 @@ RP_CT['ls-may'] = function (code, label){
   function slim(dropAllHeavy){
     /* Đếm từ CUỐI: giữ N khối copy và N báo cáo/bảng gần nhất, các khối cũ hơn bỏ nội dung nặng (báo cáo cũ phải hỏi lại để xuất). */
     var copyLeft = KEEP_COPY, repLeft = dropAllHeavy ? 0 : KEEP_REP, copyAll = dropAllHeavy ? 0 : KEEP_COPY;
+    var memLeft = KEEP_MEM, memRepSeen = false;
     return ST.msgs.slice(-MAXKEEP).reverse().map(function (m){
       if (m.role !== 'assistant') return m;
       var o = m;
+      if (m.mem){
+        if (memLeft > 0){
+          memLeft--;
+          if (m.mem.report){
+            if (memRepSeen) o = Object.assign({}, o, { mem: Object.assign({}, m.mem, { report: null }) });
+            else memRepSeen = true;
+          }
+        } else o = Object.assign({}, o, { mem: null });
+      }
       if (m.copy){ if (copyLeft > 0 && copyAll > 0) copyLeft--; else o = Object.assign({}, o, { copy: '' }); }
       if (m.report || (m.tables && m.tables.length) || (m.charts && m.charts.length)){
         if (repLeft > 0) repLeft--;
@@ -22433,7 +22465,7 @@ RP_CT['ls-may'] = function (code, label){
     var sec = { heading: 'Kết quả tra cứu', paragraphs: [], bullets: [] };
     String(m.content || '').split('\n').forEach(function (line){
       var b = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
-      var t = plain(b ? b[1] : line);
+      var t = viText(plain(b ? b[1] : line));
       if (!t) return;
       (b ? sec.bullets : sec.paragraphs).push(t);
     });
@@ -22444,7 +22476,7 @@ RP_CT['ls-may'] = function (code, label){
     var charts = Array.isArray(m.charts) ? m.charts : [];
     var secs = [sec];
     if (charts.length) secs.push({ heading: 'Biểu đồ số liệu', paragraphs: [], bullets: [], charts: charts.map(function (c){ return c.id; }) });
-    return { kind: 'local', title: 'Báo cáo: ' + plain(q).slice(0, 120),
+    return { kind: 'local', title: 'Báo cáo tổng hợp số liệu vận hành',
              generatedAt: p2(now.getDate()) + '/' + p2(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + p2(now.getHours()) + ':' + p2(now.getMinutes()),
              author: whoName(), question: plain(q), dataDate: d ? (d[3] + '/' + d[2] + '/' + d[1]) : '', summary: '',
              sections: secs, recommendations: [], tables: Array.isArray(m.tables) ? m.tables : [], charts: charts, scope: [], sources: m.sources || [], notes: notes };
@@ -22490,7 +22522,6 @@ RP_CT['ls-may'] = function (code, label){
     if (rep.author) meta.push('Người lập: ' + rep.author);
     if (rep.dataDate) meta.push('Dữ liệu đến hết: ' + rep.dataDate);
     if (meta.length) h += '<p class="mt">' + esc(meta.join(' · ')) + '</p>';
-    if (rep.question) h += '<p class="mt"><i>Yêu cầu: ' + esc(rep.question) + '</i></p>';
     if (rep.summary) h += H('Tóm tắt') + '<p>' + esc(rep.summary) + '</p>';
     (rep.sections || []).forEach(function (s){
       if (s.heading) h += H(s.heading);
@@ -22500,7 +22531,7 @@ RP_CT['ls-may'] = function (code, label){
       (s.charts || []).forEach(function (id){ h += figHtml(rep, id, imgs, nums, mode); });
     });
     if (rep.recommendations && rep.recommendations.length){
-      h += '<h4>' + (++k) + '. Đề xuất <small>(ý kiến của AI, không phải số liệu)</small></h4><ul>'
+      h += '<h4>' + (++k) + '. Đề xuất</h4><ul>'
         + rep.recommendations.map(function (t){ return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>';
     }
     if (rep.scope && rep.scope.length) h += H('Phạm vi và nguồn số liệu') + '<ul>' + rep.scope.map(function (t){ return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>';
@@ -22539,7 +22570,7 @@ RP_CT['ls-may'] = function (code, label){
   var CH_LINE = ['#c2410c', '#1d4ed8', '#7c3aed'];
   function chNum(v, whole){
     if (typeof v !== 'number' || !isFinite(v)) return '';
-    return v.toLocaleString('en-US', { maximumFractionDigits: whole ? 0 : 2 });
+    return fvi(v, whole ? 0 : 2);
   }
   function chartById(rep, id){
     var a = rep.charts || [];
@@ -22697,7 +22728,7 @@ RP_CT['ls-may'] = function (code, label){
   }
 
   function xesc(s){
-    return String(s == null ? '' : s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F  ]/g, '')
+    return String(s == null ? '' : s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function tw(cm){ return Math.round(cm * 567); }
@@ -22722,22 +22753,33 @@ RP_CT['ls-may'] = function (code, label){
   /** Bảng. widthTw = bề rộng chữ của trang (twip). */
   function wTable(cols, rows, widthTw){
     var nC = Math.max(1, cols.length), fs = nC > 8 ? 18 : (nC > 5 ? 20 : 22);
-    var cw = Math.floor(widthTw / nC);
+    /* Bề rộng cột theo độ dài nội dung (mã máy, tên trại cần rộng; số thì hẹp) — không chia đều làm mã máy bị ngắt dòng. */
+    var cellTxt = rows.map(function (r){ return cols.map(function (_, j){ var v = r[j]; return (v === null || v === undefined) ? '' : (typeof v === 'number' ? fnum(v) : String(v)); }); });
+    var wt = cols.map(function (c, j){
+      var m = 0, hc = String(c);
+      hc.split(/\s+/).forEach(function (w){ m = Math.max(m, w.length + 1); });          // không để từ trong tiêu đề bị bẻ giữa chữ
+      m = Math.max(m, Math.ceil(hc.length / 3));                                          // tiêu đề dài thì cho rộng hơn để chỉ xuống 2–3 dòng
+      var u = 0;                                                                          // cột toàn chữ liền (mã máy): phải đủ rộng, không ngắt giữa mã
+      cellTxt.forEach(function (r){ m = Math.max(m, Math.min(r[j].length + 1, 20)); if (r[j] && !/\s/.test(r[j]) && !NUMLIKE.test(r[j])) u = Math.max(u, Math.min(r[j].length, 14)); });
+      return Math.max(Math.ceil(m * 1.2), Math.ceil(u * 1.9), 7);
+    });
+    var wsum = wt.reduce(function (a, b){ return a + b; }, 0);
+    var cws = wt.map(function (x){ return Math.max(500, Math.floor(widthTw * x / wsum)); });
     var bd = function (n){ return '<w:' + n + ' w:val="single" w:sz="4" w:space="0" w:color="7F7F7F"/>'; };
     var x = '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:tblBorders>' + bd('top') + bd('left') + bd('bottom') + bd('right') + bd('insideH') + bd('insideV')
       + '</w:tblBorders><w:tblCellMar><w:top w:w="30" w:type="dxa"/><w:left w:w="70" w:type="dxa"/><w:bottom w:w="30" w:type="dxa"/><w:right w:w="70" w:type="dxa"/></w:tblCellMar>'
       + '<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid>';
-    for (var g = 0; g < nC; g++) x += '<w:gridCol w:w="' + cw + '"/>';
+    for (var g = 0; g < nC; g++) x += '<w:gridCol w:w="' + cws[g] + '"/>';
     x += '</w:tblGrid>';
     var cell = function (txt, o){
-      return '<w:tc><w:tcPr><w:tcW w:w="' + cw + '" w:type="dxa"/>' + (o.fill ? '<w:shd w:val="clear" w:color="auto" w:fill="' + o.fill + '"/>' : '') + '<w:vAlign w:val="' + (o.head ? 'center' : 'top') + '"/></w:tcPr>'
+      return '<w:tc><w:tcPr><w:tcW w:w="' + cws[o.j] + '" w:type="dxa"/>' + (o.fill ? '<w:shd w:val="clear" w:color="auto" w:fill="' + o.fill + '"/>' : '') + '<w:vAlign w:val="' + (o.head ? 'center' : 'top') + '"/></w:tcPr>'
         + wP(wR(txt, { b: o.head, color: o.head ? 'FFFFFF' : '', sz: fs }), { style: 'TableText', jc: o.jc, mark: fs }) + '</w:tc>';
     };
-    x += '<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>' + cols.map(function (c){ return cell(String(c), { head: true, fill: '0D6E3F', jc: 'center' }); }).join('') + '</w:tr>';
+    x += '<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>' + cols.map(function (c, j){ return cell(String(c), { head: true, fill: '0D6E3F', jc: 'center', j: j }); }).join('') + '</w:tr>';
     rows.forEach(function (r, i){
       x += '<w:tr><w:trPr><w:cantSplit/></w:trPr>' + cols.map(function (_, j){
-        var v = r[j], t = (v === null || v === undefined) ? '' : (typeof v === 'number' ? fnum(v) : String(v));
-        return cell(t, { fill: i % 2 ? 'F3F6F4' : '', jc: (typeof v === 'number' || NUMLIKE.test(t)) && t ? 'right' : 'left' });
+        var v = r[j], t = cellTxt[i][j];
+        return cell(t, { fill: i % 2 ? 'F3F6F4' : '', jc: (typeof v === 'number' || NUMLIKE.test(t)) && t ? 'right' : 'left', j: j });
       }).join('') + '</w:tr>';
     });
     return x + '</w:tbl>' + wP('', { style: 'TableText', after: 120, mark: 16 });
@@ -22788,7 +22830,6 @@ RP_CT['ls-may'] = function (code, label){
     body += wP(wR('Khối sản xuất — Máy phát điện biogas'), { jc: 'center', after: 200 });
     body += wP(wR(rep.title, { b: true, sz: 28 }), { style: 'Title' });
     if (meta.length) body += wP(wR(meta.join(' · '), { color: '444444' }), { jc: 'center', after: 40 });
-    if (rep.question) body += wP(wR('Yêu cầu: ' + rep.question, { i: true, color: '444444' }), { jc: 'center', after: 160 });
 
     if (rep.summary){ H('Tóm tắt'); para(rep.summary); }
     (rep.sections || []).forEach(function (s){
@@ -22802,7 +22843,6 @@ RP_CT['ls-may'] = function (code, label){
     });
     if (rep.recommendations && rep.recommendations.length){
       H('Đề xuất');
-      body += wP(wR('Ý kiến của trợ lý AI dựa trên các số liệu ở trên, không phải số liệu gốc.', { i: true, color: '444444' }), { keepNext: true, after: 80 });
       rep.recommendations.forEach(bullet);
     }
     if (rep.scope && rep.scope.length){ H('Phạm vi và nguồn số liệu'); rep.scope.forEach(bullet); }
@@ -22810,7 +22850,7 @@ RP_CT['ls-may'] = function (code, label){
     if (!(rep.scope && rep.scope.length) && rep.sources && rep.sources.length) body += wP(wR('Nguồn dữ liệu: ' + rep.sources.join(' · '), { color: '444444' }), { before: 120 });
 
     var tabs = rep.tables || [];
-    var wide = tabs.some(function (t){ return (t.columns || []).length > 7; });
+    var wide = tabs.some(function (t){ return (t.columns || []).length > 9; });
     var footRef = '<w:footerReference w:type="default" r:id="rIdFtr1"/>';
     var mar = '<w:pgMar w:top="' + mT + '" w:right="' + mR + '" w:bottom="' + mB + '" w:left="' + mL + '" w:header="567" w:footer="567" w:gutter="0"/>';
     var sectP = '<w:sectPr>' + footRef + '<w:pgSz w:w="' + pageW + '" w:h="' + pageH + '"/>' + mar + '</w:sectPr>';
@@ -22881,6 +22921,9 @@ RP_CT['ls-may'] = function (code, label){
       + 'xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>' + xesc(rep.title) + '</dc:title><dc:creator>' + xesc(rep.author || 'eGreen') + '</dc:creator>'
       + '<dcterms:created xsi:type="dcterms:W3CDTF">' + new Date().toISOString().replace(/\.\d+Z$/, 'Z') + '</dcterms:created></cp:coreProperties>';
 
+    /* Chốt chặn: nếu chữ trong gói bị mất khoảng trắng (lỗi ký tự lạ khi nạp trang) thì báo lỗi để lùi về bản .doc, không giao file hỏng. */
+    var probe = String(rep.summary || rep.title || '').split(/[\r\n]/)[0].trim().slice(0, 40);
+    if (probe.indexOf(' ') > 0 && docXml.indexOf(xesc(probe)) < 0) throw new Error('chữ bị mất khoảng trắng');
     var files = [
       { name: '[Content_Types].xml', data: utf8(ct) }, { name: '_rels/.rels', data: utf8(rootRels) }, { name: 'docProps/core.xml', data: utf8(core) },
       { name: 'word/document.xml', data: utf8(docXml) }, { name: 'word/_rels/document.xml.rels', data: utf8(docRels) },
@@ -22950,7 +22993,6 @@ RP_CT['ls-may'] = function (code, label){
     if (rep.author) meta.push('Người lập: ' + rep.author);
     if (rep.dataDate) meta.push('Dữ liệu đến hết: ' + rep.dataDate);
     if (meta.length) h += text(meta.join(' · '), 'color:#444');
-    if (rep.question) h += text('Câu hỏi: ' + rep.question, 'color:#444;font-style:italic');
     if (rep.summary) { h += text('Tóm tắt', 'font-weight:bold;color:#083d24'); h += text(rep.summary); }
     (rep.sections || []).forEach(function (s){
       if (s.heading) h += text(s.heading, 'font-weight:bold;color:#083d24');
@@ -22974,7 +23016,7 @@ RP_CT['ls-may'] = function (code, label){
   }
 
   function slug(s){
-    return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase()
+    return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase()
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'bao-cao';
   }
   function fileName(rep, ext){
@@ -22983,7 +23025,7 @@ RP_CT['ls-may'] = function (code, label){
   }
   function saveBlob(html, mime, name){
     try {
-      var blob = new Blob(['﻿' + html], { type: mime + ';charset=utf-8' });
+      var blob = new Blob(['\uFEFF' + html], { type: mime + ';charset=utf-8' });
       var url = URL.createObjectURL(blob), a = document.createElement('a');
       a.href = url; a.download = name; document.body.appendChild(a); a.click();
       setTimeout(function (){ URL.revokeObjectURL(url); a.remove(); }, 4000);
@@ -23040,9 +23082,11 @@ RP_CT['ls-may'] = function (code, label){
     var rep = repOf(i);
     if (!rep) return '';
     var kindTxt = rep.kind === 'ai' ? 'Báo cáo có nhận định của AI' : (rep.kind === 'rules' ? 'Báo cáo từ số liệu hệ thống' : 'Báo cáo từ câu trả lời này');
+    var oldSrv = (rep.kind === 'ai' || rep.kind === 'rules') && !rep.build;       // máy chủ chưa nạp CHATBOT.gs mới: thiếu biểu đồ, đề bài, chuẩn số
     return '<div class="cb-rep" data-ri="' + i + '"><div class="cb-rep-h"><b>📄 ' + esc(rep.title) + '</b><small>' + esc(kindTxt)
       + ((rep.charts && rep.charts.length) ? ' · ' + rep.charts.length + ' biểu đồ' : '')
       + ((rep.tables && rep.tables.length) ? ' · ' + rep.tables.length + ' bảng số liệu' : '') + '</small></div>'
+      + (oldSrv ? '<div class="cb-rep-w">⚠ Máy chủ đang chạy CHATBOT.gs bản cũ nên báo cáo này thiếu biểu đồ và chưa đạt chuẩn trình bày. Nạp lại file CHATBOT.gs, rồi Triển khai → Quản lý bản triển khai → Phiên bản mới.</div>' : '')
       + (rep.summary ? '<div class="cb-rep-s">' + esc(rep.summary.length > 320 ? rep.summary.slice(0, 317) + '…' : rep.summary) + '</div>' : '')
       + '<div class="cb-rep-act"><button type="button" data-rprev="' + i + '">Xem trước</button>'
       + '<button type="button" data-rdoc="' + i + '" title="Word (.docx): Times New Roman 13, lề trái 3 cm, phải/trên/dưới 2 cm, có biểu đồ">⬇ Word</button><button type="button" data-rxls="' + i + '">⬇ Excel</button>'
@@ -23099,6 +23143,7 @@ RP_CT['ls-may'] = function (code, label){
       else if (g('data-copy') != null){ copyMsg(Number(g('data-copy')), t, false); }
       else if (g('data-copydata') != null){ copyMsg(Number(g('data-copydata')), t, true); }
       else if (g('data-deep') != null){ deepen(Number(g('data-deep'))); }
+      else if (g('data-fresh') != null){ freshAsk(Number(g('data-fresh'))); }
       else if (g('data-rep') != null){ var mi = ST.msgs[Number(g('data-rep'))]; if (mi){ mi.showRep = true; render(true); } }
       else if (g('data-rprev') != null){ repAction(Number(g('data-rprev')), 'prev', t); }
       else if (g('data-rdoc') != null){ repAction(Number(g('data-rdoc')), 'doc', t); }
@@ -23249,16 +23294,39 @@ RP_CT['ls-may'] = function (code, label){
     ask(String(u.content || ''), { deep: true, histUpTo: i - 1 });
   }
 
+  /** Trí nhớ phiên: bản ghi (mem) của KEEP_MEM câu trả lời gần nhất, cũ → mới. Phần văn bản báo cáo chỉ gửi ở bản mới nhất có báo cáo (chỉ bản đó cần để chỉnh sửa). */
+  function memsOf(list){
+    var arr = [], now = Date.now();
+    list.forEach(function (m){
+      if (m.role === 'assistant' && !m.err && m.mem && m.mem.v === 1 && m.mem.at && now - m.mem.at < MEM_TTL) arr.push(m.mem);
+    });
+    arr = arr.slice(-KEEP_MEM);
+    var seen = false;
+    return arr.slice().reverse().map(function (x){
+      if (x.report){ if (seen) return Object.assign({}, x, { report: null }); seen = true; }
+      return x;
+    }).reverse();
+  }
+
+  /** Nút "Hỏi mới": hỏi lại đúng câu đó nhưng KHÔNG kế thừa các lượt trước (máy chủ bỏ cả bộ nhớ phiên lẫn lịch sử). */
+  function freshAsk(i){
+    var u = ST.msgs[i - 1];
+    if (!u || u.role !== 'user') return;
+    ask(String(u.content || ''), { fresh: true, histUpTo: i - 1 });
+  }
+
   function ask(q, opt){
     opt = opt || {};
     q = String(q || '').trim();
     if (!q || ST.busy || !ready()) return false;
     if (ST.loadedFor !== who()) load();
     var upto = opt.histUpTo != null ? opt.histUpTo : ST.msgs.length;
-    var hist = ST.msgs.slice(0, upto).filter(function (m){ return !m.err; }).slice(-SEND_HIST)
-      .map(function (m){ return { role: m.role, content: m.content }; });
+    var prior = ST.msgs.slice(0, upto).filter(function (m){ return !m.err; });
+    var hist = opt.fresh ? [] : prior.slice(-SEND_HIST).map(function (m){ return { role: m.role, content: m.content }; });
+    var mems = opt.fresh ? [] : memsOf(prior);
     var um = { role: 'user', content: q };
     if (opt.deep) um.deep = true;
+    if (opt.fresh) um.fresh = true;
     ST.msgs.push(um);
     save();
     ST.busy = true; ST.t0 = Date.now();
@@ -23267,14 +23335,17 @@ RP_CT['ls-may'] = function (code, label){
     ST.timer = setInterval(tick, 1000);
 
     var body = { action: 'chatAsk', question: q, history: hist };
+    if (mems.length) body.mem = mems;
     if (opt.deep) body.deep = true;
+    if (opt.fresh) body.fresh = true;
     call(body).then(function (d){
       if (d && d.ok && d.answer){
         ST.msgs.push({
           role: 'assistant', content: String(d.answer), tools: d.tools || [], sources: d.sources || [], ms: d.ms || 0,
           copy: d.copy ? String(d.copy) : '', engine: d.engine || '', provider: d.provider || '', model: d.model || '',
           estimated: !!d.estimated, tables: Array.isArray(d.tables) ? d.tables : [], charts: Array.isArray(d.charts) ? d.charts : [], report: d.report || null,
-          canDeepen: !!d.canDeepen, aiError: d.aiError ? String(d.aiError) : ''
+          canDeepen: !!d.canDeepen, aiError: d.aiError ? String(d.aiError) : '',
+          mem: (d.memV && d.mem && d.mem.v === 1) ? d.mem : null, inherit: d.inherit || null, noMem: !d.memV       // noMem: máy chủ chưa nạp CHATBOT.gs có trí nhớ phiên
         });
       } else {
         var t;
@@ -23328,6 +23399,7 @@ RP_CT['ls-may'] = function (code, label){
     if (m.engine === 'duo') return '<span class="cb-eng cb-eng-d" title="Bot quy tắc tra số liệu bằng code, ' + mdl + ' phân tích trên đúng số đó">⚙ Bot quy tắc + 🤖 ' + mdl + '</span>';
     if (m.engine === 'gpt') return '<span class="cb-eng cb-eng-g" title="' + mdl + ' tự gọi các công cụ tra dữ liệu">🤖 ' + mdl + '</span>';
     if (m.engine === 'rules') return '<span class="cb-eng" title="Trả lời bằng quy tắc trong hệ thống, không gọi AI">⚙ Bot quy tắc</span>';
+    if (m.engine === 'mem') return '<span class="cb-eng" title="Dựng lại từ bộ nhớ của cuộc trò chuyện, không gọi AI nên không tốn token">🧠 Bộ nhớ phiên</span>';
     return '';
   }
 
@@ -23336,6 +23408,10 @@ RP_CT['ls-may'] = function (code, label){
     var bits = [];
     var eg = engLabel(m);
     if (eg) bits.push(eg);
+    if (m.inherit){
+      var ik = m.inherit.kind === 'edit' ? 'Chỉnh sửa báo cáo trước' : (m.inherit.kind === 'rebuild' ? 'Dựng lại báo cáo trước' : (m.inherit.kind === 'report' ? 'Lập báo cáo từ câu hỏi trước' : 'Nối tiếp câu trước'));
+      bits.push('<span class="cb-eng cb-eng-d" title="Mình dùng lại phạm vi, số liệu và nội dung của lượt trước' + (m.inherit.from ? ': ' + esc(m.inherit.from) : '') + ' — không phải hỏi lại từ đầu">↩ ' + ik + '</span>');
+    }
     if (m.estimated) bits.push('<span class="cb-est" title="Có số kWh ƯỚC TÍNH cho máy mất truyền thông (giờ kỹ thuật nhập tay × công suất thiết kế), không phải số đo">≈ có số ước tính</span>');
     if (m.tools && m.tools.length) bits.push('Đã tra: ' + m.tools.map(function (t){ return esc(t.label || t.name); }).join(', '));
     if (m.sources && m.sources.length) bits.push('Nguồn: ' + m.sources.map(esc).join(' · '));
@@ -23345,7 +23421,8 @@ RP_CT['ls-may'] = function (code, label){
     return (bits.length ? bits.join(' — ') : '') + '<button type="button" data-copy="' + i + '">Sao chép</button>'
       + (m.copy ? '<button type="button" data-copydata="' + i + '" title="Chép bảng số liệu đã tính sẵn để dán sang ChatGPT phân tích">Sao chép dữ liệu</button>' : '')
       + (canMakeRep ? '<button type="button" data-rep="' + i + '" class="cb-b2" title="Xuất câu trả lời + bảng số liệu ra Word / Excel / In — không tốn lượt AI">📄 Xuất báo cáo</button>' : '')
-      + (m.canDeepen ? '<button type="button" data-deep="' + i + '" class="cb-b2" title="Đưa câu hỏi này cho AI phân tích, dựa trên đúng số liệu bot quy tắc vừa tra">🔎 Phân tích sâu</button>' : '');
+      + (m.canDeepen ? '<button type="button" data-deep="' + i + '" class="cb-b2" title="Đưa câu hỏi này cho AI phân tích, dựa trên đúng số liệu bot quy tắc vừa tra">🔎 Phân tích sâu</button>' : '')
+      + (m.inherit ? '<button type="button" data-fresh="' + i + '" class="cb-b2" title="Hỏi lại câu này như một cuộc trò chuyện mới, không kế thừa các lượt trước">↺ Hỏi mới</button>' : '');
   }
 
   function helloPriv(){
@@ -23377,13 +23454,16 @@ RP_CT['ls-may'] = function (code, label){
         + (priv ? '<small>' + priv + '</small>' : '') + '</div>'
         + '<div class="cb-chips">' + chips.map(function (s){ return '<button type="button" class="cb-chip" data-q="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div>';
     }
+    var lastAns = -1;
+    ST.msgs.forEach(function (m, i){ if (m.role === 'assistant' && !m.err) lastAns = i; });
     ST.msgs.forEach(function (m, i){
       if (m.role === 'user'){
-        h += '<div class="cb-m cb-u"><div class="cb-b">' + esc(m.content) + '</div>' + (m.deep ? '<div class="cb-meta cb-tag">🔎 phân tích sâu</div>' : '') + '</div>';
+        h += '<div class="cb-m cb-u"><div class="cb-b">' + esc(m.content) + '</div>' + (m.deep ? '<div class="cb-meta cb-tag">🔎 phân tích sâu</div>' : '') + (m.fresh ? '<div class="cb-meta cb-tag">↺ hỏi mới, không kế thừa</div>' : '') + '</div>';
       } else {
         h += '<div class="cb-m cb-a' + (m.err ? ' cb-err' : '') + '"><div class="cb-b">' + (m.err ? '<p>' + esc(m.content) + '</p>' : md(m.content)) + '</div>';
         if (!m.err){
           if (m.aiError) h += '<div class="cb-meta cb-aierr">⚠ Phần AI không chạy được nên đây là kết quả của bot quy tắc: ' + esc(m.aiError) + '</div>';
+          if (m.noMem && i === lastAns) h += '<div class="cb-rep-w">⚠ Máy chủ đang chạy CHATBOT.gs bản cũ nên chưa nhớ được các lượt trước (báo cáo đã lập, phạm vi, số đã tra): mỗi câu hỏi sẽ bị làm lại từ đầu. Nạp lại file CHATBOT.gs, rồi Triển khai → Quản lý bản triển khai → Phiên bản mới.</div>';
           if (m.report || m.showRep) h += repCard(m, i);
           else if (m.hadRep) h += '<div class="cb-meta">Báo cáo / bảng của câu này đã được dọn khỏi bộ nhớ trình duyệt — hỏi lại để xuất.</div>';
           h += '<div class="cb-meta">' + metaOf(m, i) + '</div>';
