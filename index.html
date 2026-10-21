@@ -1035,7 +1035,7 @@ function navEfficiencyToCode(code){
  * chốt chống-bấm-hai-lần _postFlight vẫn giữ nguyên.
  */
 /* Action đi qua POST nhưng KHÔNG đổi dữ liệu → không hiện lớp chặn, không báo "đã ghi". */
-const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','bdTransfers','materialCost','smartgenStatus',
+const POST_READONLY = ['bdHistory','bdProfile','bdRegistry','bdTransfers','materialCost','smartgenStatus','alarmExplain','dcLogPreview',
                        'authMe','authList','authLogin','authRegister',
                        /* Chẩn đoán số liệu tháng + danh sách/xem trước Zalo: đọc và tính, không ghi.
                         * Phải khớp EG_READONLY_ACTIONS bên Code.gs, nếu không chức danh chỉ xem
@@ -1408,7 +1408,7 @@ function applyQlvt_(d){
     minOv:d.minOv||{ headers:[], rows:[] },
     models:d.models||Q.models,
     normLinks:d.normLinks||{},
-    stock:d.stock, sim:d.sim||Q.sim, simLists:d.simLists||Q.simLists||{}, alarmDict:d.alarmDict,
+    stock:d.stock, sim:d.sim||Q.sim, simLists:d.simLists||Q.simLists||{}, alarmDict:d.alarmDict, alarmScan:d.alarmScan||null, alarmLink:d.alarmLink||{ headers:[], rows:[] },
     contacts:d.contacts, maintLog:d.maintLog, moveLog:d.moveLog, alarmLog:d.alarmLog,
     moveAudit:d.moveAudit||{ headers:[], rows:[], total:0 },
     alerts:d.alerts||Q.alerts, cfg:d.cfg||{},
@@ -4026,6 +4026,11 @@ async function loadTransfers_(){
     S.transfers.rows    = d.rows || [];
     S.transfers.loaded  = true;
     S.transfers.at      = new Date().toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'});
+    /* Dòng cũ ghi trước khi sổ có cột ID thì chưa sửa/xoá được (không có gì để trỏ vào). Cấp ID một lần rồi nạp lại. */
+    if (dclCanEdit_() && !S.transfers.idTried && S.transfers.rows.some(r => !String(r['ID']||'').trim())){
+      S.transfers.idTried = true;
+      try { const e = await apiPost({ action:'dcLogEnsureIds' }); if (e && e.ok && e.assigned){ S.transfers.loading = false; return loadTransfers_(); } } catch(_e){}
+    }
     if (d.thieuSheet)
       S.transfers.err = 'Chưa có sheet "22. Lịch sử điều chuyển máy". Chạy setupBaoDuong() trong Apps Script để dựng.';
   } catch(e){
@@ -4186,7 +4191,7 @@ function moveCell_(r, oldH, newH){
 function moveRowsHtml_(){
   const rows = moveFiltered_();
   if (!rows.length)
-    return '<tr><td colspan="8"><div class="empty">Không có lần điều chuyển nào khớp bộ lọc.</div></td></tr>';
+    return '<tr><td colspan="9"><div class="empty">Không có lần điều chuyển nào khớp bộ lọc.</div></td></tr>';
   return rows.map(r => {
     const code = String(r['Mã máy']||r['Mã máy mới']||'').trim();
     const odo  = r['ODO khi chuyển (h)'];
@@ -4200,8 +4205,149 @@ function moveRowsHtml_(){
       <td style="text-align:right">${(odo===''||odo==null)?'—':nfd_(bdN_(odo))}</td>
       <td style="font-size:11px">${esc(r['Người cập nhật']||'—')}
         ${r['Ghi chú'] ? `<div style="font-size:10px;color:var(--mu)">${esc(r['Ghi chú'])}</div>` : ''}</td>
+      <td style="white-space:nowrap;text-align:right">${dclBtns_(r)}</td>
     </tr>`;
   }).join('');
+}
+
+/* ----------------------------------------------------------------------------
+ *  SỬA / XOÁ DÒNG LỊCH SỬ ĐIỀU CHUYỂN  (server: dclPlan_ / dclApply_ trong Code.gs)
+ *  Luôn XEM TRƯỚC tác động (cả Sheet 1 lẫn các dòng kề trong chuỗi) rồi mới xác nhận. Mọi lần sửa/xoá
+ *  được ghi vào sheet "40. Lịch sử sửa/xoá điều chuyển" kèm nguyên bản dòng cũ.
+ * -------------------------------------------------------------------------- */
+function dclCanEdit_(){ return !!(S.perm && S.perm.editData); }
+function dclRowById_(id){ return (S.transfers.rows||[]).find(r => String(r['ID']||'').trim() === id); }
+function dclBtns_(r){
+  if (!dclCanEdit_()) return '';
+  const id = String(r['ID']||'').trim();
+  if (!id) return '<span class="b bmu" title="Dòng cũ chưa có ID — bấm ↻ Nạp lại để hệ thống cấp ID">…</span>';
+  return `<button class="btn bg-gr sm" title="Sửa dòng này" onclick="dclShowEdit_('${esc(id)}')">✎</button>
+          <button class="btn bg-r sm" title="Xoá dòng này" onclick="dclShowDelete_('${esc(id)}', true)">🗑</button>`;
+}
+function dclList_(arr, cls){
+  return (arr && arr.length) ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;font-size:11.5px;line-height:1.6;${cls}">${arr.map(x => '• '+esc(x)).join('<br>')}</div>` : '';
+}
+async function dclPreview_(payload){
+  try { return await apiPost(Object.assign({ action:'dcLogPreview' }, payload)); }
+  catch(e){ return { ok:false, error:e.message }; }
+}
+async function dclAfter_(res, what){
+  closeOv();
+  try { await reloadAll(); } catch(e){}
+  reloadTransfers_();
+  toast('✓ Đã '+what+' dòng điều chuyển'+((res.synced||[]).length ? ' · đồng bộ '+res.synced.length+' mục' : ''), 'ok');
+  (res.warnings||[]).forEach(w => toast('⚠ '+w, 'err'));
+}
+
+async function dclShowDelete_(id, revert){
+  const r = dclRowById_(id); if (!r){ toast('Không thấy dòng này, hãy nạp lại','err'); return; }
+  let pv = await dclPreview_({ mode:'delete', id, revertMaster: !!revert });
+  if (revert && pv && pv.ok && !pv.valid && !pv.canRevert){ revert = false; pv = await dclPreview_({ mode:'delete', id, revertMaster:false }); }
+  if (!pv || !pv.ok){ toast((pv && pv.error) || 'Không xem trước được','err'); return; }
+  const note = pv.canRevert
+    ? `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:12.5px;cursor:pointer">
+         <input type="checkbox" id="dclRevert" ${revert?'checked':''} onchange="dclShowDelete_('${esc(id)}', this.checked)" style="margin-top:3px">
+         <span><b>↩ Hoàn tác Sheet 1</b> về giá trị "cũ" của dòng này. Dùng khi dòng này là lệnh ghi nhầm
+         (máy thực tế vẫn ở chỗ cũ). Bỏ chọn nếu Sheet 1 đang ĐÚNG và chỉ muốn bỏ dòng nhật ký.</span></label>`
+    : (pv.isDc
+        ? `<div style="margin-top:10px;font-size:11.5px;color:var(--mu)">Dòng này do <b>Đổi máy / Thu hồi / Lắp đặt</b> tạo ra, kéo theo mốc bảo dưỡng, giờ máy, SIM… nên chỉ xoá được dòng nhật ký — Sheet 1 và các mốc giữ nguyên.</div>`
+        : `<div style="margin-top:10px;font-size:11.5px;color:var(--mu)">Máy này còn dòng điều chuyển SAU dòng này nên Sheet 1 giữ nguyên; các giá trị cũ/mới của dòng kề được nối lại cho liền mạch.</div>`);
+  openOv(`
+    <div class="mh"><div><h2>🗑 Xoá dòng điều chuyển</h2>
+      <p>${esc(pv.code||'')} · ID ${esc(id)}</p></div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div class="fsec"><div style="font-size:12.5px;line-height:1.7">
+        <b>${esc(String(r['Ngày ghi nhận']||'').slice(0,16))}</b> · ${esc(r['Người cập nhật']||'')}<br>
+        ${esc(r['Nội dung thay đổi']||'(không có nội dung)')}</div>
+        ${note}
+        ${dclList_(pv.lines, 'background:#f0fdf4;color:#166534')}
+        ${dclList_(pv.warnings, 'background:#fffbeb;color:#92400e')}
+        ${dclList_(pv.errors, 'background:#fef2f2;color:#991b1b')}
+        <div class="iw" style="margin-top:12px"><div class="il">Lý do xoá (lưu vào nhật ký kiểm toán)</div>
+          <input class="inp" id="dclReason" placeholder="VD: lưu nhầm do form chưa tải xong"></div>
+      </div>
+    </div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Hủy</button>
+      <button class="btn bg-r" ${pv.valid?'':'disabled'} onclick="dclDoDelete_('${esc(id)}')">🗑 Xoá dòng này</button></div>`, 'dclDel:'+id);
+}
+async function dclDoDelete_(id){
+  const revert = !!($('dclRevert') && $('dclRevert').checked);
+  const reason = (($('dclReason')||{}).value||'').trim();
+  try {
+    const res = await apiPost({ action:'dcLogDelete', id, revertMaster: revert, reason });
+    if (!res.ok) throw new Error(res.error);
+    await dclAfter_(res, 'xoá');
+  } catch(e){ toast('Lỗi xoá: '+e.message,'err'); }
+}
+
+const DCL_PAIRS_ = [['Loại hình'],['Đơn vị hợp tác'],['Trang trại'],['Khu vực'],['Tỉnh thành'],['Trạng thái']];
+async function dclShowEdit_(id){
+  const r = dclRowById_(id); if (!r){ toast('Không thấy dòng này, hãy nạp lại','err'); return; }
+  const pv0 = await dclPreview_({ mode:'edit', id, patch:{} });          // chỉ để biết latest / isDc (valid=false vì chưa đổi gì)
+  if (!pv0 || pv0.latest === undefined){ toast((pv0 && pv0.error) || 'Không đọc được thông tin dòng','err'); return; }
+  const dt = String(r['Ngày ghi nhận']||'').slice(0,16).replace(' ','T');
+  const inp = (k, w) => `<input class="inp" data-k="${esc(k)}" value="${esc(r[k]==null?'':r[k])}" ${w||''}>`;
+  openOv(`
+    <div class="mh"><div><h2>✎ Sửa dòng điều chuyển</h2>
+      <p>${esc(pv0.code||'')} · ID ${esc(id)}${pv0.isDc?' · tạo bởi Đổi máy/Thu hồi/Lắp đặt':''}</p></div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div class="fsec">
+        <div class="fgrid fg3">
+          <div class="iw"><div class="il">Ngày giờ ghi nhận</div>
+            <input class="inp" id="dclDate" type="datetime-local" value="${esc(dt)}"></div>
+          <div class="iw"><div class="il">ODO khi chuyển (h)</div>${inp('ODO khi chuyển (h)','type="number" step="any" min="0"')}</div>
+        </div>
+      </div>
+      <div class="fsec">
+        <div class="fsh"><div class="fst">Giá trị cũ → mới của từng mục</div></div>
+        <div class="fgrid fg2">
+          ${DCL_PAIRS_.map(([n]) => `
+            <div class="iw"><div class="il">${esc(n)} · cũ</div>${inp(n+' cũ')}</div>
+            <div class="iw"><div class="il">${esc(n)} · mới</div>${inp(n+' mới')}</div>`).join('')}
+        </div>
+        ${pv0.canRevert ? `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:12.5px;cursor:pointer">
+          <input type="checkbox" id="dclSync" checked style="margin-top:3px">
+          <span><b>Đồng bộ Sheet 1</b>: đây là lần điều chuyển mới nhất của máy, nếu sửa các ô "mới" thì Sheet 1 cũng đặt theo giá trị vừa sửa
+          (chỉ ô nào Sheet 1 còn đúng bằng giá trị mới cũ của dòng này).</span></label>`
+          : `<div style="margin-top:10px;font-size:11.5px;color:var(--mu)">${pv0.isDc
+              ? 'Dòng Đổi máy/Thu hồi/Lắp đặt: Sheet 1 không đồng bộ tự động; các dòng kề trong chuỗi vẫn được nối lại.'
+              : 'Máy này còn dòng điều chuyển sau dòng này: Sheet 1 giữ nguyên, các dòng kề được nối lại cho liền mạch.'}</div>`}
+      </div>
+      <div class="fsec">
+        <div class="iw"><div class="il">Ghi chú</div><textarea class="ta" data-k="Ghi chú">${esc(r['Ghi chú']||'')}</textarea></div>
+        <div class="iw" style="margin-top:8px"><div class="il">Lý do sửa (lưu vào nhật ký kiểm toán)</div>
+          <input class="inp" id="dclReason" placeholder="VD: nhập sai trại"></div>
+      </div>
+    </div>
+    <div class="mf"><button class="btn bg-gr" onclick="closeOv()">Hủy</button>
+      <button class="btn bg-g" onclick="dclDoEdit_('${esc(id)}')">💾 Xem tác động &amp; lưu</button></div>`, 'dclEdit:'+id);
+}
+async function dclDoEdit_(id){
+  const r = dclRowById_(id); if (!r) return;
+  const patch = {};
+  document.querySelectorAll('#mdl [data-k]').forEach(el => {
+    const k = el.getAttribute('data-k');
+    const nv = String(el.value==null?'':el.value).trim();
+    if (nv !== String(r[k]==null?'':r[k]).trim()) patch[k] = nv;
+  });
+  const dEl = $('dclDate');
+  if (dEl){
+    const nd = String(dEl.value||'').replace('T',' ');
+    if (nd && nd !== String(r['Ngày ghi nhận']||'').slice(0,16)) patch['Ngày ghi nhận'] = nd;
+  }
+  if (!Object.keys(patch).length){ toast('Chưa đổi gì so với dòng hiện tại','info'); return; }
+  const syncMaster = !!($('dclSync') && $('dclSync').checked);
+  const reason = (($('dclReason')||{}).value||'').trim();
+  const pv = await dclPreview_({ mode:'edit', id, patch, syncMaster });
+  if (!pv || !pv.ok || !pv.valid){ toast(((pv && (pv.errors||[]).join(' ')) || (pv && pv.error)) || 'Không hợp lệ','err'); return; }
+  const msg = 'Sẽ thực hiện:\n\n'+pv.lines.map(x => '• '+x).join('\n')+
+              ((pv.warnings||[]).length ? '\n\nLưu ý:\n'+pv.warnings.map(x => '• '+x).join('\n') : '')+'\n\nTiếp tục lưu?';
+  if (!confirm(msg)) return;
+  try {
+    const res = await apiPost({ action:'dcLogEdit', id, patch, syncMaster, reason });
+    if (!res.ok) throw new Error(res.error);
+    await dclAfter_(res, 'sửa');
+  } catch(e){ toast('Lỗi sửa: '+e.message,'err'); }
 }
 
 function masterMoveTabHtml_(){
@@ -4229,16 +4375,16 @@ function masterMoveTabHtml_(){
       <div class="ch"><h3>Lịch sử điều chuyển · sheet "22. Lịch sử điều chuyển máy"</h3>
         <span class="b bmu">nạp lúc ${esc(S.transfers.at)}</span></div>
       <div class="cb" style="padding:8px 16px 0;font-size:11px;color:var(--mu);line-height:1.6">
-        Sổ chỉ THÊM dòng, không sửa dòng cũ. Mỗi dòng là một lần máy đổi đơn vị, đổi trại,
-        đổi khu vực, đổi trạng thái hoặc đổi mã — ghi kèm số giờ ODO tại thời điểm chuyển
-        để đối chiếu chi phí vật tư giữa hai bên.
+        Mỗi dòng là một lần máy đổi đơn vị, đổi trại, đổi khu vực, đổi trạng thái hoặc đổi mã — ghi kèm số giờ ODO
+        tại thời điểm chuyển để đối chiếu chi phí vật tư giữa hai bên. Dòng ghi nhầm sửa / xoá được bằng nút ✎ 🗑
+        (xem trước tác động, đồng bộ lại Sheet 1 và các dòng kề, mọi lần đều lưu nguyên bản ở sheet "40. Lịch sử sửa/xoá điều chuyển").
       </div>
       <div class="tw" style="max-height:66vh"><table>
         <thead><tr>
           <th>Ngày ghi nhận</th><th>Mã máy</th>
           <th>Đơn vị: cũ → mới</th><th>Trang trại: cũ → mới</th>
           <th>Khu vực</th><th>Trạng thái</th>
-          <th style="text-align:right">ODO (h)</th><th>Người ghi</th>
+          <th style="text-align:right">ODO (h)</th><th>Người ghi</th><th></th>
         </tr></thead>
         <tbody id="moveTableBody">${moveRowsHtml_()}</tbody>
       </table></div>
@@ -4469,6 +4615,16 @@ function openMachineForm(maCode){
   `);
   setTimeout(()=>['fC','fD','fF','fG','fH'].forEach(id=>{ const el=$(id); if (el) attachAutocomplete(el); }), 10);
   previewMachineDesign();
+  /* BẢN CHỤP LÚC MỞ FORM — gửi kèm khi lưu để server chỉ ghi ô người dùng THẬT SỰ đổi.
+   * Chụp từ DOM ngay sau khi dựng, TRƯỚC khi nháp được khôi phục (setDraftContext chạy sau ~30ms),
+   * nên ô nào nháp/người dùng đổi so với lúc mở đều bị phát hiện. */
+  window._machBase = isNew ? null : (function(){
+    const b = { master:{}, design:{} };
+    ['B','C','D','E','F','G','H','I','J','K','L','M','N','O'].forEach(L=>{ const el=$('f'+L); if (el) b.master[L]=el.value; });
+    ['fDsgStart','fDsgEnd','fDsgRated'].forEach(id=>{ const el=$(id); if (el) b.design[id]=el.value; });
+    b.code = maCode;
+    return b;
+  })();
   const dk = 'machine:'+(maCode||'new');
   setDraftContext(dk, ['fB','fC','fD','fE','fF','fG','fH','fI','fJ','fK','fL','fM','fN','fO','fDsgStart','fDsgEnd','fDsgRated']);
 }
@@ -4514,7 +4670,9 @@ async function saveMachineForm(isNew, oldCode){
 
   /* Định mức chỉ gửi khi có ít nhất 1 ô được nhập — tránh việc mở form ra sửa số điện thoại
    * rồi vô tình ghi rỗng đè lên định mức đang đúng trên Sheet. */
-  const hasDesign = sMin != null || eMin != null || ratedRaw !== '';
+  const _B = (!isNew && window._machBase && window._machBase.code === oldCode) ? window._machBase : null;
+  const designChanged = !_B || ['fDsgStart','fDsgEnd','fDsgRated'].some(id => String((($(id)||{}).value)||'') !== String(_B.design[id] ?? ''));
+  const hasDesign = (sMin != null || eMin != null || ratedRaw !== '') && designChanged;
   const design = hasDesign ? {
     gioBatDau:  sMin != null ? fmtHHMM_(sMin) : '',
     gioKetThuc: eMin != null ? fmtHHMM_(eMin) : '',
@@ -4532,9 +4690,27 @@ async function saveMachineForm(isNew, oldCode){
   if (isNew && !hasDesign &&
       !confirm(`Thêm máy "${code}" mà chưa nhập định mức thiết kế?\n\nMáy sẽ có dòng ở Sheet 5 nhưng chưa đánh giá được % đạt giờ chạy / công suất cho tới khi nhập giờ bắt đầu, giờ kết thúc và công suất TK.`)) return;
 
+  /* Liệt kê ô đã đổi so với lúc mở form. Đổi vị trí / trạng thái sẽ tự ghi 1 dòng "Lịch sử điều chuyển" nên phải cho
+   * người dùng nhìn thấy trước khi lưu — nếu có ô nào đổi mà mình không chủ ý (form cũ, nháp cũ) thì dừng được ngay. */
+  const LBL = { B:'Mã máy', C:'Loại hình', D:'Đơn vị hợp tác', E:'Trại', F:'Khu vực', G:'Tỉnh thành', H:'Trạng thái' };
+  if (_B){
+    const diff = Object.keys(master).filter(L => String(master[L]??'').trim() !== String(_B.master[L]??'').trim());
+    if (!diff.length && !hasDesign){ toast('Không có gì thay đổi so với lúc mở form','info'); closeOv(); return; }
+    const pos = diff.filter(L => LBL[L] && L !== 'B');
+    if (pos.length && !confirm('Bạn đang đổi vị trí / trạng thái của '+code+':\n\n'+
+        pos.map(L => '• '+LBL[L]+': '+(String(_B.master[L]||'').trim()||'(trống)')+' → '+(String(master[L]||'').trim()||'(trống)')).join('\n')+
+        '\n\nHệ thống sẽ ghi 1 dòng vào "Lịch sử điều chuyển máy".\nNếu bạn KHÔNG định đổi những mục này (chỉ sửa link bản đồ, ghi chú…), bấm Hủy rồi mở lại form sau khi dữ liệu đã tải xong.')) return;
+  }
   setStatus(true,'Đang lưu…');
   try {
-    const res = await apiPost({ action:'saveMachineAll', isNew, maCode: oldCode||'', master, design, tracking, user:S.user.name });
+    let res = await apiPost({ action:'saveMachineAll', isNew, maCode: oldCode||'', master, design, tracking, base: _B ? _B.master : undefined, user:S.user.name });
+    if (res && res.conflict){
+      setStatus(false,'');
+      const lines = (res.conflicts||[]).map(c => '• '+c.label+': lúc mở form "'+c.base+'" · hiện trên hệ thống "'+c.current+'" · bạn đang đặt "'+c.mine+'"').join('\n');
+      if (!confirm('Dữ liệu trên hệ thống đã thay đổi kể từ lúc bạn mở form:\n\n'+lines+'\n\nBấm OK để GHI ĐÈ bằng giá trị bạn đang nhập, hoặc Hủy để quay lại (mở lại form để lấy dữ liệu mới).')) return;
+      setStatus(true,'Đang lưu…');
+      res = await apiPost({ action:'saveMachineAll', isNew, maCode: oldCode||'', master, design, tracking, base: _B ? _B.master : undefined, force:true, user:S.user.name });
+    }
     if (!res.ok) throw new Error(res.error);
     clearDraft('machine:'+(isNew?'new':(oldCode||code)));
     clearDraftContext();
@@ -11238,7 +11414,7 @@ const Q = {
    * simLists: danh sách chọn (mục đích, nhà mạng, loại SIM, chu kỳ, trạng thái) khớp 1-1 với ô thả xuống trên Sheet.
    * simSel / alSel: các dòng đang được tích chọn ở bảng Đề xuất thanh toán / nhật ký cảnh báo máy. */
   sim:{ exists:false, legacy:false, headers:[], rows:[] }, simLists:{}, simSel:new Set(), alSel:new Set(),
-  alarmDict:{ headers:[], rows:[] }, contacts:{ headers:[], rows:[] },
+  alarmDict:{ headers:[], rows:[] }, alarmScan:null, alarmLink:{ headers:[], rows:[] }, contacts:{ headers:[], rows:[] },
   anomalyOk:{ keys:[] },          // khoá các điểm dữ liệu đã xác nhận đúng — Sheet 24
   kiemKe:null,                    // { log, alerts, cfg, loaiBu } — Sheet 35, QLVT.gs mục 12
   dongBo:null,                    // báo cáo đồng bộ Sheet 1→2→14 — QLVT.gs mục 13
@@ -15988,8 +16164,14 @@ function viewAlarm(){
       <td style="font-size:11px">${esc(a.time)}</td>
       <td><span class="mm">${esc(a.code)}</span></td>
       ${farmCell_(a.code)}
-      <td style="font-size:11px;white-space:normal;min-width:200px">${esc(r['Nội dung gốc'] || '')}
-        ${alDictName_(r['Mã alarm']) ? `<div style="color:var(--mu)">${esc(r['Mã alarm'])} · ${esc(alDictName_(r['Mã alarm']))}</div>` : ''}</td>
+      <td style="font-size:11px;white-space:normal;min-width:240px">
+        ${r['Tên tiếng Việt'] ? `<div style="font-weight:600">${esc(r['Tên tiếng Việt'])}${r['Cấp'] ? ` <span style="font-weight:400;color:var(--mu)">· ${esc(r['Cấp'])}</span>` : ''}</div>` : ''}
+        <div style="${r['Tên tiếng Việt'] ? 'color:var(--mu)' : ''}">${esc(r['Nội dung gốc'] || '')}</div>
+        ${r['Mã alarm'] ? `<div style="color:var(--mu)">${esc(r['Mã alarm'])}${alDictName_(r['Mã alarm']) && !r['Tên tiếng Việt'] ? ' · ' + esc(alDictName_(r['Mã alarm'])) : ''}
+          <button class="btn bg-gr sm" style="padding:0 6px;margin-left:4px" onclick="alExplain(${a.row})" title="Giải thích lỗi: nguyên nhân thường gặp và cách xử lý">ℹ Giải thích</button></div>` : ''}
+        ${r['Thông số Data'] ? `<div style="margin-top:3px;font-family:var(--mono);color:#0b5c8f;white-space:pre-line">📊 ${esc(r['Thông số Data'])}</div>` : ''}
+        ${r['Khuyến cáo xử lý'] ? `<div style="margin-top:3px;white-space:pre-line;color:#92400e">➜ ${esc(r['Khuyến cáo xử lý'])}${r['Nguồn khuyến cáo'] ? ` <span style="color:var(--mu)">(${esc(r['Nguồn khuyến cáo'])})</span>` : ''}</div>` : ''}
+      </td>
       <td><span class="b ${lv.cls}">${esc(r['Mức độ'] || lv.label)}</span></td>
       <td>${a.zalo ? '<span class="b bg" title="' + esc(r['Người nhận'] || '') + '">đã gửi</span>' : '<span class="b bmu">—</span>'}</td>
       <td><span class="b ${stt.cls}">${esc(a.state)}</span>
@@ -16009,14 +16191,16 @@ function viewAlarm(){
       <h3>${f.alDict ? '▾' : '▸'} Danh sách cảnh báo đang theo dõi · ${dict.length} loại</h3>
       <span class="b bmu">Sửa ở Sheet “17. Danh sách cảnh báo nguy hiểm” — từ khoá khớp với nội dung Smartgen báo về</span></div>
     ${f.alDict ? `<div class="tw" style="max-height:40vh"><table><thead><tr>
-        <th>Mã</th><th>Tên cảnh báo</th><th>Từ khoá khớp</th><th>Mức độ</th><th>Gửi Zalo</th><th>Hành động yêu cầu</th></tr></thead>
+        <th>Mã</th><th>Tên cảnh báo</th><th>Từ khoá khớp</th><th>Khi dừng máy</th><th>Khi chỉ cảnh báo</th><th>Gửi Zalo</th><th>Hành động yêu cầu</th></tr></thead>
       <tbody>${dict.map(d => `<tr>
-        <td><span class="mm">${esc(d['Mã alarm'] || '')}</span></td><td style="font-size:11px">${esc(d['Tên cảnh báo (Smartgen)'] || '')}</td>
+        <td><span class="mm">${esc(d['Mã alarm'] || '')}</span></td>
+        <td style="font-size:11px">${d['Tên tiếng Việt'] ? `<b>${esc(d['Tên tiếng Việt'])}</b><div style="color:var(--mu)">${esc(d['Tên cảnh báo (Smartgen)'] || '')}</div>` : esc(d['Tên cảnh báo (Smartgen)'] || '')}</td>
         <td style="font-size:11px;font-family:var(--mono)">${esc(d['Từ khoá khớp'] || '')}</td>
         <td><span class="b ${AL_LV[alLevelKey_(d['Mức độ'])].cls}">${esc(d['Mức độ'] || '')}</span></td>
+        <td>${d['Mức độ khi chỉ cảnh báo'] ? `<span class="b ${AL_LV[alLevelKey_(d['Mức độ khi chỉ cảnh báo'])].cls}">${esc(d['Mức độ khi chỉ cảnh báo'])}</span>` : '<span class="b bmu">—</span>'}</td>
         <td>${String(d['Gửi Zalo'] || '').toUpperCase() === 'TRUE' ? '<span class="b bg">có</span>' : '<span class="b bmu">không</span>'}</td>
         <td style="font-size:11px;white-space:normal">${esc(d['Hành động yêu cầu'] || '')}</td></tr>`).join('')
-        || '<tr><td colspan="6"><div class="empty">Chưa cấu hình cảnh báo nào ở Sheet 17.</div></td></tr>'}</tbody></table></div>` : ''}</div>`;
+        || '<tr><td colspan="7"><div class="empty">Chưa cấu hình cảnh báo nào ở Sheet 17 — Admin bấm “Dựng sheet cảnh báo” bên trên.</div></td></tr>'}</tbody></table></div>` : ''}</div>`;
 
   return `
     <div class="ph">
@@ -16026,6 +16210,7 @@ function viewAlarm(){
     </div>
 
     <div class="krow">${kpis}</div>
+    ${alAdminBar_()}
 
     <div class="cg2">
       <div class="cc"><div class="ct">Cảnh báo 14 ngày gần nhất (theo mức độ)</div><div class="cw"><canvas id="chAlDay"></canvas></div></div>
@@ -16110,12 +16295,80 @@ async function alMark(status){
 }
 async function alMarkOne(row, status){ await alSend_([row], status, ''); }
 
+/* ---------- thanh quản trị + trạng thái lần quét gần nhất ---------------- */
+function alAdminBar_(){
+  const sc = Q.alarmScan, isAdmin = !!(S.perm && S.perm.admin);
+  const nDict = ((Q.alarmDict && Q.alarmDict.rows) || []).length;
+  const info = sc
+    ? `Lần quét gần nhất: <b>${esc(sc.at || '')}</b> (${esc(sc.slot || '')}) · ${sc.ok ? 'OK' : '<b style="color:var(--red)">LỖI</b>'} · ${nint_(sc.scanned || 0)} máy${sc.failed ? ' · ' + sc.failed + ' lỗi' : ''}`
+      + ` · cảnh báo mới ${nint_(sc.fresh || 0)} · gửi Zalo ${nint_(sc.notified || 0)}${sc.unknown ? ' · chưa nhận diện ' + sc.unknown : ''}${sc.partial ? ' · <b style="color:var(--amb)">chưa quét hết (hết giờ)</b>' : ''}`
+      + (sc.error ? ` <span style="color:var(--red)">${esc(sc.error)}</span>` : '')
+    : 'Chưa có lần quét nào. Lịch tự động: 7h · 10h · 15h mỗi ngày (sau khi Admin cài lịch).';
+  return `<div class="card" style="margin-bottom:12px"><div class="ch" style="flex-wrap:wrap;gap:8px">
+      <div style="font-size:12px">${info}${nDict ? '' : ' · <b style="color:var(--red)">Sheet 17 chưa có dữ liệu</b>'}</div>
+      ${isAdmin ? `<div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn bg-gr sm" onclick="alAdmin('sgAlarmSeed')" title="Tạo / bổ sung sheet 17 (82 loại lỗi HGM9520N), 38 (liên kết Data), 39 (danh mục thông số). Chỉ điền ô còn trống, không ghi đè phần bạn đã sửa.">🧱 Dựng sheet cảnh báo</button>
+        <button class="btn bg-gr sm" onclick="alAdmin('sgAlarmInstall')" title="Cài lịch quét 7h · 10h · 15h, thay lịch 30 phút cũ">⏰ Cài lịch 7h · 10h · 15h</button>
+        <button class="btn bg-gr sm" onclick="alAdmin('sgAlarmProbe')" title="Đăng nhập Smartgen, dò đường dẫn Alarm/Data và in báo cáo">🩺 Chẩn đoán Smartgen</button>
+      </div>` : ''}</div></div>`;
+}
+
+async function alAdmin(action){
+  const label = { sgAlarmSeed:'Dựng sheet cảnh báo', sgAlarmInstall:'Cài lịch quét', sgAlarmProbe:'Chẩn đoán Smartgen' }[action];
+  if (action === 'sgAlarmSeed' && !confirm('Dựng / bổ sung sheet 17, 38, 39?\nChỉ điền ô còn TRỐNG và thêm lỗi mới; phần bạn đã sửa được giữ nguyên.')) return;
+  toast(label + '…');
+  const d = await apiPost({ action, user:(S.user && S.user.name) || 'admin' });
+  if (!d || !d.ok){ toast((d && d.error) || 'Lỗi', 'err'); return; }
+  if (action === 'sgAlarmProbe'){ alProbeShow_(d); return; }
+  await loadQlvt(); renderPage('alarm');
+  const msg = d.msg || d.message || d.summary || (d.added != null ? `Đã thêm ${d.added} loại lỗi` : 'Xong');
+  toast('✓ ' + (typeof msg === 'string' ? msg : JSON.stringify(msg)), 'ok');
+}
+
+function alProbeShow_(d){
+  const steps = (d.steps || []).map(x => `<div style="margin-bottom:8px"><div style="font-weight:600;font-size:12px">${esc(x.k)}</div>`
+    + `<pre style="margin:2px 0 0;white-space:pre-wrap;word-break:break-word;font-size:11px;background:#f8fafc;padding:6px 8px;border-radius:6px;max-height:220px;overflow:auto">${esc(x.v)}</pre></div>`).join('');
+  openOv(`<div class="mh"><div><h2>🩺 Chẩn đoán đọc Alarm / Data Smartgen</h2>
+      <p>${d.error ? '<b style="color:var(--red)">' + esc(d.error) + '</b>' : 'Sao chép toàn bộ nội dung bên dưới gửi lại nếu hệ thống chưa tự dò ra đường dẫn.'}</p></div>
+      <button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">${steps || '<div class="empty">Không có dữ liệu.</div>'}
+      <button class="btn bg-gr sm" onclick="navigator.clipboard.writeText(document.getElementById('alProbeTxt').value).then(()=>toast('Đã sao chép','ok'))">⧉ Sao chép</button>
+      <textarea id="alProbeTxt" style="position:absolute;left:-9999px">${esc((d.steps || []).map(x => '## ' + x.k + '\n' + x.v).join('\n\n'))}</textarea></div>`, 'alProbe');
+}
+
+/* ---------- ℹ giải thích lỗi theo yêu cầu --------------------------------- */
+async function alExplain(row){
+  const hit = ((Q.alarmLog && Q.alarmLog.rows) || []).find(x => x._row === row);
+  if (!hit) return;
+  const d = await apiPost({ action:'alarmExplain', payload:{ ma:String(hit['Mã alarm'] || ''), text:String(hit['Nội dung gốc'] || '') } });
+  if (!d || !d.ok){ toast((d && d.error) || 'Lỗi', 'err'); return; }
+  alExplainShow_(d, hit);
+}
+function alExplainShow_(d, hit){
+  if (!d.found){
+    openOv(`<div class="mh"><div><h2>ℹ Chưa có trong danh sách</h2></div><button class="mcl" onclick="closeOv()">✕</button></div>
+      <div class="mb"><p>${esc(hit ? hit['Nội dung gốc'] || '' : '')}</p><p style="color:var(--mu)">${esc(d.hint || '')}</p></div>`, 'alExplain');
+    return;
+  }
+  const blk = (t, v) => v ? `<div class="fsec"><div class="fst" style="margin-bottom:4px">${t}</div><div style="white-space:pre-line;font-size:13px">${esc(v)}</div></div>` : '';
+  const lv = (v) => v ? `<span class="b ${AL_LV[alLevelKey_(v)].cls}">${esc(v)}</span>` : '—';
+  openOv(`<div class="mh"><div><h2>ℹ ${esc(d.vn || d.ten)}</h2><p>${esc(d.ma)} · ${esc(d.ten)}</p></div><button class="mcl" onclick="closeOv()">✕</button></div>
+    <div class="mb">
+      <div style="margin-bottom:10px;font-size:12px">Khi dừng máy: ${lv(d.mucDoDung)} &nbsp; Khi chỉ cảnh báo: ${lv(d.mucDoCanhBao)}
+        ${d.cap ? `&nbsp; Lần này: <b>${esc(d.cap)}</b> → ${lv(d.mucDoHienTai)}` : ''}</div>
+      ${blk('Ý nghĩa', d.mo)}${blk('Nguyên nhân thường gặp', d.nguyenNhan)}${blk('Cần làm', d.hanhDong)}
+      ${blk('Điều kiện giám sát', d.dieuKien)}${blk('Mức hiển thị theo cấp trong tài liệu HGM9520N', d.cacCap)}
+      ${(d.dataCanDoc && d.dataCanDoc.length) ? blk('Thông số Data cần xem', d.dataCanDoc.join(', ')) : ''}
+    </div>`, 'alExplain');
+}
+
 async function alScan(){
   toast('Đang quét cảnh báo Smartgen…');
   const d = await apiPost({ action:'scanAlarms', user:(S.user && S.user.name) || 'admin' });
   if (!d || !d.ok){ toast((d && d.error) || 'Lỗi quét', 'err'); return; }
   await loadQlvt(); renderPage('alarm');
-  toast(`Quét ${d.scanned} máy · khớp ${d.matched} · ghi mới & gửi Zalo ${d.notified}`, 'ok');
+  toast(`Quét ${d.scanned} máy · cảnh báo mới ${d.fresh || 0} · gửi Zalo ${d.notified}` + (d.unknown ? ` · ${d.unknown} lỗi chưa nhận diện` : '') + (d.failed ? ` · ${d.failed} máy đọc lỗi` : ''),
+        d.failed ? 'warn' : 'ok');
 }
 
 /* ============================================================================
