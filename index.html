@@ -1408,7 +1408,7 @@ function applyQlvt_(d){
     minOv:d.minOv||{ headers:[], rows:[] },
     models:d.models||Q.models,
     normLinks:d.normLinks||{},
-    stock:d.stock, sim:d.sim||Q.sim, simLists:d.simLists||Q.simLists||{}, alarmDict:d.alarmDict, alarmScan:d.alarmScan||null, alarmLink:d.alarmLink||{ headers:[], rows:[] },
+    stock:d.stock, sim:d.sim||Q.sim, simLists:d.simLists||Q.simLists||{}, alarmDict:d.alarmDict, alarmScan:d.alarmScan||null,
     contacts:d.contacts, maintLog:d.maintLog, moveLog:d.moveLog, alarmLog:d.alarmLog,
     moveAudit:d.moveAudit||{ headers:[], rows:[], total:0 },
     alerts:d.alerts||Q.alerts, cfg:d.cfg||{},
@@ -11414,7 +11414,7 @@ const Q = {
    * simLists: danh sách chọn (mục đích, nhà mạng, loại SIM, chu kỳ, trạng thái) khớp 1-1 với ô thả xuống trên Sheet.
    * simSel / alSel: các dòng đang được tích chọn ở bảng Đề xuất thanh toán / nhật ký cảnh báo máy. */
   sim:{ exists:false, legacy:false, headers:[], rows:[] }, simLists:{}, simSel:new Set(), alSel:new Set(),
-  alarmDict:{ headers:[], rows:[] }, alarmScan:null, alarmLink:{ headers:[], rows:[] }, contacts:{ headers:[], rows:[] },
+  alarmDict:{ headers:[], rows:[] }, alarmScan:null, contacts:{ headers:[], rows:[] },
   anomalyOk:{ keys:[] },          // khoá các điểm dữ liệu đã xác nhận đúng — Sheet 24
   kiemKe:null,                    // { log, alerts, cfg, loaiBu } — Sheet 35, QLVT.gs mục 12
   dongBo:null,                    // báo cáo đồng bộ Sheet 1→2→14 — QLVT.gs mục 13
@@ -16037,7 +16037,8 @@ const AL_STATES = ['Mới', 'Đang xử lý', 'Đã xử lý', 'Bỏ qua'];
 const AL_LV = {
   danger: { label:'Nguy hiểm', cls:'br',  color:'#dc2626' },
   warn:   { label:'Cảnh báo',  cls:'ba',  color:'#f59e0b' },
-  info:   { label:'Khác',      cls:'bmu', color:'#94a3b8' },
+  info:   { label:'Bình thường', cls:'bg', color:'#16a05e' },
+  unk:    { label:'Chưa phân loại', cls:'bmu', color:'#8b5cf6' },
 };
 const AL_ST = {
   'Mới':        { cls:'br',  color:'#dc2626' },
@@ -16052,7 +16053,8 @@ function alLevelKey_(v){
   const s = String(v == null ? '' : v).normalize('NFC').toLowerCase();
   if (/nguy hiểm/.test(s)) return 'danger';
   if (/cảnh báo/.test(s)) return 'warn';
-  return 'info';
+  if (/chưa/.test(s)) return 'unk';                  // "Chưa phân loại" · "Chưa nhận diện" (bản cũ)
+  return 'info';                                      // "Bình thường" · "Chú ý" / "Bỏ qua" (bản cũ)
 }
 
 /**
@@ -16189,17 +16191,21 @@ function viewAlarm(){
   const dict = (Q.alarmDict && Q.alarmDict.rows) || [];
   const dictHtml = `<div class="card"><div class="ch" style="cursor:pointer" onclick="Q.f.alDict=!Q.f.alDict;renderPage('alarm')">
       <h3>${f.alDict ? '▾' : '▸'} Danh sách cảnh báo đang theo dõi · ${dict.length} loại</h3>
-      <span class="b bmu">Sửa ở Sheet “17. Danh sách cảnh báo nguy hiểm” — từ khoá khớp với nội dung Smartgen báo về</span></div>
+      <span class="b bmu">Sửa ở Sheet “17. Danh sách cảnh báo nguy hiểm” — tên (Anh / Trung) trong ô “Tên cảnh báo” dùng để khớp với nội dung Smartgen báo về</span></div>
     ${f.alDict ? `<div class="tw" style="max-height:40vh"><table><thead><tr>
-        <th>Mã</th><th>Tên cảnh báo</th><th>Từ khoá khớp</th><th>Khi dừng máy</th><th>Khi chỉ cảnh báo</th><th>Gửi Zalo</th><th>Hành động yêu cầu</th></tr></thead>
-      <tbody>${dict.map(d => `<tr>
+        <th>Mã</th><th>Tên cảnh báo</th><th>Mức độ</th><th>Gửi Zalo</th><th>Người nhận</th><th>Hành động yêu cầu</th><th>Data cần đọc</th></tr></thead>
+      <tbody>${dict.map(d => {
+        const nm = String(d['Tên cảnh báo (Smartgen)'] || '').split('\n').map(x => x.trim()).filter(Boolean);
+        const lvK = alLevelKey_(d['Mức độ'] || 'Chưa'), zl = String(d['Gửi Zalo'] || '').trim().toUpperCase();
+        const zalo = zl ? zl === 'TRUE' : (lvK === 'danger' || lvK === 'warn');
+        return `<tr>
         <td><span class="mm">${esc(d['Mã alarm'] || '')}</span></td>
-        <td style="font-size:11px">${d['Tên tiếng Việt'] ? `<b>${esc(d['Tên tiếng Việt'])}</b><div style="color:var(--mu)">${esc(d['Tên cảnh báo (Smartgen)'] || '')}</div>` : esc(d['Tên cảnh báo (Smartgen)'] || '')}</td>
-        <td style="font-size:11px;font-family:var(--mono)">${esc(d['Từ khoá khớp'] || '')}</td>
-        <td><span class="b ${AL_LV[alLevelKey_(d['Mức độ'])].cls}">${esc(d['Mức độ'] || '')}</span></td>
-        <td>${d['Mức độ khi chỉ cảnh báo'] ? `<span class="b ${AL_LV[alLevelKey_(d['Mức độ khi chỉ cảnh báo'])].cls}">${esc(d['Mức độ khi chỉ cảnh báo'])}</span>` : '<span class="b bmu">—</span>'}</td>
-        <td>${String(d['Gửi Zalo'] || '').toUpperCase() === 'TRUE' ? '<span class="b bg">có</span>' : '<span class="b bmu">không</span>'}</td>
-        <td style="font-size:11px;white-space:normal">${esc(d['Hành động yêu cầu'] || '')}</td></tr>`).join('')
+        <td style="font-size:11px">${d['Tên tiếng Việt'] ? `<b>${esc(d['Tên tiếng Việt'])}</b><div style="color:var(--mu)">${esc(nm.join(' · '))}</div>` : esc(nm.join(' · '))}</td>
+        <td><span class="b ${AL_LV[lvK].cls}">${esc(d['Mức độ'] || 'Chưa phân loại')}</span></td>
+        <td>${zalo ? '<span class="b bg">có</span>' : '<span class="b bmu">không</span>'}</td>
+        <td style="font-size:11px">${esc(d['Người nhận'] || '') || '<span style="color:var(--mu)">theo Sheet 19</span>'}</td>
+        <td style="font-size:11px;white-space:normal">${esc(d['Hành động yêu cầu'] || '')}</td>
+        <td style="font-size:11px;font-family:var(--mono);white-space:normal">${esc(String(d['Thông số Data cần đọc'] || '').replace(/\n/g, ' | ')) || '<span style="color:var(--mu)">—</span>'}</td></tr>`; }).join('')
         || '<tr><td colspan="7"><div class="empty">Chưa cấu hình cảnh báo nào ở Sheet 17 — Admin bấm “Dựng sheet cảnh báo” bên trên.</div></td></tr>'}</tbody></table></div>` : ''}</div>`;
 
   return `
@@ -16225,7 +16231,7 @@ function viewAlarm(){
       <div class="msg"><span class="mslbl">Thời gian</span>${rng('1', 'Hôm nay')}${rng('7', '7 ngày')}${rng('30', '30 ngày')}${rng('all', 'Tất cả')}</div>
       <div class="msg"><span class="mslbl">Xử lý</span>
         ${stc('open', 'Chưa xử lý xong', nNew + nDoing)}${stc('done', 'Đã xử lý', nDone)}${stc('ignore', 'Bỏ qua', nIgn)}${stc('all', 'Tất cả', R.length)}</div>
-      <div class="msg"><span class="mslbl">Mức độ</span>${lvc('danger')}${lvc('warn')}${lvc('info')}</div>
+      <div class="msg"><span class="mslbl">Mức độ</span>${lvc('danger')}${lvc('warn')}${lvc('info')}${lvc('unk')}</div>
       <div class="msg">
         <input class="si" id="alSearch" style="flex:1" placeholder="🔍 Tìm mã máy, trại, nội dung cảnh báo, người xử lý…"
                value="${esc(f.al)}" oninput="Q.f.al=this.value;renderPage('alarm')">
@@ -16301,13 +16307,13 @@ function alAdminBar_(){
   const nDict = ((Q.alarmDict && Q.alarmDict.rows) || []).length;
   const info = sc
     ? `Lần quét gần nhất: <b>${esc(sc.at || '')}</b> (${esc(sc.slot || '')}) · ${sc.ok ? 'OK' : '<b style="color:var(--red)">LỖI</b>'} · ${nint_(sc.scanned || 0)} máy${sc.failed ? ' · ' + sc.failed + ' lỗi' : ''}`
-      + ` · cảnh báo mới ${nint_(sc.fresh || 0)} · gửi Zalo ${nint_(sc.notified || 0)}${sc.unknown ? ' · chưa nhận diện ' + sc.unknown : ''}${sc.partial ? ' · <b style="color:var(--amb)">chưa quét hết (hết giờ)</b>' : ''}`
+      + ` · cảnh báo mới ${nint_(sc.fresh || 0)} · gửi Zalo ${nint_(sc.notified || 0)}${sc.unknown ? ' · lỗi lạ ' + sc.unknown : ''}${sc.partial ? ' · <b style="color:var(--amb)">chưa quét hết (hết giờ)</b>' : ''}`
       + (sc.error ? ` <span style="color:var(--red)">${esc(sc.error)}</span>` : '')
     : 'Chưa có lần quét nào. Lịch tự động: 7h · 10h · 15h mỗi ngày (sau khi Admin cài lịch).';
   return `<div class="card" style="margin-bottom:12px"><div class="ch" style="flex-wrap:wrap;gap:8px">
       <div style="font-size:12px">${info}${nDict ? '' : ' · <b style="color:var(--red)">Sheet 17 chưa có dữ liệu</b>'}</div>
       ${isAdmin ? `<div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn bg-gr sm" onclick="alAdmin('sgAlarmSeed')" title="Tạo / bổ sung sheet 17 (82 loại lỗi HGM9520N), 38 (liên kết Data), 39 (danh mục thông số). Chỉ điền ô còn trống, không ghi đè phần bạn đã sửa.">🧱 Dựng sheet cảnh báo</button>
+        <button class="btn bg-gr sm" onclick="alAdmin('sgAlarmSeed')" title="Tạo / bổ sung Sheet 17 (82 loại lỗi HGM9520N, 10 cột) và Sheet 39. Nếu Sheet 17 còn bố cục cũ: sao lưu rồi chuyển sang bố cục mới và gộp Sheet 38. Chỉ điền ô còn trống, không ghi đè phần bạn đã sửa.">🧱 Dựng sheet cảnh báo</button>
         <button class="btn bg-gr sm" onclick="alAdmin('sgAlarmInstall')" title="Cài lịch quét 7h · 10h · 15h, thay lịch 30 phút cũ">⏰ Cài lịch 7h · 10h · 15h</button>
         <button class="btn bg-gr sm" onclick="alAdmin('sgAlarmProbe')" title="Đăng nhập Smartgen, dò đường dẫn Alarm/Data và in báo cáo">🩺 Chẩn đoán Smartgen</button>
       </div>` : ''}</div></div>`;
@@ -16315,7 +16321,7 @@ function alAdminBar_(){
 
 async function alAdmin(action){
   const label = { sgAlarmSeed:'Dựng sheet cảnh báo', sgAlarmInstall:'Cài lịch quét', sgAlarmProbe:'Chẩn đoán Smartgen' }[action];
-  if (action === 'sgAlarmSeed' && !confirm('Dựng / bổ sung sheet 17, 38, 39?\nChỉ điền ô còn TRỐNG và thêm lỗi mới; phần bạn đã sửa được giữ nguyên.')) return;
+  if (action === 'sgAlarmSeed' && !confirm('Dựng / bổ sung Sheet 17 và 39?\nSheet 17 bố cục cũ sẽ được sao lưu (sheet ẩn) rồi chuyển sang 10 cột mới, gộp Sheet 38. Phần bạn đã điền (Người nhận, Thông số Data, dòng tự thêm) được mang theo; Mức độ được đề xuất lại theo 3 cấp.')) return;
   toast(label + '…');
   const d = await apiPost({ action, user:(S.user && S.user.name) || 'admin' });
   if (!d || !d.ok){ toast((d && d.error) || 'Lỗi', 'err'); return; }
@@ -16351,13 +16357,12 @@ function alExplainShow_(d, hit){
     return;
   }
   const blk = (t, v) => v ? `<div class="fsec"><div class="fst" style="margin-bottom:4px">${t}</div><div style="white-space:pre-line;font-size:13px">${esc(v)}</div></div>` : '';
-  const lv = (v) => v ? `<span class="b ${AL_LV[alLevelKey_(v)].cls}">${esc(v)}</span>` : '—';
+  const lv = (v) => `<span class="b ${AL_LV[alLevelKey_(v || 'Chưa')].cls}">${esc(v || 'Chưa phân loại')}</span>`;
   openOv(`<div class="mh"><div><h2>ℹ ${esc(d.vn || d.ten)}</h2><p>${esc(d.ma)} · ${esc(d.ten)}</p></div><button class="mcl" onclick="closeOv()">✕</button></div>
     <div class="mb">
-      <div style="margin-bottom:10px;font-size:12px">Khi dừng máy: ${lv(d.mucDoDung)} &nbsp; Khi chỉ cảnh báo: ${lv(d.mucDoCanhBao)}
-        ${d.cap ? `&nbsp; Lần này: <b>${esc(d.cap)}</b> → ${lv(d.mucDoHienTai)}` : ''}</div>
-      ${blk('Ý nghĩa', d.mo)}${blk('Nguyên nhân thường gặp', d.nguyenNhan)}${blk('Cần làm', d.hanhDong)}
-      ${blk('Điều kiện giám sát', d.dieuKien)}${blk('Mức hiển thị theo cấp trong tài liệu HGM9520N', d.cacCap)}
+      <div style="margin-bottom:10px;font-size:12px">Mức độ: ${lv(d.mucDo)}
+        ${d.cap ? `&nbsp; Lần này (${d.cap === 'stop' ? 'máy dừng/ngắt' : 'máy vẫn chạy'}): ${lv(d.mucDoHienTai)}` : ''}</div>
+      ${blk('Mô tả', d.mo)}${blk('Nguyên nhân thường gặp', d.nguyenNhan)}${blk('Hành động yêu cầu', d.hanhDong)}
       ${(d.dataCanDoc && d.dataCanDoc.length) ? blk('Thông số Data cần xem', d.dataCanDoc.join(', ')) : ''}
     </div>`, 'alExplain');
 }
@@ -16367,7 +16372,7 @@ async function alScan(){
   const d = await apiPost({ action:'scanAlarms', user:(S.user && S.user.name) || 'admin' });
   if (!d || !d.ok){ toast((d && d.error) || 'Lỗi quét', 'err'); return; }
   await loadQlvt(); renderPage('alarm');
-  toast(`Quét ${d.scanned} máy · cảnh báo mới ${d.fresh || 0} · gửi Zalo ${d.notified}` + (d.unknown ? ` · ${d.unknown} lỗi chưa nhận diện` : '') + (d.failed ? ` · ${d.failed} máy đọc lỗi` : ''),
+  toast(`Quét ${d.scanned} máy · cảnh báo mới ${d.fresh || 0} · gửi Zalo ${d.notified}` + (d.autoAdded ? ` · ${d.autoAdded} lỗi lạ đã tự thêm vào Sheet 17` : '') + (d.failed ? ` · ${d.failed} máy đọc lỗi` : ''),
         d.failed ? 'warn' : 'ok');
 }
 
@@ -16393,7 +16398,7 @@ function afterAlarm(){
   }
   const c1 = kill('chAlDay');
   if (c1) c1._chart = new Chart(c1, { type:'bar',
-    data:{ labels:days, datasets:['danger', 'warn', 'info'].map(k => ({ label:AL_LV[k].label, backgroundColor:AL_LV[k].color,
+    data:{ labels:days, datasets:['danger', 'warn', 'info', 'unk'].map(k => ({ label:AL_LV[k].label, backgroundColor:AL_LV[k].color,
       borderRadius:3, maxBarThickness:26, data:keys.map(dn => all.filter(a => a.day === dn && a.level === k).length) })) },
     options:{ maintainAspectRatio:false, plugins:{ legend, tooltip:{ backgroundColor:'#083d24' } },
       scales:{ x:{ stacked:true, ticks:{ color:'#64748b', font:font(9) }, grid:{ display:false } },
