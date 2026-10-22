@@ -16308,13 +16308,20 @@ function alAdminBar_(){
   const info = sc
     ? `Lần quét gần nhất: <b>${esc(sc.at || '')}</b> (${esc(sc.slot || '')}) · ${sc.ok ? 'OK' : '<b style="color:var(--red)">LỖI</b>'} · ${nint_(sc.scanned || 0)} máy${sc.failed ? ' · ' + sc.failed + ' lỗi' : ''}`
       + ` · cảnh báo mới ${nint_(sc.fresh || 0)} · gửi Zalo ${nint_(sc.notified || 0)}${sc.unknown ? ' · lỗi lạ ' + sc.unknown : ''}${sc.partial ? ' · <b style="color:var(--amb)">chưa quét hết (hết giờ)</b>' : ''}`
+      + (sc.ms ? ` · ${Math.round(sc.ms / 1000)} giây` : '')
+      + (sc.seen != null && !sc.failed || sc.seen ? `<div style="margin-top:4px;font-size:11px;color:var(--mu)">Đọc được <b>${nint_(sc.seen || 0)}</b> cảnh báo từ Smartgen`
+          + (sc.newest ? `, mới nhất lúc <b>${esc(sc.newest)}</b>` : '')
+          + (sc.stale ? `; <b>${nint_(sc.stale)}</b> cái cũ hơn 36 giờ ${sc.backfill ? 'đã nạp vào sổ (không báo Zalo)' : 'bị bỏ qua (chỉ báo cảnh báo trong 36 giờ gần nhất)'}` : '')
+          + (!sc.seen ? ' — Smartgen không trả cảnh báo nào cho các máy đã hỏi' : (!sc.fresh && !sc.backfill ? ' → không có cảnh báo mới nên sổ chưa có dòng nào. Bấm “📥 Nạp lịch sử” để xem thử các cảnh báo cũ.' : '')) + `</div>` : '')
       + (sc.error ? ` <span style="color:var(--red)">${esc(sc.error)}</span>` : '')
+      + ((sc.errors && sc.errors.length) ? `<div style="margin-top:4px;color:var(--red);font-size:11px;white-space:pre-line">${esc(sc.errors.join('\n'))}</div>` : '')
     : 'Chưa có lần quét nào. Lịch tự động: 7h · 10h · 15h mỗi ngày (sau khi Admin cài lịch).';
   return `<div class="card" style="margin-bottom:12px"><div class="ch" style="flex-wrap:wrap;gap:8px">
       <div style="font-size:12px">${info}${nDict ? '' : ' · <b style="color:var(--red)">Sheet 17 chưa có dữ liệu</b>'}</div>
       ${isAdmin ? `<div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn bg-gr sm" onclick="alAdmin('sgAlarmSeed')" title="Tạo / bổ sung Sheet 17 (82 loại lỗi HGM9520N, 10 cột) và Sheet 39. Nếu Sheet 17 còn bố cục cũ: sao lưu rồi chuyển sang bố cục mới và gộp Sheet 38. Chỉ điền ô còn trống, không ghi đè phần bạn đã sửa.">🧱 Dựng sheet cảnh báo</button>
         <button class="btn bg-gr sm" onclick="alAdmin('sgAlarmInstall')" title="Cài lịch quét 7h · 10h · 15h, thay lịch 30 phút cũ">⏰ Cài lịch 7h · 10h · 15h</button>
+        <button class="btn bg-gr sm" onclick="alScan(true)" title="Đọc 5 cảnh báo gần nhất của từng máy kể cả cảnh báo cũ (hơn 36 giờ) và ghi vào sổ ở trạng thái Bỏ qua — KHÔNG gửi Zalo. Dùng để xem thử hệ thống đọc được gì và để lấy tên lỗi thật (tiếng Trung) đưa vào Sheet 17.">📥 Nạp lịch sử</button>
         <button class="btn bg-gr sm" onclick="alAdmin('sgAlarmProbe')" title="Đăng nhập Smartgen, dò đường dẫn Alarm/Data và in báo cáo">🩺 Chẩn đoán Smartgen</button>
       </div>` : ''}</div></div>`;
 }
@@ -16367,11 +16374,14 @@ function alExplainShow_(d, hit){
     </div>`, 'alExplain');
 }
 
-async function alScan(){
-  toast('Đang quét cảnh báo Smartgen…');
-  const d = await apiPost({ action:'scanAlarms', user:(S.user && S.user.name) || 'admin' });
+async function alScan(backfill){
+  toast(backfill ? 'Đang nạp lịch sử cảnh báo từ Smartgen (không gửi Zalo)…' : 'Đang quét cảnh báo Smartgen…');
+  const d = await apiPost({ action:'scanAlarms', backfill: backfill === true, user:(S.user && S.user.name) || 'admin' });
   if (!d || !d.ok){ toast((d && d.error) || 'Lỗi quét', 'err'); return; }
-  await loadQlvt(); renderPage('alarm');
+  await loadQlvt();
+  if (backfill === true){ Q.f.alState = 'all'; Q.f.alRange = 'all'; Q.f.alLevel = new Set(); }
+  renderPage('alarm');
+  if (d.partial) toast('Chưa quét hết: ' + ((d.errors && d.errors.find(x => /Hết thời gian/.test(x))) || 'hết giờ') + ' Bấm “Quét ngay” lần nữa để làm tiếp.', 'warn');
   toast(`Quét ${d.scanned} máy · cảnh báo mới ${d.fresh || 0} · gửi Zalo ${d.notified}` + (d.autoAdded ? ` · ${d.autoAdded} lỗi lạ đã tự thêm vào Sheet 17` : '') + (d.failed ? ` · ${d.failed} máy đọc lỗi` : ''),
         d.failed ? 'warn' : 'ok');
 }
