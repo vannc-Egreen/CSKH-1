@@ -1265,6 +1265,10 @@ async function reloadAll(opt){
     if (API_URL.includes('PASTE_')) throw new Error('Chưa dán URL Apps Script vào biến API_URL');
     const params = {};
     if (o.fresh) params.fresh = '1';
+    /* sync=1 → máy chủ TÍNH LẠI Sheet 9 từ Sheet 5 trước khi dựng gói (chỉ nút "↻ Cập nhật số liệu"
+     * của Báo cáo tổng hợp dùng). Không có cờ này, số gõ tay thẳng trên Google Sheet vẫn tự tới web
+     * qua cờ "cần tính lại" ở máy chủ; cờ này là đường chủ động khi người dùng muốn chắc chắn. */
+    if (o.sync) params.sync = '1';
 
     /* SONG SONG, KHÔNG NỐI ĐUÔI VÀ CŨNG KHÔNG GỘP.
      *
@@ -1290,6 +1294,7 @@ async function reloadAll(opt){
      * cột ngày của Sheet 5 bám vào nó (xem khối "NGÀY DỮ LIỆU"). Server tính ngoài
      * cache nên không bao giờ cũ; thiếu nó (Code.gs chưa deploy bản mới) thì web tự suy. */
     if (d.dataCtx) S.dataCtx = d.dataCtx;
+    S.monthlySync = d.monthlySync || '';       // 'ok' | 'none' | 'skip' — xem egSyncMonthlyIfDirty_ (Code.gs)
     if (d.perm) applyPerm_(d.perm, d.pending);
     Object.assign(S, {
       master:d.master, tracking:d.tracking, spec:d.spec, filter:d.filter,
@@ -1335,7 +1340,9 @@ async function reloadAll(opt){
     /* Không dựng lại màn hình ở đây: khối finally bên dưới làm việc đó cho CẢ hai
      * nhánh thành công và lỗi. Dựng hai lần với bảng vài nghìn dòng là một nhịp
      * giật thấy rõ, và đó đúng là loại chậm mà người dùng đang phàn nàn. */
-    if (!o.silent) toast('Đã tải dữ liệu từ Google Sheet', 'ok');
+    if (o.sync && d.monthlySync === 'skip')
+      toast('Đã tải lại số liệu nhưng CHƯA tính lại được Tổng kết tháng (đang đồng bộ Smartgen hoặc hệ thống đang bận). Bấm lại sau ít phút.', 'warn');
+    else if (!o.silent) toast('Đã tải dữ liệu từ Google Sheet', 'ok');
     autoDot_(false);
   } catch(e){
     S.loadErr.core = e.message;
@@ -6846,7 +6853,15 @@ function computeEfficiencyPageList_(filteredMasterRows){
                 || ((a.pctKw ?? 999) - (b.pctKw ?? 999)));
 }
 
-function viewEfficiency(){
+/* MỘT HÀM LỌC DUY NHẤT cho trang Hiệu quả vận hành — viewEfficiency() (dựng thẻ HTML) và
+ * afterEfficiency() (vẽ biểu đồ) đều gọi đúng hàm này.
+ *
+ * LỖI ĐÃ GẶP (10/2026): afterEfficiency() từng tự lọc lại và QUÊN ô tìm mã máy (S.filters.eff.q).
+ * Gõ "ns150kva6" thì viewEfficiency dựng đúng 1 thẻ NS150KVA6, nhưng afterEfficiency lọc không có
+ * ô tìm → ra danh sách cả đội máy, phần tử đầu (máy xếp nặng nhất, VD NS250KVA5) được vẽ vào
+ * canvas eff_0_chart — tức là vẽ vào thẻ của NS150KVA6. Lọc theo bộ lọc nào thì cũng sai kiểu này.
+ * Đừng viết lại bộ lọc ở chỗ khác: thêm điều kiện lọc mới thì thêm vào ĐÂY. */
+function effFilteredRows_(){
   const m = S.master.rows;
   // Chỉ tính máy đủ điều kiện: HĐ bình thường, loại Thuê/Hợp tác/Bán
   const base = m.filter(r => statusKey(r)==='active' && ['Thuê','Hợp tác','Bán'].includes(typeOf(r)));
@@ -6865,6 +6880,11 @@ function viewEfficiency(){
     const okQ = !effQ || hay.includes(effQ);
     return okR && okT && okQ;
   });
+  return { base, filtered };
+}
+
+function viewEfficiency(){
+  const { base, filtered } = effFilteredRows_();
 
   /* Đếm theo TOÀN BỘ máy sau lọc khu vực/loại hình — KHÔNG đếm trên danh sách đã lọc
    * phân loại, nếu không con số trên chip sẽ tự thay đổi mỗi lần bấm chính nó. */
@@ -7234,18 +7254,17 @@ async function saveEfficiencyModal(rowId){
 }
 
 function afterEfficiency(){
-  const m = S.master.rows;
-  const rSet = S.filters.eff.region;
-  const tSet = S.filters.eff.type;
-  const filtered = m.filter(r =>
-    statusKey(r)==='active' && ['Thuê','Hợp tác','Bán'].includes(typeOf(r)) &&
-    (!rSet.size || rSet.has(regionOf(r))) &&
-    (!tSet.size || tSet.has(typeOf(r)))
-  );
-  // PHẢI dùng đúng computeEfficiencyPageList_() — cùng hàm, cùng thứ tự với viewEfficiency()
-  // dựng thẻ HTML, nếu không canvas thứ i sẽ vẽ nhầm biểu đồ của máy khác (xem ghi chú ở hàm đó).
-  const list = computeEfficiencyPageList_(filtered);
-  list.forEach((x,i)=>drawEfficiencyChart('eff_'+i+'_chart', x));
+  // PHẢI dùng đúng effFilteredRows_() + computeEfficiencyPageList_() — cùng hàm với viewEfficiency()
+  // dựng thẻ HTML (xem ghi chú ở hai hàm đó). Bản cũ tự lọc lại và quên ô tìm mã máy.
+  const list = computeEfficiencyPageList_(effFilteredRows_().filtered);
+  const byCode = new Map(list.map(x => [x.code, x]));
+  /* Lớp phòng thủ thứ hai: ghép biểu đồ với thẻ theo MÃ MÁY ghi trên chính canvas (data-eff-code,
+   * do ineffCardHtml đặt), không theo số thứ tự. Dù danh sách có lệch nhau vì lý do gì, canvas của
+   * máy A không bao giờ nhận biểu đồ của máy B — canvas nào không có dữ liệu thì để trống. */
+  document.querySelectorAll('#pg-efficiency canvas[data-eff-code]').forEach(cv => {
+    const x = byCode.get(cv.getAttribute('data-eff-code'));
+    if (x) drawEfficiencyChart(cv.id, x);
+  });
 }
 
 function viewSpec(){
@@ -9640,7 +9659,7 @@ function ineffCardHtml(x, uid){
       ${bangNgay}
       ${anomalies.length ? `
       <div style="margin:0 16px 6px;font-size:10px;color:#991b1b">⚠ Có dữ liệu bất thường — điểm cam to trên biểu đồ, bấm vào điểm đó để xem/sửa.</div>` : ''}
-      <div class="effchart"><canvas id="${uid}_chart"></canvas></div>
+      <div class="effchart"><canvas id="${uid}_chart" data-eff-code="${esc(x.code)}"></canvas></div>
     </div>
   `;
 }
@@ -18345,6 +18364,32 @@ function rpBar_(data, mauMac){
   }).join('') + '</div>';
 }
 
+/**
+ * NÚT "↻ Cập nhật số liệu". Bản cũ chỉ gọi renderPage('report') — vẽ lại màn hình từ dữ liệu ĐANG nằm trong
+ * bộ nhớ trình duyệt, không hỏi máy chủ gì. Nên số sửa trong Google Sheet (hoặc do máy khác sửa) không bao giờ
+ * tới báo cáo bằng nút này. Nay: tải lại toàn bộ từ máy chủ, và bảo máy chủ tính lại Sheet 9 từ Sheet 5
+ * (sync) trước khi trả. Tháng đang chạy luôn đọc Sheet 5 + Sheet 9 hiện hành; tháng đã qua mới đọc 5R/Smartgen.
+ * Đang đồng bộ Smartgen thì không tải: số đang ghi dở sẽ hiện ra nửa đúng nửa sai.
+ */
+async function rpCapNhatSoLieu(){
+  if (RP.dangCapNhat) return;
+  if (sgBusyNow_()){
+    toast('Đang đồng bộ Smartgen — đợi xong rồi bấm lại để số liệu không bị đọc giữa chừng.', 'warn');
+    return;
+  }
+  RP.dangCapNhat = true;
+  const nut = document.getElementById('rpRefreshBtn');
+  if (nut){ nut.disabled = true; nut.textContent = '⏳ Đang cập nhật…'; }
+  try {
+    await reloadAll({ fresh:true, sync:true, withQlvt:true });
+  } finally {
+    RP.dangCapNhat = false;
+    /* reloadAll đã dựng lại trang; nút cũ có thể đã bị thay bằng nút mới — dọn phòng khi chưa. */
+    const n2 = document.getElementById('rpRefreshBtn');
+    if (n2){ n2.disabled = false; n2.textContent = '↻ Cập nhật số liệu'; }
+  }
+}
+
 function viewReport(){
   RP.at = rpNow_();
   const tab = RP.tab;
@@ -18354,7 +18399,7 @@ function viewReport(){
     + '<div><h2 style="margin:0">Báo cáo tổng hợp</h2>'
     + '<div style="font-size:11px;color:var(--mu);margin-top:2px">Số liệu tại thời điểm <b>'+rpE_(RP.at)+'</b>'
     + ' · mỗi báo cáo xuất riêng một file Word, đủ 5W1H, Times New Roman 13.</div></div>'
-    + '<button class="btn bg-gr" onclick="renderPage(\'report\')">↻ Cập nhật số liệu</button></div>';
+    + '<button class="btn bg-gr" id="rpRefreshBtn" onclick="rpCapNhatSoLieu()">↻ Cập nhật số liệu</button></div>';
 
   h += '<div class="msf"><div class="msg">'
     + nut('vt','① Kho vật tư &amp; Bảo dưỡng')
