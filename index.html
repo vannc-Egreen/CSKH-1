@@ -1093,7 +1093,17 @@ async function apiPost(body){
    * trong khi Sheet 25 tra theo tên đăng nhập. Server nào lỡ tra quyền bằng chuỗi này
    * sẽ không thấy ai và trả về quyền Khách, dù người dùng đang đăng nhập Admin.
    * Ghi đè ở đây để trường user LUÔN là một danh tính tra được. Họ tên hiển thị thì
-   * server tự lấy từ token, không cần web gửi lên. */
+   * server tự lấy từ token, không cần web gửi lên.
+   *
+   * NHƯNG: với lệnh quản trị auth*, người gọi viết `user` = tài khoản BỊ thao tác (xoá ai,
+   * đặt lại mật khẩu cho ai…). Dòng ghi đè bên dưới sẽ xoá mất nó — Admin bấm xoá thành viên A
+   * thì server nhận "admin" và thao tác lên chính Admin. Nên chép sang trường riêng TRƯỚC khi ghi đè:
+   *   target   → duyệt / đổi chức danh / khoá / xoá / đặt lại mật khẩu
+   *   username → đăng nhập / đăng ký / tạo tài khoản
+   * Sửa một chỗ này là phủ mọi nơi gọi (uDelete, uResetPw, doLogin, submitCreateUser…). */
+  if (/^auth(Approve|SetRole|SetStatus|Delete|ResetPassword)$/.test(action)) b.target = String((body && body.user) || '').trim();
+  else if (/^auth(Login|Register|Create)$/.test(action)) b.username = String((body && body.user) || '').trim();
+
   if (S.user && S.user.login) b.user = S.user.login;
   else if (!b.user && S.user && S.user.name) b.user = S.user.name;
 
@@ -1104,7 +1114,9 @@ async function apiPost(body){
    * Ẩn nút vẫn có thể sót (nút mới, nút trong modal, người gõ thẳng vào console). Chặn ở
    * đây thì dù đường nào tới cũng nhận đúng một câu giải thích, thay vì im lặng không
    * phản ứng rồi người dùng tưởng web treo. Server vẫn chặn lần nữa — đây không phải chốt. */
-  if (writes && S.perm && (S.perm.readOnly || (S.perm.authed && !S.perm.editData))){
+  /* Ngoại lệ: tự đổi mật khẩu của chính mình không phải "sửa dữ liệu". Server vẫn chỉ cho đổi
+   * đúng tài khoản trong token và bắt nhập mật khẩu cũ. */
+  if (writes && action !== 'authChangePassword' && S.perm && (S.perm.readOnly || (S.perm.authed && !S.perm.editData))){
     toast('Chức danh "' + (S.perm.role||'hiện tại') + '" chỉ được xem, không sửa được dữ liệu.', 'err');
     return { ok:false, error:'Chức danh chỉ xem' };
   }
@@ -10379,6 +10391,8 @@ function doLogout(){
   S.token = '';
   S.booted = false;
   S.users = null;
+  /* Xoá luôn danh tính: để nguyên thì người sau đăng nhập trên cùng tab bị gửi kèm tên người trước. */
+  if (S.user){ S.user.login = ''; S.user.name = ''; }
   S.perm = { role:'', authed:false, viewPrice:false, editPrice:false, editNorm:false,
              editData:false, approveUser:false, manageUser:false, admin:false };
   try { localStorage.removeItem(TOKEN_KEY); } catch(e){}
@@ -10411,8 +10425,10 @@ function openAccountBox(){
       <div class="fsh" style="margin-top:16px;border-radius:8px">
         <div class="fsn">🔑</div><div class="fst">Đổi mật khẩu</div></div>
       <div class="fgrid fg2" style="padding:12px 0">
-        <div class="iw"><div class="il">Mật khẩu hiện tại</div><input class="inp" type="password" id="pwOld"></div>
-        <div class="iw"><div class="il">Mật khẩu mới (≥ 6 ký tự)</div><input class="inp" type="password" id="pwNew"></div>
+        <input type="text" autocomplete="username" value="${esc(S.user.login||'')}" tabindex="-1" aria-hidden="true"
+               style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+        <div class="iw"><div class="il">Mật khẩu hiện tại</div><input class="inp" type="password" id="pwOld" autocomplete="current-password"></div>
+        <div class="iw"><div class="il">Mật khẩu mới (≥ 6 ký tự)</div><input class="inp" type="password" id="pwNew" autocomplete="new-password"></div>
       </div>
     </div>
     <div class="mf">
