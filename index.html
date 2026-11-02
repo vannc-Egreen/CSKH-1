@@ -608,7 +608,8 @@ const S = {
      * thêm bộ lọc bình thường — đây chỉ là điểm khởi đầu, không phải ràng buộc cứng. */
     analysis:{ machine:new Set(), region:new Set(), type:new Set(['Thuê','Hợp tác']), unit:new Set() },
     capacityClass:'',   // bảng phân loại CS phát TB ở trang Phân tích: '' | 'low' | 'stable' | 'over' | 'none'
-    monthly:{ q:'', month:'', region:new Set(), type:new Set(), unit:new Set() },      // trang Tổng kết tháng (Sheet 9)
+    monthly:{ q:'', month:'', region:new Set(), type:new Set(), unit:new Set(),
+              sort:'', onlyMismatch:false },      // trang Tổng kết tháng (Sheet 9) · sort: '' | 'abs' | 'pos' | 'neg' = thứ tự máy theo % lệch công tơ
     anomalyCat:new Set(),                                                            // nhóm lỗi bất thường đang lọc ở trang Cảnh báo (đa chọn)
     monthlyDummy:null                                                                // (giữ chỗ — bộ lọc Định mức thiết kế đã gộp vào machineTab/machineRegion)
   }
@@ -3197,7 +3198,124 @@ function analysisFilterBarHtml_(pfx){
     </div>`;
 }
 
+/* ============================================================================
+ *  TRANG "PHÂN TÍCH" · CHỌN THÁNG XEM BIỂU ĐỒ  (02/11/2026)
+ * ----------------------------------------------------------------------------
+ *  YÊU CẦU: xem lại biểu đồ theo ngày của các tháng đã qua, DÙNG LẠI cơ chế đã có ở
+ *  "Báo cáo tổng hợp → Hiệu quả vận hành máy" (HQ: server dựng lại số từng ngày từ
+ *  SmartGen/LIXiSE vào sheet 5R, web tải về, hqWithMonth_ tráo tạm dữ liệu) — KHÔNG có
+ *  code server mới, không có sheet mới.
+ *
+ *  MỘT LỰA CHỌN THÁNG DUY NHẤT: dùng chung HQ.sel với trang Báo cáo (rpHqThang_()). Bản
+ *  thiết kế đầu tiên giữ một biến riêng cho trang Phân tích, và hỏng ở đúng chỗ hai biến
+ *  lệch nhau: người dùng về "tháng đang chạy" ở trang Báo cáo thì hqEnsureData_ (đọc HQ.sel)
+ *  thôi tải bản dựng, còn trang Phân tích (đọc biến riêng) vẫn đòi tháng cũ → kẹt ở dòng
+ *  "Đang tải bản dựng…" mãi. Một nguồn sự thật thì không thể lệch nhau. Đổi lại: chọn tháng
+ *  ở trang nào thì trang kia đi theo — có chủ ý, vì chỉ giữ được MỘT bản dựng.
+ *
+ *  Tháng đang chạy: vẽ y như cũ (viewAnalysisBody_/afterAnalysisBody_ không đổi một dòng).
+ *  Tháng đã dựng: chạy CHÍNH các hàm đó bên trong hqWithMonth_ — mọi biểu đồ, bảng, bộ lọc
+ *  tự đọc số của tháng đó. Chưa dựng: thẻ tiến độ / lời mời dựng dùng chung với trang Báo cáo
+ *  (hqStatusCards_). Lưu ý: Sheet 5 chỉ chứa MỘT tháng nên số theo ngày của tháng cũ không còn
+ *  ở đâu ngoài SmartGen/LIXiSE — đó là lý do phải dựng lại, và dựng mất 5–15 phút chạy ngầm.
+ * ========================================================================= */
+/** Trạng thái chọn tháng, tính MỘT lần cho mỗi lần vẽ (rpHqDsThang_ dựng mô hình Sheet 9 — không gọi lặp trong cùng một lượt).
+ *  Cùng quy tắc với rpHqThang_: tháng đã chọn mà biến mất khỏi danh sách thì rơi về tháng đang chạy. */
+function anState_(){
+  const nay = rpHqThangNay_(), ds = rpHqDsThang_();
+  const sel = (HQ.sel && ds.indexOf(HQ.sel) >= 0) ? HQ.sel : nay;
+  return { nay: nay, ds: ds, sel: sel, past: sel !== nay };
+}
+function anIsPast_(){ return anState_().past; }
+
+/** ym đang được vẽ bằng bản dựng lại trên trang Phân tích ('' nếu không). Dùng cho các nút bấm SAU khi đã vẽ
+ *  (bấm cột → chi tiết ngày, xuất Excel…): chúng tự tính lại từ dữ liệu, nên phải chạy lại trong cùng phép
+ *  tráo, nếu không chúng đọc nhầm số của tháng đang chạy. Trả '' khi đang ở trong phép tráo (chống đệ quy). */
+function anActiveYm_(){
+  if (HQ.swapped) return '';
+  const cur = document.querySelector('.page.on');
+  if (!cur || cur.id !== 'pg-analysis') return '';
+  const A = anState_();
+  return (A.past && hqRebuiltShown_(A.sel)) ? hqYmOf_(A.sel) : '';
+}
+
+/** Đuôi tên file xuất khi đang ở bản dựng lại: '-202610'. Tháng đang chạy → ''. */
+function anFileTag_(){
+  return (HQ.swapped && S.dataCtx && S.dataCtx.rebuilt) ? '-' + String(S.dataCtx.ym).replace('-', '') : '';
+}
+
+/** Dải tin khi xem bản dựng lại (thay cho dải "đang xem tháng nào" viết cho tháng đang chạy). */
+function bangTinThangDungLai_(ym){
+  const B = (HQ.data && HQ.data.built) || {};
+  return '<div class="b bmu" style="display:block;margin-top:6px;padding:7px 10px;line-height:1.55;font-weight:500;white-space:normal">'
+    + '🗓 Đang xem <b>tháng ' + rpE_(hqLabelOf_(ym)) + '</b> — số theo ngày dựng lại từ SmartGen/LIXiSE lúc ' + rpE_(B.builtStr || '—')
+    + '. Ngày đánh giá là ngày cuối tháng; định mức thiết kế và danh sách máy là của hiện tại.</div>';
+}
+
+function anBarHtml_(A){
+  const ds = A.ds, nay = A.nay, sel = A.sel;
+  const j = HQ.st && HQ.st.job, c = HQ.st && HQ.st.cache;
+  const opt = ds.map(function(l){
+    const ym = hqYmOf_(l);
+    let tag = '';
+    if (l === nay) tag = ' — đang chạy';
+    else if (j && j.live && j.mode !== 'check' && j.ym === ym) tag = ' — đang dựng…';
+    else if (c && c.ym === ym) tag = ' — đã dựng, xem được theo ngày';
+    return '<option value="' + rpE_(l) + '"' + (l === sel ? ' selected' : '') + '>' + rpE_(l + tag) + '</option>';
+  }).join('');
+
+  let badge;
+  if (sel === nay) badge = '<span class="b bmu">Tháng đang chạy</span>';
+  else if (hqRebuiltShown_(sel)) badge = '<span class="b bg">Tháng đã dựng lại · đủ biểu đồ theo ngày</span>';
+  else badge = '<span class="b bmu" title="Sheet 5 đã dùng cho tháng mới; số theo ngày nằm ở SmartGen/LIXiSE">Chưa có số theo ngày</span>';
+
+  return '<div class="card" style="margin-bottom:12px"><div class="cb" style="padding:10px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<label style="font-size:12px;color:var(--mu)">Tháng xem biểu đồ</label>'
+    + '<select class="sel" style="width:auto" onchange="anPickMonth(this.value)">' + opt + '</select>'
+    + badge
+    + (sel !== nay ? '<button class="btn bg-gr sm" onclick="anPickMonth(\'' + rpE_(nay) + '\')">↩ Về tháng đang chạy</button>' : '')
+    + '<span style="font-size:11px;color:var(--mu)">Dùng chung cơ chế dựng lại số của Báo cáo tổng hợp · chỉ giữ MỘT tháng đã dựng</span>'
+    + '</div></div>';
+}
+
+/** onchange của ô chọn tháng — cùng việc với rpDoiThangHQ (trang Báo cáo), chỉ khác trang được vẽ lại. */
+async function anPickMonth(v){
+  HQ.sel = (v === rpHqThangNay_()) ? '' : v;
+  HQ.startErr = ''; HQ.loadErr = '';
+  renderPage('analysis');
+  if (!HQ.sel) return;
+  await hqPoll_();
+  const ym = hqYmOf_(v), j = HQ.st && HQ.st.job, c = HQ.st && HQ.st.cache;
+  if ((j && j.live) || (c && c.ym === ym)) hqEnsureData_();
+}
+
 function viewAnalysis(){
+  const A = anState_();
+  const bar = anBarHtml_(A);
+  if (!A.past) return bar + viewAnalysisBody_();
+
+  const label = A.sel, ym = hqYmOf_(label);
+  if (hqRebuiltShown_(label)){
+    try { return bar + hqWithMonth_(ym, viewAnalysisBody_); }
+    catch (e){ return bar + '<div class="empty">Không dựng được màn hình từ bản dựng: ' + rpE_(e.message) + '</div>'; }
+  }
+  return bar + hqStatusCards_(ym, label, { analysis: true })
+    + '<div class="card"><div class="cb" style="padding:12px 14px;font-size:12px;line-height:1.7">'
+    + 'Sheet 5 đã được dùng cho tháng mới nên <b>biểu đồ theo ngày</b> của tháng ' + rpE_(label) + ' phải lấy lại từ SmartGen/LIXiSE. '
+    + 'Muốn xem ngay <b>tổng cả tháng</b> (từng máy, so tháng trước) thì mở trang '
+    + '<a href="javascript:void(0)" onclick="nav(\'monthly\')">Tổng kết hiệu quả tháng</a> — dùng số đã chốt ở Sheet 9.</div></div>';
+}
+
+function afterAnalysis(){
+  const A = anState_();
+  if (!A.past) return afterAnalysisBody_();
+  const label = A.sel;
+  if (!hqRebuiltShown_(label)) return;          // đang hiện thẻ tiến độ/lời mời — không có biểu đồ nào để vẽ
+  try { hqWithMonth_(hqYmOf_(label), afterAnalysisBody_); }
+  catch (e){ console.warn('afterAnalysis (tháng dựng lại):', e); }
+}
+
+function viewAnalysisBody_(){
   const filteredM = applyAnalysisFilters_(S.master.rows);
   const totals = computeDailyTotals_(filteredM);
   const _ctx = dataCtx_();
@@ -3380,6 +3498,7 @@ function setCapacityClassFilter(key){
 }
 
 function exportCapacityClassCsv(){
+  { const _ym = anActiveYm_(); if (_ym) return hqWithMonth_(_ym, exportCapacityClassCsv); }   // đang xem bản dựng lại → chạy trên số của tháng đó
   const c = computeCapacityClassification_(applyAnalysisFilters_(S.master.rows));
   const headers = ['Mã máy','Trang trại','Đơn vị','Khu vực','Điện phát (kWh)','Giờ chạy (h)','CS phát TB (kW)','CS thiết kế (kW)','% Đạt','Phân loại'];
   const rows = c.rows.map(x => ({
@@ -3394,7 +3513,7 @@ function exportCapacityClassCsv(){
     '% Đạt': x.pct ?? '',
     'Phân loại': x.cls.label,
   }));
-  exportCsv({ headers, rows }, 'phan-loai-cong-suat-phat-tb');
+  exportCsv({ headers, rows }, 'phan-loai-cong-suat-phat-tb' + anFileTag_());
 }
 
 /* Biểu đồ cột theo ngày + đường trung bình (nét đứt) + tô vàng ngày lệch bất thường >20% + bấm vào để xem chi tiết. */
@@ -3455,7 +3574,7 @@ function chartBarClickable(id, labels, values, color, onDayClick, opts){
   });
 }
 
-function afterAnalysis(){
+function afterAnalysisBody_(){
   const filteredM = applyAnalysisFilters_(S.master.rows);
   const totals = computeDailyTotals_(filteredM);
   const codes = new Set(filteredM.map(r => String(r._byLetter.B||'').trim()));
@@ -3614,6 +3733,7 @@ function dodListHtml_(list, dir, unit){
 }
 
 function openDayDrilldown(day, metric){
+  { const _ym = anActiveYm_(); if (_ym) return hqWithMonth_(_ym, function(){ return openDayDrilldown(day, metric); }); }
   const filteredM = applyAnalysisFilters_(S.master.rows);
   const totals = computeDailyTotals_(filteredM);
   const pickVal_ = r => metric==='kwh' ? r.kwh : (metric==='hours' ? r.hours : r.avgKw);
@@ -3700,23 +3820,25 @@ function openDayDrilldown(day, metric){
 }
 
 function exportDayDrilldownCsv(day, metric){
+  { const _ym = anActiveYm_(); if (_ym) return hqWithMonth_(_ym, function(){ return exportDayDrilldownCsv(day, metric); }); }
   const filteredM = applyAnalysisFilters_(S.master.rows);
   const totals = computeDailyTotals_(filteredM);
   const rows = (totals.detailByDay[day-1] || []).map(r => ({
     'Mã máy': r.code, 'Trang trại': farmOfCode_(r.code),
     'Điện phát (kWh)': r.kwh ?? '', 'Giờ chạy (h)': r.hours ?? '', 'CS phát TB (kW)': r.avgKw ?? ''
   }));
-  exportCsv({ headers:['Mã máy','Trang trại','Điện phát (kWh)','Giờ chạy (h)','CS phát TB (kW)'], rows }, `phan-tich-ngay-${day}`);
+  exportCsv({ headers:['Mã máy','Trang trại','Điện phát (kWh)','Giờ chạy (h)','CS phát TB (kW)'], rows }, `phan-tich-ngay-${day}${anFileTag_()}`);
 }
 
 function exportAnalysisFullCsv(){
+  { const _ym = anActiveYm_(); if (_ym) return hqWithMonth_(_ym, exportAnalysisFullCsv); }
   const filteredM = applyAnalysisFilters_(S.master.rows);
   const totals = computeDailyTotals_(filteredM);
   const rows = [];
   totals.detailByDay.forEach((dayRows, i) => {
     dayRows.forEach(r => rows.push({ 'Ngày': i+1, 'Mã máy': r.code, 'Trang trại': farmOfCode_(r.code), 'Điện phát (kWh)': r.kwh ?? '', 'Giờ chạy (h)': r.hours ?? '', 'CS phát TB (kW)': r.avgKw ?? '' }));
   });
-  exportCsv({ headers:['Ngày','Mã máy','Trang trại','Điện phát (kWh)','Giờ chạy (h)','CS phát TB (kW)'], rows }, 'phan-tich-tong-hop-theo-ngay');
+  exportCsv({ headers:['Ngày','Mã máy','Trang trại','Điện phát (kWh)','Giờ chạy (h)','CS phát TB (kW)'], rows }, 'phan-tich-tong-hop-theo-ngay' + anFileTag_());
 }
 
 /* ============================================================
@@ -7655,24 +7777,24 @@ function numOrNull_(v){
 function soThang_(d){ return ('0'+(d.getMonth()+1)).slice(-2) + '/' + d.getFullYear(); }
 
 /* Tu suy khi server chua tra dataCtx. CO Y giu nguyen quy tac cua server de hai ben
- * khong noi hai chuyen: ngay du lieu = hom qua, thang du lieu = thang cua hom qua. */
+ * khong noi hai chuyen: ngay du lieu = hom qua, thang du lieu = thang cua hom qua.
+ *
+ * SUA 02/11/2026: maxValidDay = NGAY DU LIEU (khop s5MaxValidDay_ o server, mac dinh
+ * S5_ALLOW_TODAY_CELL = false). Ban cu cho phep toi HOM NAY, nen o ngay hom nay luon duoc
+ * doc — chinh la cho de lot so rac vao bieu do ("mung 2/11 da co so o o 2/11").
+ * Day chi la duong LUI khi server chua tra dataCtx; khi co dataCtx thi web nghe server,
+ * khong tu suy lai tu dong ho (xem dataCtx_). */
 function suyNgayDuLieu_(){
   const d = new Date();
   d.setDate(d.getDate() - 1);
   const y = d.getFullYear(), m = d.getMonth();
   const dim = new Date(y, m + 1, 0).getDate();
-  const now = new Date();
-  /* maxValidDay = ngay cuoi cung DUOC PHEP co so trong khoi cot.
-   *   · thang du lieu ≠ thang cua hom nay (dang o mung 1) → tron thang cu: 1..dim
-   *   · cung thang → toi HOM NAY, giu nguyen nhuong bo cu: van hanh co the nhap tay
-   *     so cua hom nay truoc khi Smartgen chot, giau di la giau so nguoi ta vua go. */
-  const cungThang = (now.getFullYear() === y && now.getMonth() === m);
   return {
     ym: y + '-' + ('0'+(m+1)).slice(-2),
     month: soThang_(d),
     daysInMonth: dim,
     dataDay: d.getDate(),                    // ngay moi nhat DA CHOT so
-    maxValidDay: cungThang ? Math.min(now.getDate(), dim) : dim,
+    maxValidDay: Math.min(d.getDate(), dim), // = ngay du lieu; o HOM NAY khong duoc phep co so
     keep: null,                 // web khong tu doan duoc duoi thang — chi server biet
     suy: true
   };
@@ -7716,6 +7838,10 @@ function nhanNgay_(day){
  *  khong ai doc nua, ma dung cai ngay can doc thi lai la ngay no bi bo qua.
  * -------------------------------------------------------------------------- */
 function bangTinNgayDuLieu_(){
+  /* Đang vẽ bằng bản DỰNG LẠI của một tháng cũ (hqWithMonth_ đã tráo dataCtx, đánh dấu rebuilt) thì dải tin
+   * phải nói về bản dựng, không phải câu "số của hôm nay sẽ có vào sáng mai… tự chuyển sang tháng mới" —
+   * câu đó chỉ đúng cho tháng đang chạy. */
+  if (HQ.swapped && S.dataCtx && S.dataCtx.rebuilt) return bangTinThangDungLai_(S.dataCtx.ym);
   const c = dataCtx_();
   const now = new Date();
   const thangDongHo = soThang_(now);
@@ -8822,10 +8948,56 @@ function monthlyDetailTableHtml_(months, machines, sel){
   const idx = months.findIndex(m=>m.label===sel);
   const prev = idx > 0 ? months[idx-1] : null;
 
+  /* SẮP XẾP THEO "LỆCH CÔNG TƠ" (devPct = (Tổng công suất − Chỉ số công tơ) ÷ Chỉ số công tơ, tính ở buildMonthlyModel_
+   * cho đúng tháng `sel`). Ba kiểu, vì "từ cao xuống thấp" có hai nghĩa tuỳ người đọc:
+   *   'abs' — theo |%| (lệch NẶNG nhất lên đầu, bất kể dương hay âm) — đúng với việc đi soát công tơ, nên là kiểu nên dùng;
+   *   'pos' — +% cao → thấp (phát nhiều hơn công tơ ghi nhận);
+   *   'neg' — −% sâu → nông (phát ít hơn công tơ ghi nhận).
+   * Máy CHƯA nhập công tơ (devPct rỗng) luôn nằm cuối, không bị trộn vào giữa dải số; cùng giá trị thì xếp theo mã
+   * máy để thứ tự ổn định giữa các lần vẽ. Chỉ đổi thứ tự BẢNG CHI TIẾT — tổng, biểu đồ và danh sách "lệch công tơ"
+   * phía trên vẫn tính trên đủ bộ máy, nên không con số nào đổi vì bấm sắp xếp. */
+  const mf = S.filters.monthly;
+  const mode = mf.sort || '';
+  const only = !!mf.onlyMismatch;
+  const devOf = x => ((x.byMonth || {})[sel] || {}).devPct;
+  let list = machines.slice();
+  if (only) list = list.filter(x => ((x.byMonth || {})[sel] || {}).mismatch);
+  if (mode){
+    const key = x => {
+      const v = devOf(x);
+      if (v == null || isNaN(v)) return null;
+      return mode === 'abs' ? -Math.abs(v) : (mode === 'pos' ? -v : v);   // khoá tăng dần = từ cao xuống thấp
+    };
+    list.sort((a, b) => {
+      const ka = key(a), kb = key(b);
+      if (ka == null && kb == null) return String(a.code).localeCompare(String(b.code));
+      if (ka == null) return 1;
+      if (kb == null) return -1;
+      return (ka - kb) || String(a.code).localeCompare(String(b.code));
+    });
+  }
+  const nBad = machines.filter(x => ((x.byMonth || {})[sel] || {}).mismatch).length;
+  const sortBar = `
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--bd,#e5e7eb);font-size:11px">
+        <label style="color:var(--mu)">Sắp xếp theo lệch công tơ</label>
+        <select class="sel" style="width:auto" onchange="S.filters.monthly.sort=this.value;renderPage('monthly')">
+          <option value="" ${!mode?'selected':''}>Mặc định (thứ tự Sheet 9)</option>
+          <option value="abs" ${mode==='abs'?'selected':''}>Lệch nhiều → ít (theo |%|)</option>
+          <option value="pos" ${mode==='pos'?'selected':''}>Phát nhiều hơn công tơ: +% cao → thấp</option>
+          <option value="neg" ${mode==='neg'?'selected':''}>Phát ít hơn công tơ: −% sâu → nông</option>
+        </select>
+        <label style="display:flex;gap:4px;align-items:center;cursor:pointer">
+          <input type="checkbox" ${only?'checked':''} onchange="S.filters.monthly.onlyMismatch=this.checked;renderPage('monthly')">
+          Chỉ máy lệch quá ±${METER_TOLERANCE_PCT}% (${nBad}/${machines.length})
+        </label>
+        <span style="color:var(--mu)">Máy chưa nhập công tơ luôn xếp cuối.</span>
+      </div>`;
+
   return `
     <div class="card">
       <div class="ch"><h3>Chi tiết theo máy · tháng ${esc(sel)}</h3>
-        <span class="b bmu">${machines.length} máy · ô "Chỉ số công tơ" nhập trực tiếp, tự lưu vào Sheet 9</span></div>
+        <span class="b bmu">${list.length}${list.length!==machines.length?'/'+machines.length:''} máy · ô "Chỉ số công tơ" nhập trực tiếp, tự lưu vào Sheet 9</span></div>
+      ${sortBar}
       <div class="tw" style="max-height:70vh"><table>
         <thead><tr>
           <th>Mã máy</th><th>Trang trại</th><th>Đơn vị</th><th>Khu vực</th>
@@ -8838,7 +9010,7 @@ function monthlyDetailTableHtml_(months, machines, sel){
           <th style="text-align:right">Lệch công tơ</th>
           ${prev?`<th style="text-align:right">So với ${esc(prev.label)}</th>`:''}
         </tr></thead>
-        <tbody>${machines.map(x=>{
+        <tbody>${list.map(x=>{
           const d = x.byMonth[sel] || {};
           const p = prev ? (x.byMonth[prev.label]||{}).power : null;
           const delta = (d.power!=null && p!=null) ? Math.round((d.power-p)*100)/100 : null;
@@ -21247,7 +21419,14 @@ function hqViewActive_(){
   const cur = document.querySelector('.page.on');
   return !!(cur && cur.id === 'pg-report' && RP.tab === 'hq');
 }
-function hqRefreshView_(){ if (hqViewActive_()) renderPage('report'); }
+/** Vẽ lại màn hình đang bị ảnh hưởng bởi trạng thái dựng: trang Báo cáo (tab Hiệu quả vận hành máy), hoặc
+ *  trang Phân tích khi đang chọn một THÁNG CŨ (trang này cũng đọc HQ.st/HQ.data). Tháng đang chạy ở trang
+ *  Phân tích không phụ thuộc bản dựng nên không vẽ lại — tránh giật màn hình mỗi lần hỏi tiến độ. */
+function hqRefreshView_(){
+  if (hqViewActive_()) return renderPage('report');
+  const cur = document.querySelector('.page.on');
+  if (cur && cur.id === 'pg-analysis' && anIsPast_()) renderPage('analysis');
+}
 
 /* ===========================================================================
  *  8 · TRÁO TẠM — CHẠY MỘT HÀM PHÂN TÍCH TRÊN DỮ LIỆU CỦA THÁNG CŨ
@@ -21406,15 +21585,19 @@ function hqFailCard_(j){
     + '</div></div>';
 }
 
-function hqOfferCard_(ym){
+function hqOfferCard_(ym, opt){
   const label = hqLabelOf_(ym);
   const c = HQ.st && HQ.st.cache;
+  const an = !!(opt && opt.analysis);       // thẻ hiện ở trang Phân tích: số theo ngày là thứ CẦN để vẽ biểu đồ, không phải tuỳ chọn
   return '<div class="card" style="margin-bottom:12px;border-left:3px solid #0f766e"><div class="cb" style="padding:12px 14px">'
-    + '<b style="font-size:13px">Tháng ' + rpE_(label) + ' · báo cáo từ số tổng đã chốt (Sheet 9)</b>'
+    + '<b style="font-size:13px">Tháng ' + rpE_(label) + (an ? ' · chưa có số theo ngày để vẽ biểu đồ' : ' · báo cáo từ số tổng đã chốt (Sheet 9)') + '</b>'
     + '<div style="font-size:12px;margin-top:6px;line-height:1.7">'
-    + 'Bên dưới đã đủ xếp loại cả tháng, % đạt thiết kế, so sánh giữa các tháng. '
-    + '<b>Tuỳ chọn:</b> muốn thêm các phân tích theo ngày — chuỗi ngày kém liên tiếp, độ đều giữa các ngày, phụ lục diễn biến theo ngày, '
-    + 'xuất Word đầy đủ — thì lấy lại số từng ngày từ SmartGen/LIXiSE (Sheet 9 không giữ số từng ngày). '
+    + (an
+        ? 'Các biểu đồ điện phát / giờ chạy / công suất theo từng ngày cần số TỪNG NGÀY, mà Sheet 9 chỉ giữ tổng cả tháng. '
+          + 'Lấy lại số từng ngày từ SmartGen/LIXiSE thì xem được đủ các biểu đồ của trang này cho tháng ' + rpE_(label) + '. '
+        : 'Bên dưới đã đủ xếp loại cả tháng, % đạt thiết kế, so sánh giữa các tháng. '
+          + '<b>Tuỳ chọn:</b> muốn thêm các phân tích theo ngày — chuỗi ngày kém liên tiếp, độ đều giữa các ngày, phụ lục diễn biến theo ngày, '
+          + 'xuất Word đầy đủ — thì lấy lại số từng ngày từ SmartGen/LIXiSE (Sheet 9 không giữ số từng ngày). ')
     + 'Việc chạy ngầm khoảng 5–15 phút, trong lúc chờ vẫn dùng web bình thường.</div>'
     + (HQ.startErr ? '<div style="font-size:12px;margin-top:6px;color:#b91c1c">' + rpE_(HQ.startErr) + '</div>' : '')
     + (hqCanEdit_()
@@ -21427,11 +21610,16 @@ function hqOfferCard_(ym){
 /** Màn hình của một THÁNG CŨ: tiến độ / lời mời dựng / bản đã dựng. */
 function hqViewPast_(label){
   const ym = hqYmOf_(label);
+  if (hqRebuiltShown_(label)) return hqViewRebuilt_(ym);
+  return hqStatusCards_(ym, label) + rpViewHieuQuaLichSu_(label);
+}
+
+/** Thẻ trạng thái của một tháng cũ CHƯA có bản dựng dùng được: đang dựng / đang tải về / lỗi tải / dựng lỗi-huỷ /
+ *  lời mời dựng. Dùng chung cho trang Báo cáo (hqViewPast_) và trang Phân tích (viewAnalysis) — hai trang
+ *  hiện ĐÚNG cùng một trạng thái, không có hai bản sao để lệch nhau. opt.analysis đổi câu chữ cho hợp trang. */
+function hqStatusCards_(ym, label, opt){
   const st = HQ.st || {};
   const job = st.job || null, cache = st.cache || null;
-
-  if (HQ.data && HQ.data.ym === ym && cache && cache.ym === ym && !(job && job.live))
-    return hqViewRebuilt_(ym);
 
   let h = '';
   if (job && job.live){
@@ -21450,9 +21638,9 @@ function hqViewPast_(label){
   } else if (job && job.ym === ym && (job.phase === 'error' || job.phase === 'cancelled')){
     h += hqFailCard_(job);
   } else {
-    h += hqOfferCard_(ym);
+    h += hqOfferCard_(ym, opt);
   }
-  return h + rpViewHieuQuaLichSu_(label);
+  return h;
 }
 
 function hqViewRebuilt_(ym){
