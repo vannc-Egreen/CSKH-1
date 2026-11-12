@@ -3296,7 +3296,7 @@ function viewAnalysis(){
 
   const label = A.sel, ym = hqYmOf_(label);
   if (hqRebuiltShown_(label)){
-    try { return bar + hqWithMonth_(ym, viewAnalysisBody_); }
+    try { return bar + hqFixCardHtml_(ym, 'an') + hqWithMonth_(ym, viewAnalysisBody_); }
     catch (e){ return bar + '<div class="empty">Không dựng được màn hình từ bản dựng: ' + rpE_(e.message) + '</div>'; }
   }
   return bar + hqStatusCards_(ym, label, { analysis: true })
@@ -3331,30 +3331,32 @@ function viewAnalysisBody_(){
 
     ${analysisComparisonHtml(totals, filteredM.length)}
 
+    ${anChartModeBarHtml_()}
+
     <div class="card">
       <div class="ch">
         <h3>Tổng điện phát ra theo ngày (kWh)</h3>
-        <span class="b bmu">Mỗi ngày 2 cột: <b style="color:#2379b8">Miền Bắc</b> · <b style="color:#1f9a57">Miền Nam</b> · nét đứt = thiết kế · viền vàng = lệch >${ANALYSIS_DEVIATION_PCT}% so với TB của miền · bấm vào cột để xem chi tiết</span>
+        ${anChartHint_('kwh')}
       </div>
-      <div class="cb"><div class="cw" style="height:340px"><canvas id="chDailyKwh"></canvas></div></div>
+      <div class="cb"><div class="cw" style="height:${anChartH_()}px"><canvas id="chDailyKwh"></canvas></div></div>
     </div>
     <div class="card">
       <div class="ch">
         <h3>Tổng số giờ chạy theo ngày (h)</h3>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <span class="b bmu">Mỗi ngày 2 cột: <b style="color:#2379b8">Miền Bắc</b> · <b style="color:#1f9a57">Miền Nam</b> · nét đứt = thiết kế · viền vàng = lệch >${ANALYSIS_DEVIATION_PCT}% so với TB của miền</span>
+          ${anChartHint_('hours')}
           <button class="btn bg-gr sm" onclick="exportAnalysisFullCsv()">⤓ Xuất Excel (cả bảng)</button>
         </div>
       </div>
-      <div class="cb"><div class="cw" style="height:340px"><canvas id="chDailyHours"></canvas></div></div>
+      <div class="cb"><div class="cw" style="height:${anChartH_()}px"><canvas id="chDailyHours"></canvas></div></div>
     </div>
 
     <div class="card">
       <div class="ch">
         <h3>Công suất phát trung bình theo ngày (kW)</h3>
-        <span class="b bmu">Tổng điện ÷ tổng giờ chạy của từng miền trong ngày · <b style="color:#2379b8">Miền Bắc</b> · <b style="color:#1f9a57">Miền Nam</b> · nét đứt = thiết kế · viền vàng = lệch &gt;${ANALYSIS_DEVIATION_PCT}% so với TB của miền · bấm vào cột để xem chi tiết</span>
+        ${anChartHint_('avgkw')}
       </div>
-      <div class="cb"><div class="cw" style="height:340px"><canvas id="chDailyAvgKw"></canvas></div></div>
+      <div class="cb"><div class="cw" style="height:${anChartH_()}px"><canvas id="chDailyAvgKw"></canvas></div></div>
     </div>
 
     ${capacityClassCardHtml_(filteredM)}
@@ -3701,7 +3703,81 @@ function chartBarClickable(id, labels, values, color, onDayClick, opts){
   });
 }
 
+/* ============================================================================
+ *  KIỂU BIỂU ĐỒ TRANG PHÂN TÍCH · HỢP NHẤT / PHÂN TÁCH BẮC–NAM
+ * ----------------------------------------------------------------------------
+ *  Mặc định HỢP NHẤT (giao diện cũ: 1 cột/ngày cho cả hệ thống). Chọn PHÂN TÁCH thì mỗi ngày 2 cột
+ *  Miền Bắc · Miền Nam. Lựa chọn nhớ theo trình duyệt (localStorage có thể bị chặn nên bọc try).
+ *  Cả hai kiểu dùng chung dữ liệu, chung bộ lọc, chung chức năng bấm cột xem chi tiết ngày.
+ * ========================================================================== */
+const AN_MODE_KEY = 'egAnChartMode';
+let AN_MODE_MEM = '';
+function anChartMode_(){
+  let m = AN_MODE_MEM;
+  if (!m){ try { m = localStorage.getItem(AN_MODE_KEY) || ''; } catch (e){ m = ''; } }
+  return m === 'split' ? 'split' : 'merged';
+}
+function anSetChartMode(m){
+  m = (m === 'split') ? 'split' : 'merged';
+  AN_MODE_MEM = m;
+  try { localStorage.setItem(AN_MODE_KEY, m); } catch (e){}
+  renderPage('analysis');
+}
+function anChartH_(){ return anChartMode_() === 'split' ? 340 : 260; }
+
+function anChartModeBarHtml_(){
+  const m = anChartMode_();
+  const btn = (id, txt, tip) => '<button class="fchip ' + (m === id ? 'on' : '') + '" title="' + esc(tip) + '" onclick="anSetChartMode(\'' + id + '\')">' + txt + '</button>';
+  return '<div class="card" style="margin-bottom:12px"><div class="cb" style="padding:10px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<label style="font-size:12px;color:var(--mu)">Kiểu biểu đồ</label>'
+    + btn('merged', 'Hợp nhất', 'Một cột mỗi ngày cho toàn bộ máy đang lọc')
+    + btn('split', 'Phân tách Bắc / Nam', 'Mỗi ngày hai cột: Miền Bắc và Miền Nam')
+    + '<span style="font-size:11px;color:var(--mu)">Áp dụng cho cả 3 biểu đồ theo ngày bên dưới</span>'
+    + '</div></div>';
+}
+
+/** Dòng chú thích bên phải tiêu đề mỗi biểu đồ, theo kiểu đang chọn. */
+function anChartHint_(metric){
+  const dev = ANALYSIS_DEVIATION_PCT;
+  if (anChartMode_() === 'split'){
+    const base = 'Mỗi ngày 2 cột: <b style="color:#2379b8">Miền Bắc</b> · <b style="color:#1f9a57">Miền Nam</b> · nét đứt = thiết kế · viền vàng = lệch &gt;' + dev + '% so với TB của miền';
+    if (metric === 'avgkw') return '<span class="b bmu">Tổng điện ÷ tổng giờ chạy của từng miền trong ngày · ' + base + ' · bấm vào cột để xem chi tiết</span>';
+    return '<span class="b bmu">' + base + (metric === 'kwh' ? ' · bấm vào cột để xem chi tiết' : '') + '</span>';
+  }
+  const base = 'Xanh đậm = thiết kế · xám = TB thực tế tháng này · cam = TB tháng trước · cột vàng = lệch &gt;' + dev + '%';
+  if (metric === 'avgkw') return '<span class="b bmu">Tổng điện phát ÷ tổng giờ chạy của chính ngày đó · ' + base + ' · bấm vào cột để xem chi tiết</span>';
+  if (metric === 'kwh') return '<span class="b bmu">' + base + ' · bấm vào cột để xem chi tiết</span>';
+  return '<span class="b bmu">' + base + '</span>';
+}
+
+/** Kiểu HỢP NHẤT — giữ nguyên cách vẽ của giao diện cũ. */
+function afterAnalysisMerged_(){
+  const filteredM = applyAnalysisFilters_(S.master.rows);
+  const totals = computeDailyTotals_(filteredM);
+  const codes = new Set(filteredM.map(r => String(r._byLetter.B||'').trim()));
+  const prev = prevMonthStats_(codes);
+
+  chartBarClickable('chDailyKwh', totals.labels, totals.kwhByDay, '#0d6e3f',
+    idx => openDayDrilldown(idx+1, 'kwh'),
+    { anomalyDay: totals.kwhAnomalyDay, mean: totals.meanKwh, design: totals.designKwhPerDay,
+      prev: prev ? { label: prev.label, value: prev.avgKwhPerDay, decimals: 0 } : null });
+
+  chartBarClickable('chDailyHours', totals.labels, totals.hoursByDay, '#2563eb',
+    idx => openDayDrilldown(idx+1, 'hours'),
+    { anomalyDay: totals.hoursAnomalyDay, mean: totals.meanHours, design: totals.designHoursPerDay,
+      prev: prev ? { label: prev.label, value: prev.avgHoursPerDay, decimals: 1 } : null });
+
+  chartBarClickable('chDailyAvgKw', totals.labels, totals.avgKwByDay, '#7c3aed',
+    idx => openDayDrilldown(idx+1, 'avgkw'),
+    { anomalyDay: totals.avgKwAnomalyDay, mean: totals.meanAvgKw, design: totals.designAvgKw,
+      prev: prev ? { label: prev.label, value: prev.avgKw, decimals: 1 } : null });
+}
+
 function afterAnalysisBody_(){
+  /* HAI KIỂU XEM — người dùng chọn ở thanh "Kiểu biểu đồ" phía trên (mặc định HỢP NHẤT = giao diện cũ):
+   *   · hợp nhất  : một cột/ngày cho toàn bộ máy đang lọc, đường thiết kế/TB/tháng trước của cả hệ thống;
+   *   · phân tách : mỗi ngày 2 cột Miền Bắc · Miền Nam (xem chartRegionBars_). */
+  if (anChartMode_() !== 'split') return afterAnalysisMerged_();
   /* 3 BIỂU ĐỒ THEO NGÀY — mỗi ngày 2 CỘT: Miền Bắc (xanh dương) · Miền Nam (xanh lá).
    * Tính tổng riêng cho từng miền trên CÙNG bộ lọc của trang (computeDailyTotals_ nhận danh sách
    * dòng máy nên gọi hai lần là đủ — không viết lại phép cộng nào). Đường nét đứt = thiết kế của
@@ -9176,8 +9252,12 @@ function monthlyDetailTableHtml_(months, machines, sel){
  *  (chotsoSyncSheet9_) nên nhân sự không gõ tay nữa. Thẻ này để xem / lọc / so sánh kWh – doanh thu – giá điện.
  *  TIỀN: server cắt doanh thu/VAT/đơn giá khi chức danh không có viewPrice; ở đây chỉ KHÔNG VẼ thêm — không phải chốt chặn.
  * ============================================================================ */
+/* BỘ LỌC: Miền / Loại hình / Đơn vị hợp tác / Mã máy lấy từ BỘ LỌC TỔNG ở đầu trang (S.filters.analysis) — thẻ này
+ * không còn ô lọc trùng với chúng. Ô riêng của thẻ chỉ là những thứ chỉ có ở số chốt: khoảng tháng, ô tìm trại/mã code,
+ * chọn NHIỀU trại/cụm và NHIỀU mã máy để xem chi tiết, kiểu so sánh, chỉ tiêu. */
 S.chot = { loaded:false, loading:false, err:'', records:[], months:[], warnings:[], used:{}, canMoney:false, last:null, readAt:0,
-           f:{ from:'', to:'', region:'', donvi:'', cluster:'', q:'' }, by:'cluster', metric:'kwh', detailYm:'', showWarn:false };
+           f:{ from:'', to:'', q:'' }, by:'cluster', metric:'kwh', showWarn:false, showTable:false,
+           selCluster:new Set(), selMc:new Set(), pickQ:{ cluster:'', mc:'' } };
 
 function chotLabel_(ym){ return ym ? ym.slice(5) + '/' + ym.slice(0,4) : ''; }
 
@@ -9187,7 +9267,8 @@ function chotMasterIndex_(){
   (S.master && S.master.rows || []).forEach(r => {
     const mc = String(r._byLetter && r._byLetter[COL.MA] || '').trim().toUpperCase();
     if (!mc) return;
-    m.set(mc, { region: regionOf(r), donvi: String(r._byLetter[COL.DONVI]||'').trim(), trai: String(r._byLetter[COL.TRAI]||'').trim() });
+    m.set(mc, { region: regionOf(r), type: typeOf(r), unit: canonUnit_(r._byLetter[COL.DONVI]),
+                donvi: String(r._byLetter[COL.DONVI]||'').trim(), trai: String(r._byLetter[COL.TRAI]||'').trim() });
   });
   return m;
 }
@@ -9198,6 +9279,8 @@ function chotEnrich_(){
     const x = r.mc ? idx.get(String(r.mc).toUpperCase()) : null;
     r._region = x ? x.region : 'Chưa xác định';
     r._donvi  = (x && x.donvi) || r.group || '(chưa rõ)';
+    r._type   = x ? x.type : '';          // để đối chiếu với bộ lọc tổng (Loại hình / Đơn vị hợp tác)
+    r._unit   = x ? x.unit : '';
     r._inMaster = !!x;
   });
 }
@@ -9214,7 +9297,6 @@ async function chotLoad_(fresh){
     chotEnrich_();
     if (!C.f.from && C.months.length) C.f.from = C.months[Math.max(0, C.months.length - 6)];
     if (!C.f.to && C.months.length) C.f.to = C.months[C.months.length - 1];
-    if (!C.detailYm && C.months.length) C.detailYm = C.months[C.months.length - 1];
     if (!C.canMoney && C.metric !== 'kwh') C.metric = 'kwh';
     if (d.synced && d.synced.ok && d.synced.changed) toast('Đã tự điền ' + d.synced.changed + ' ô "Chỉ số công tơ" vào Sheet 9 từ file chốt', 'ok');
     else if (d.synced && d.synced.ok === false) toast('Đồng bộ Sheet 9: ' + d.synced.error, 'err');
@@ -9228,11 +9310,26 @@ async function chotLoad_(fresh){
 function chotCardHtml_(){ return '<div id="chotCard"></div>'; }
 function chotInit_(){ if (!S.chot.loaded && !S.chot.loading) chotLoad_(false); else chotRender_(); }
 
-function chotFiltered_(){
-  const f = S.chot.f, q = f.q.trim().toLowerCase();
+/* Dòng số chốt sau BỘ LỌC TỔNG (S.filters.analysis: Khu vực / Loại hình / Đơn vị hợp tác / Mã máy) và khoảng tháng.
+ * Dòng không khớp máy nào ở Sheet 1 thì không có miền/loại hình/đơn vị để so → bị loại khi bộ lọc tổng đang bật. */
+function chotBase_(){
+  const f = S.chot.f, g = S.filters.analysis;
+  const gm = g.machine.size ? new Set(Array.from(g.machine).map(x => String(x).trim().toUpperCase())) : null;
   return S.chot.records.filter(r =>
     (!f.from || r.ym >= f.from) && (!f.to || r.ym <= f.to) &&
-    (!f.region || r._region === f.region) && (!f.donvi || r._donvi === f.donvi) && (!f.cluster || r.cluster === f.cluster) &&
+    (!gm || (r.mc && gm.has(String(r.mc).trim().toUpperCase()))) &&
+    (!g.region.size || g.region.has(r._region)) &&
+    (!g.type.size   || g.type.has(r._type)) &&
+    (!g.unit.size   || g.unit.has(r._unit)));
+}
+function chotMcKey_(r){ return r.mc || (r.codes && r.codes[0]) || ''; }
+function chotHasSel_(){ return S.chot.selCluster.size > 0 || S.chot.selMc.size > 0; }
+/* Sau thêm phần CHỌN: nhiều trại/cụm và/hoặc nhiều mã máy cùng lúc (hợp của hai tập), rồi ô tìm. */
+function chotFiltered_(){
+  const C = S.chot, q = C.f.q.trim().toLowerCase();
+  const sc = C.selCluster, sm = C.selMc, hasSel = chotHasSel_();
+  return chotBase_().filter(r =>
+    (!hasSel || sc.has(r.cluster) || sm.has(chotMcKey_(r))) &&
     (!q || (r.mc||'').toLowerCase().includes(q) || (r.farm||'').toLowerCase().includes(q) || r.codes.some(c => c.toLowerCase().includes(q))));
 }
 
@@ -9275,7 +9372,68 @@ function chotFmt_(v, metric){
 function chotSet_(k, v){ S.chot.f[k] = v; chotRender_(); }
 function chotSetBy_(v){ S.chot.by = v; chotRender_(); }
 function chotSetMetric_(v){ S.chot.metric = v; chotRender_(); }
-function chotReset_(){ const m = S.chot.months; S.chot.f = { from: m[Math.max(0,m.length-6)]||'', to: m[m.length-1]||'', region:'', donvi:'', cluster:'', q:'' }; chotRender_(); }
+function chotReset_(){
+  const C = S.chot, m = C.months;
+  C.f = { from: m[Math.max(0,m.length-6)]||'', to: m[m.length-1]||'', q:'' };
+  C.selCluster.clear(); C.selMc.clear(); C.pickQ = { cluster:'', mc:'' };
+  chotRender_();
+}
+
+/* ---- CHỌN NHIỀU TRẠI/CỤM, NHIỀU MÃ MÁY ------------------------------------------------------------------------
+ * Ô gõ + danh sách gợi ý chỉ vẽ lại PHẦN DANH SÁCH (không vẽ lại cả thẻ) để không mất con trỏ khi gõ. Chọn xong mới
+ * vẽ lại cả thẻ. Gợi ý lấy từ dữ liệu SAU bộ lọc tổng + khoảng tháng, bỏ mục đã chọn. */
+function chotPickOptions_(kind){
+  const C = S.chot, base = chotBase_(), out = new Map();
+  base.forEach(r => {
+    if (kind === 'cluster'){
+      const k = r.cluster; if (!k || C.selCluster.has(k) || out.has(k)) return;
+      out.set(k, { key:k, label:k, sub:'' });
+    } else {
+      const k = chotMcKey_(r); if (!k || C.selMc.has(k) || out.has(k)) return;
+      out.set(k, { key:k, label:k, sub:[r.farm, r._donvi].filter(Boolean).join(' · '), hay:(k + ' ' + (r.farm||'') + ' ' + r.codes.join(' ')).toLowerCase() });
+    }
+  });
+  return Array.from(out.values()).sort((a, b) => a.label.localeCompare(b.label, 'vi'));
+}
+function chotPickRender_(kind){
+  const box = $('chotDrop_' + kind); if (!box) return;
+  const q = String(S.chot.pickQ[kind] || '').trim().toLowerCase();
+  const all = chotPickOptions_(kind);
+  const list = q ? all.filter(o => (o.hay || o.label.toLowerCase()).includes(q)) : all;
+  if (!list.length){ box.innerHTML = '<div class="mcempty">' + (q ? 'Không có mục nào khớp “' + esc(q) + '”' : 'Đã chọn hết') + '</div>'; box.style.display = 'block'; return; }
+  const shown = list.slice(0, 12);
+  box.innerHTML = shown.map(o => '<button onmousedown="event.preventDefault();chotPick_(\'' + kind + '\',\'' + rpAttrJs_(o.key) + '\')"><span>' + esc(o.label) + '</span><span class="sub">' + esc(o.sub) + '</span></button>').join('')
+    + (list.length > shown.length ? '<div class="mchint">Còn ' + (list.length - shown.length) + ' mục — gõ thêm để thu hẹp</div>' : '');
+  box.style.display = 'block';
+}
+function chotPickInput_(kind, v){ S.chot.pickQ[kind] = v; chotPickRender_(kind); }
+function chotPickClose_(kind){ const b = $('chotDrop_' + kind); if (b) b.style.display = 'none'; }
+function chotPick_(kind, key){
+  (kind === 'cluster' ? S.chot.selCluster : S.chot.selMc).add(key);
+  S.chot.pickQ[kind] = '';
+  chotRender_();
+}
+function chotUnpick_(kind, key){ (kind === 'cluster' ? S.chot.selCluster : S.chot.selMc).delete(key); chotRender_(); }
+function chotClearSel_(){ S.chot.selCluster.clear(); S.chot.selMc.clear(); chotRender_(); }
+/* Bấm vào cột của biểu đồ xếp hạng = chọn mục đó (chỉ khi đang so sánh theo trại/cụm hoặc mã máy). */
+function chotRankClick_(key){
+  const by = S.chot.by;
+  if (by === 'cluster') S.chot.selCluster.add(key);
+  else if (by === 'mc') S.chot.selMc.add(key);
+  else return;
+  chotRender_();
+}
+
+/* Mô tả bộ lọc tổng đang bật, để người xem biết thẻ này đang theo bộ lọc nào. */
+function chotGlobalText_(){
+  const g = S.filters.analysis, p = [];
+  if (g.region.size) p.push(Array.from(g.region).join(', '));
+  if (g.type.size) p.push(Array.from(g.type).join(', '));
+  if (g.unit.size) p.push(Array.from(g.unit).join(', '));
+  if (g.machine.size) p.push(g.machine.size + ' mã máy');
+  return p.join(' · ');
+}
+
 async function chotSyncNow_(){
   if (!S.perm.editData){ toast('Chức danh hiện tại chỉ được xem', 'err'); return; }
   S.chot.loading = true; chotRender_();
@@ -9304,14 +9462,12 @@ function chotRender_(){
   if (!C.loaded){ el.innerHTML = ''; return; }
 
   const rows = chotFiltered_();
+  const hasSel = chotHasSel_();
   const agg = chotAgg_(rows, C.by);
   const months = C.months.filter(m => (!C.f.from || m >= C.f.from) && (!C.f.to || m <= C.f.to));
   const metric = (!C.canMoney && C.metric !== 'kwh') ? 'kwh' : C.metric;
   const tot = e => chotVal_(e, metric);
   agg.sort((a, b) => (tot(b) || 0) - (tot(a) || 0));
-  const regions = Array.from(new Set(C.records.map(r => r._region))).sort();
-  const donvis = Array.from(new Set(C.records.map(r => r._donvi))).sort((a,b)=>a.localeCompare(b,'vi'));
-  const clusters = Array.from(new Set(C.records.map(r => r.cluster))).filter(Boolean).sort((a,b)=>a.localeCompare(b,'vi'));
   const mOpt = (cur) => C.months.map(m => `<option value="${m}"${m===cur?' selected':''}>${chotLabel_(m)}</option>`).join('');
   const byOpts = [['cluster','Trại / cụm'],['mc','Mã máy'],['donvi','Đơn vị'],['group','Nhóm đối tác (file chốt)'],['region','Miền']];
   const metOpts = [['kwh','Số điện (kWh)']].concat(C.canMoney ? [['rev','Doanh thu (chưa VAT)'],['price','Giá điện TB (đ/kWh)']] : []);
@@ -9320,46 +9476,71 @@ function chotRender_(){
   const allKwh = rows.reduce((s, r) => s + r.kwh, 0);
   const unmatched = rows.filter(r => !r._inMaster);
   const metLabel = (metOpts.find(x => x[0] === metric) || [])[1] || '';
+  const nMay = new Set(rows.map(chotMcKey_)).size, nCum = new Set(rows.map(r => r.cluster)).size;
 
   const kpi = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px">
       <div class="card" style="padding:10px 14px;min-width:150px"><div style="font-size:10px;color:var(--mu)">Tổng số điện chốt</div><div style="font-size:18px;font-weight:700">${nfd_(allKwh,0)} kWh</div></div>
       ${C.canMoney ? `<div class="card" style="padding:10px 14px;min-width:150px"><div style="font-size:10px;color:var(--mu)">Doanh thu (chưa VAT)</div><div style="font-size:18px;font-weight:700">${vnd0_(allRev)} đ</div></div>
       <div class="card" style="padding:10px 14px;min-width:150px"><div style="font-size:10px;color:var(--mu)">Giá điện TB</div><div style="font-size:18px;font-weight:700">${allKwhRev>0 ? nfd_(allRev/allKwhRev,0) : '—'} đ/kWh</div></div>` : ''}
-      <div class="card" style="padding:10px 14px;min-width:150px"><div style="font-size:10px;color:var(--mu)">Số máy / cụm có số</div><div style="font-size:18px;font-weight:700">${new Set(rows.map(r=>r.mc||r.codes[0])).size} / ${new Set(rows.map(r=>r.cluster)).size}</div></div>
+      <div class="card" style="padding:10px 14px;min-width:150px"><div style="font-size:10px;color:var(--mu)">Số máy / cụm có số</div><div style="font-size:18px;font-weight:700">${nMay} / ${nCum}</div></div>
     </div>`;
 
-  const filters = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;font-size:11px">
+  const gtxt = chotGlobalText_();
+  const gbar = `<div style="font-size:11px;color:var(--mu);line-height:1.6;margin:0 0 10px">
+      Số liệu theo <b>bộ lọc tổng ở đầu trang</b>: ${gtxt ? '<b style="color:var(--g)">' + esc(gtxt) + '</b>' : '<b>chưa lọc — tất cả máy</b>'}.
+      Các ô dưới đây là bộ lọc riêng của số chốt.</div>`;
+
+  const filters = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;font-size:11px">
       <label>Từ tháng<br><select class="fi" onchange="chotSet_('from',this.value)">${mOpt(C.f.from)}</select></label>
       <label>Đến tháng<br><select class="fi" onchange="chotSet_('to',this.value)">${mOpt(C.f.to)}</select></label>
-      <label>Miền<br><select class="fi" onchange="chotSet_('region',this.value)">${chotOptions_(regions, C.f.region, 'Tất cả')}</select></label>
-      <label>Đơn vị<br><select class="fi" onchange="chotSet_('donvi',this.value)">${chotOptions_(donvis, C.f.donvi, 'Tất cả')}</select></label>
-      <label>Trại / cụm<br><select class="fi" onchange="chotSet_('cluster',this.value)">${chotOptions_(clusters, C.f.cluster, 'Tất cả')}</select></label>
-      <label>Tìm mã máy / trại / mã code<br><input class="fi" value="${esc(C.f.q)}" placeholder="VD: NS250, BeCA-108" onchange="chotSet_('q',this.value)"></label>
+      <label>Tìm trại / mã code<br><input class="fi" value="${esc(C.f.q)}" placeholder="VD: Linkfarm, BeCA-108" onchange="chotSet_('q',this.value)"></label>
       <label>So sánh theo<br><select class="fi" onchange="chotSetBy_(this.value)">${byOpts.map(o=>`<option value="${o[0]}"${o[0]===C.by?' selected':''}>${o[1]}</option>`).join('')}</select></label>
       <label>Chỉ tiêu<br><select class="fi" onchange="chotSetMetric_(this.value)">${metOpts.map(o=>`<option value="${o[0]}"${o[0]===metric?' selected':''}>${o[1]}</option>`).join('')}</select></label>
       <button class="btn bg-gr sm" onclick="chotReset_()">↺ Đặt lại</button>
     </div>`;
 
+  const pickBox = (kind, label, ph) => `<span style="display:inline-flex;gap:6px;align-items:center"><span style="font-size:11px;color:var(--mu)">${label}</span>
+      <span style="position:relative;display:inline-block"><input class="fi" id="chotPick_${kind}" autocomplete="off" placeholder="${ph}" style="width:230px;padding:7px 10px"
+        value="${esc(C.pickQ[kind] || '')}" oninput="chotPickInput_('${kind}',this.value)" onfocus="chotPickInput_('${kind}',this.value)" onblur="setTimeout(function(){chotPickClose_('${kind}')},180)">
+        <div class="mcdrop" id="chotDrop_${kind}" style="display:none"></div></span></span>`;
+  const chips = (kind, set) => Array.from(set).sort((a, b) => a.localeCompare(b, 'vi')).map(k =>
+      `<button class="fchip on" title="Bỏ chọn" onclick="chotUnpick_('${kind}','${rpAttrJs_(k)}')">${esc(k.length > 40 ? k.slice(0,39) + '…' : k)} ✕</button>`).join('');
+  const selBar = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;padding:10px 12px;border:1.5px dashed var(--bd);border-radius:10px">
+      ${pickBox('cluster', 'Chọn trại / cụm', 'Gõ tên trại / cụm…')}
+      ${pickBox('mc', 'Chọn mã máy', 'Gõ mã máy…')}
+      ${chips('cluster', C.selCluster)}${chips('mc', C.selMc)}
+      ${hasSel ? `<button class="fchip" onclick="chotClearSel_()">✕ Bỏ chọn hết</button>` : `<span style="font-size:11px;color:var(--mu)">Chọn được NHIỀU trại/cụm và NHIỀU mã máy cùng lúc — chọn xong sẽ hiện chi tiết từng máy từng tháng. Bấm vào cột của biểu đồ xếp hạng cũng là chọn.</span>`}
+    </div>`;
+
   const th = 'style="text-align:right;white-space:nowrap"';
-  const table = `<div class="tw" style="max-height:60vh"><table>
+  /* BẢNG SO SÁNH THEO THÁNG — ẨN MẶC ĐỊNH (danh sách dài, không ai cần đọc hết mỗi lần mở trang); bấm nút để hiện. */
+  const table = C.showTable ? `<div class="tw" style="max-height:60vh;margin-top:8px"><table>
       <thead><tr><th>${esc((byOpts.find(o=>o[0]===C.by)||[])[1]||'')}</th><th ${th}>Số máy</th>${months.map(m=>`<th ${th}>${chotLabel_(m)}</th>`).join('')}<th ${th}>Cả kỳ</th></tr></thead>
       <tbody>${agg.map(e => `<tr><td>${esc(e.key)}</td><td style="text-align:right">${e.n.size}</td>
         ${months.map(m => `<td style="text-align:right">${chotFmt_(e.byYm[m] ? chotVal_(e.byYm[m], metric) : null, metric)}</td>`).join('')}
-        <td style="text-align:right;font-weight:700">${chotFmt_(tot(e), metric)}</td></tr>`).join('') || `<tr><td colspan="${months.length+3}" style="color:var(--mu)">Không có dữ liệu theo bộ lọc</td></tr>`}</tbody></table></div>`;
+        <td style="text-align:right;font-weight:700">${chotFmt_(tot(e), metric)}</td></tr>`).join('') || `<tr><td colspan="${months.length+3}" style="color:var(--mu)">Không có dữ liệu theo bộ lọc</td></tr>`}</tbody></table></div>` : '';
+  const tbBar = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px">
+      <button class="btn bg-gr sm" onclick="S.chot.showTable=!S.chot.showTable;chotRender_()">${C.showTable ? 'Ẩn' : 'Hiện'} bảng so sánh theo tháng (${agg.length} dòng) ${C.showTable ? '▲' : '▼'}</button>
+      <button class="btn bg-gr sm" onclick="chotExport_()">⬇ Xuất CSV (${rows.length} dòng máy-tháng)</button></div>`;
 
-  /* Chi tiết từng máy của 1 tháng */
-  const dRows = rows.filter(r => r.ym === C.detailYm).sort((a,b) => (b.kwh||0) - (a.kwh||0));
-  const detail = `<div style="margin-top:14px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-      <b style="font-size:12px">Chi tiết từng máy — tháng</b>
-      <select class="fi" style="width:auto" onchange="S.chot.detailYm=this.value;chotRender_()">${mOpt(C.detailYm)}</select>
-      <button class="btn bg-gr sm" onclick="chotExport_()">⬇ Xuất CSV</button></div>
-    <div class="tw" style="max-height:50vh"><table><thead><tr><th>Mã máy</th><th>Mã code</th><th>Trại</th><th>Đơn vị</th><th>Miền</th>
-      <th ${th}>kWh thấp</th><th ${th}>kWh BT</th><th ${th}>kWh cao</th><th ${th}>Tổng kWh</th>
-      ${C.canMoney ? `<th ${th}>Giá TD</th><th ${th}>Giá TB</th><th ${th}>Giá CD</th><th ${th}>Doanh thu</th><th ${th}>Giá TB thực</th>` : ''}<th>Nguồn</th></tr></thead>
-      <tbody>${dRows.map(r => `<tr><td><span class="mm">${esc(r.mc||'—')}</span></td><td>${esc(r.codes.join(', '))}</td><td>${esc(r.farm)}</td><td>${esc(r._donvi)}</td><td>${esc(r._region)}</td>
-        <td style="text-align:right">${nfd_(r.kTd||null,0)}</td><td style="text-align:right">${nfd_(r.kTb||null,0)}</td><td style="text-align:right">${nfd_(r.kCd||null,0)}</td><td style="text-align:right;font-weight:700">${nfd_(r.kwh,1)}</td>
-        ${C.canMoney ? `<td style="text-align:right">${nfd_(r.pTd,0)}</td><td style="text-align:right">${nfd_(r.pTb,0)}</td><td style="text-align:right">${nfd_(r.pCd,0)}</td><td style="text-align:right">${r.rev>0?vnd0_(r.rev):'—'}</td><td style="text-align:right">${r.rev>0&&r.kwh>0?nfd_(r.rev/r.kwh,0):'—'}</td>` : ''}
-        <td style="color:var(--mu)">${r.src==='T'?'Sheet tháng':(r.src==='D'?'CHOT_SO/LICH_SU':'Lịch sử')}</td></tr>`).join('') || `<tr><td colspan="16" style="color:var(--mu)">Tháng này không có dòng nào theo bộ lọc</td></tr>`}</tbody></table></div></div>`;
+  /* CHI TIẾT TỪNG MÁY — CHỈ HIỆN KHI ĐÃ CHỌN trại/cụm hoặc mã máy. */
+  let detail = '';
+  if (hasSel){
+    const dAll = rows.slice().sort((a, b) => chotMcKey_(a).localeCompare(chotMcKey_(b)) || (a.ym < b.ym ? 1 : (a.ym > b.ym ? -1 : 0)));
+    const CAP = 400, dRows = dAll.slice(0, CAP);
+    detail = `<div style="margin-top:14px"><div style="font-size:12px;margin-bottom:6px"><b>Chi tiết đã chọn</b> —
+        ${C.selCluster.size} trại/cụm · ${C.selMc.size} mã máy → <b>${nMay}</b> máy, ${dAll.length} dòng máy-tháng (${chotLabel_(C.f.from)}–${chotLabel_(C.f.to)})</div>
+      <div class="tw" style="max-height:55vh"><table><thead><tr><th>Mã máy</th><th>Mã code</th><th>Trại</th><th>Đơn vị</th><th>Miền</th><th>Tháng</th>
+        <th ${th}>kWh thấp</th><th ${th}>kWh BT</th><th ${th}>kWh cao</th><th ${th}>Tổng kWh</th>
+        ${C.canMoney ? `<th ${th}>Giá TD</th><th ${th}>Giá TB</th><th ${th}>Giá CD</th><th ${th}>Doanh thu</th><th ${th}>Giá TB thực</th>` : ''}<th>Nguồn</th></tr></thead>
+        <tbody>${dRows.map(r => `<tr><td><span class="mm">${esc(r.mc||'—')}</span></td><td>${esc(r.codes.join(', '))}</td><td>${esc(r.farm)}</td><td>${esc(r._donvi)}</td><td>${esc(r._region)}</td><td>${chotLabel_(r.ym)}</td>
+          <td style="text-align:right">${nfd_(r.kTd||null,0)}</td><td style="text-align:right">${nfd_(r.kTb||null,0)}</td><td style="text-align:right">${nfd_(r.kCd||null,0)}</td><td style="text-align:right;font-weight:700">${nfd_(r.kwh,1)}</td>
+          ${C.canMoney ? `<td style="text-align:right">${nfd_(r.pTd,0)}</td><td style="text-align:right">${nfd_(r.pTb,0)}</td><td style="text-align:right">${nfd_(r.pCd,0)}</td><td style="text-align:right">${r.rev>0?vnd0_(r.rev):'—'}</td><td style="text-align:right">${r.rev>0&&r.kwh>0?nfd_(r.rev/r.kwh,0):'—'}</td>` : ''}
+          <td style="color:var(--mu)">${r.src==='T'?'Sheet tháng':(r.src==='D'?'CHOT_SO/LICH_SU':'Lịch sử')}</td></tr>`).join('') || `<tr><td colspan="17" style="color:var(--mu)">Không có dòng nào theo bộ lọc</td></tr>`}</tbody></table></div>
+      ${dAll.length > CAP ? `<div style="font-size:11px;color:var(--mu);margin-top:4px">Hiện ${CAP}/${dAll.length} dòng — thu hẹp khoảng tháng hoặc bớt mục đã chọn; "Xuất CSV" có đủ.</div>` : ''}</div>`;
+  } else {
+    detail = `<div style="margin-top:12px;font-size:11.5px;color:var(--mu)">Chi tiết từng máy từng tháng không hiện sẵn — <b>chọn trại/cụm hoặc mã máy</b> ở ô chọn phía trên (hoặc bấm vào cột của biểu đồ xếp hạng) để xem.</div>`;
+  }
 
   const sync = C.last ? `Đồng bộ Sheet 9 gần nhất: ${new Date(C.last.at).toLocaleString('vi-VN')} · ${C.last.changed} ô đổi` : 'Chưa đồng bộ lần nào';
   const warnBox = `<div style="margin-top:12px;font-size:11px;color:var(--mu);line-height:1.7">
@@ -9369,14 +9550,16 @@ function chotRender_(){
       ${C.showWarn ? `<ul style="margin:6px 0 0 16px">${C.warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     </div>`;
 
-  el.innerHTML = `<div class="card">${head}<div class="cb">${kpi}${filters}
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:14px">
-        <div><div style="font-size:11px;font-weight:600;margin-bottom:4px">So sánh ${esc(metLabel.toLowerCase())} theo ${esc((byOpts.find(o=>o[0]===C.by)||[])[1]||'').toLowerCase()} (top 15, cả kỳ)</div><div style="height:${Math.max(220, Math.min(15, agg.length)*24+40)}px"><canvas id="chotChRank"></canvas></div></div>
-        <div><div style="font-size:11px;font-weight:600;margin-bottom:4px">Diễn biến theo tháng (top 6)</div><div style="height:300px"><canvas id="chotChTrend"></canvas></div></div>
+  const nTrend = hasSel ? 10 : 6;
+  el.innerHTML = `<div class="card">${head}<div class="cb">${kpi}${gbar}${filters}${selBar}
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:10px">
+        <div><div style="font-size:11px;font-weight:600;margin-bottom:4px">So sánh ${esc(metLabel.toLowerCase())} theo ${esc((byOpts.find(o=>o[0]===C.by)||[])[1]||'').toLowerCase()} (${hasSel ? 'mục đã chọn' : 'top 15'}, cả kỳ)${(C.by==='cluster'||C.by==='mc') ? ' <span style="font-weight:400;color:var(--mu)">· bấm cột để chọn</span>' : ''}</div><div style="height:${Math.max(220, Math.min(15, agg.length) * 22 + 40)}px"><canvas id="chotChRank"></canvas></div></div>
+        <div><div style="font-size:11px;font-weight:600;margin-bottom:4px">Diễn biến theo tháng (${hasSel ? 'mục đã chọn' : 'top'} ${nTrend})</div><div style="height:300px"><canvas id="chotChTrend"></canvas></div></div>
       </div>
-      ${table}${detail}${warnBox}</div></div>`;
+      ${tbBar}${table}${detail}${warnBox}</div></div>`;
 
   chotCharts_(agg, months, metric);
+  ['cluster', 'mc'].forEach(k => { if (document.activeElement && document.activeElement.id === 'chotPick_' + k) chotPickRender_(k); });
 }
 
 function chotCharts_(agg, months, metric){
@@ -9390,12 +9573,14 @@ function chotCharts_(agg, months, metric){
     const top = agg.filter(e => chotVal_(e, metric)).slice(0, 15);
     r._chart = new Chart(r, { type:'bar',
       data:{ labels: top.map(e => e.key.length > 34 ? e.key.slice(0,33) + '…' : e.key), datasets:[{ data: top.map(e => chotVal_(e, metric)), backgroundColor:'#0d6e3f', borderRadius:4, maxBarThickness:18 }] },
-      options:{ indexAxis:'y', maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ backgroundColor:'#083d24', callbacks:{ label: c => fmt(c.parsed.x) } } },
+      options:{ indexAxis:'y', maintainAspectRatio:false,
+        onClick:(evt, els) => { if (els && els.length && top[els[0].index]) chotRankClick_(top[els[0].index].key); },
+        plugins:{ legend:{display:false}, tooltip:{ backgroundColor:'#083d24', callbacks:{ label: c => fmt(c.parsed.x) } } },
         scales:{ x:{ ticks:{ ...tick, callback: v => nfd_(v, 0) }, grid:{ color:'#f1f5f9' } }, y:{ ticks:tick, grid:{ display:false } } } } });
   }
   const t = kill('chotChTrend');
   if (t && agg.length && months.length){
-    const top = agg.filter(e => chotVal_(e, metric)).slice(0, 6);
+    const top = agg.filter(e => chotVal_(e, metric)).slice(0, chotHasSel_() ? 10 : 6);
     t._chart = new Chart(t, { type:'line',
       data:{ labels: months.map(chotLabel_), datasets: top.map((e, i) => ({ label: e.key.length > 28 ? e.key.slice(0,27) + '…' : e.key,
         data: months.map(m => e.byYm[m] ? chotVal_(e.byYm[m], metric) : null), borderColor: COLORS[i % COLORS.length], backgroundColor: COLORS[i % COLORS.length], tension:.25, spanGaps:true, pointRadius:3, borderWidth:2 })) },
@@ -9405,12 +9590,13 @@ function chotCharts_(agg, months, metric){
 }
 
 function chotExport_(){
-  const C = S.chot, rows = chotFiltered_().filter(r => r.ym === C.detailYm);
-  const headers = ['Mã máy','Mã code','Trại','Đơn vị','Miền','kWh thấp','kWh BT','kWh cao','Tổng kWh'].concat(C.canMoney ? ['Giá TD','Giá TB','Giá CD','Doanh thu (chưa VAT)','Giá TB thực (đ/kWh)'] : []);
-  const out = rows.map(r => { const o = { 'Mã máy':r.mc, 'Mã code':r.codes.join(' / '), 'Trại':r.farm, 'Đơn vị':r._donvi, 'Miền':r._region, 'kWh thấp':r.kTd, 'kWh BT':r.kTb, 'kWh cao':r.kCd, 'Tổng kWh':r.kwh };
+  const C = S.chot, rows = chotFiltered_().slice().sort((a, b) => chotMcKey_(a).localeCompare(chotMcKey_(b)) || (a.ym < b.ym ? 1 : -1));
+  if (!rows.length){ toast('Không có dòng nào để xuất theo bộ lọc hiện tại', 'err'); return; }
+  const headers = ['Mã máy','Mã code','Trại','Đơn vị','Miền','Tháng','kWh thấp','kWh BT','kWh cao','Tổng kWh'].concat(C.canMoney ? ['Giá TD','Giá TB','Giá CD','Doanh thu (chưa VAT)','Giá TB thực (đ/kWh)'] : []);
+  const out = rows.map(r => { const o = { 'Mã máy':r.mc, 'Mã code':r.codes.join(' / '), 'Trại':r.farm, 'Đơn vị':r._donvi, 'Miền':r._region, 'Tháng':chotLabel_(r.ym), 'kWh thấp':r.kTd, 'kWh BT':r.kTb, 'kWh cao':r.kCd, 'Tổng kWh':r.kwh };
     if (C.canMoney){ o['Giá TD'] = r.pTd; o['Giá TB'] = r.pTb; o['Giá CD'] = r.pCd; o['Doanh thu (chưa VAT)'] = r.rev; o['Giá TB thực (đ/kWh)'] = r.rev > 0 && r.kwh > 0 ? Math.round(r.rev / r.kwh) : ''; }
     return o; });
-  exportCsv({ headers, rows: out }, 'chot-so-dien-' + C.detailYm);
+  exportCsv({ headers, rows: out }, 'chot-so-dien-' + (C.f.from || '') + '-' + (C.f.to || ''));
 }
 
 function afterMonthly(){
@@ -21838,9 +22024,13 @@ function hqWithMonth_(ym, fn, opt){
   };
 
   const saved = { eff: S.efficiency, ctx: S.dataCtx, bmm: buildMonthlyModel_, cmr: computeMonthlyReport, wx: wXuat_ };
+  /* KHÔNG tự loại số: biểu đồ/báo cáo dựng lại hiển thị đúng số gốc (đã phát lại sổ sửa/duyệt). Ô bất thường
+   * (âm, >2.500 kWh, >24 h…) được LIỆT KÊ ở thẻ "Chuẩn lại số liệu" để nhân sự bấm vào sửa/duyệt; sửa xong
+   * lưu vào sổ (sheet 24) thì biểu đồ tự đúng và các lần dựng lại sau không phải sửa lại. */
+  const SAN = null;
   HQ.swapped = true;
   try {
-    S.efficiency = D.efficiency;
+    S.efficiency = SAN ? SAN.eff : D.efficiency;
     S.dataCtx = ctx;
     buildMonthlyModel_ = function (){ return trunc; };
 
@@ -22164,29 +22354,9 @@ function hqExtraCards_(ym, B, R, tot){
   }
   h += '</div></div>';
 
-  /* ---- Điểm bất thường còn lại (đúng luật của trang Cảnh báo, chạy trên số vừa dựng) ---- */
-  let an = [];
-  try { an = hqWithMonth_(ym, function (){ return computeDataAnomalies() || []; }); } catch (e){ an = []; }
-  const catName = id => { try { const c = ANOMALY_CATS.find(x => x.id === id); return c ? c.label : (id || 'Khác'); } catch (e){ return id || 'Khác'; } };
-  h += '<div class="card" style="margin-top:12px;border-left:3px solid ' + (an.length ? '#7c3aed' : '#0d6e3f') + '"><div class="cb" style="padding:10px 12px">'
-    + '<b style="font-size:12px">Điểm bất thường trong số vừa dựng</b>'
-    + '<span style="font-size:11px;color:var(--mu)"> — ' + an.length + ' điểm chưa có xác nhận · cùng bộ luật của trang Cảnh báo</span>';
-  if (!an.length){
-    h += '<div style="font-size:12px;margin-top:6px">Không điểm nào — mọi ô bất thường đều đã được xác nhận hoặc không còn trong số dựng lại.</div>';
-  } else {
-    const dem = {};
-    an.forEach(a => { dem[a.cat || 'khac'] = (dem[a.cat || 'khac'] || 0) + 1; });
-    h += '<div style="font-size:11.5px;color:var(--mu);margin-top:4px;line-height:1.65">'
-      + Object.keys(dem).map(k => rpE_(catName(k)) + ': <b>' + dem[k] + '</b>').join(' · ')
-      + '. Đây là số GỐC của mây; ô nào từng được KTV sửa tay mà không duyệt sẽ hiện lại ở đây — đối chiếu với thẻ trên.</div>'
-      + '<div class="tw" style="margin-top:8px;max-height:300px"><table><thead><tr><th>Mã máy</th><th>Nhóm</th><th>Nội dung</th></tr></thead><tbody>'
-      + an.slice().sort((a, b) => (a.severity === b.severity ? 0 : (a.severity === 'high' ? -1 : 1))).slice(0, 60).map(a =>
-        '<tr><td>' + rpMa_(a.maCode, 'hq-may') + '</td><td style="font-size:11px">' + rpE_(catName(a.cat)) + '</td>'
-        + '<td style="font-size:11px">' + rpE_(a.message) + '</td></tr>').join('')
-      + '</tbody></table></div>'
-      + (an.length > 60 ? '<div style="font-size:11px;color:var(--mu);margin-top:4px">Hiện 60/' + an.length + ' điểm nặng nhất.</div>' : '');
-  }
-  h += '</div></div>';
+  /* ---- Điểm bất thường còn lại: chạy đúng luật trang Cảnh báo trên số vừa dựng, KÈM thao tác sửa/duyệt tại chỗ
+   *      (hqFixCardHtml_, mục 9c) — sửa xong lưu vào sổ nên các lần dựng sau tự áp. ---- */
+  h += hqFixCardHtml_(ym, 'rp');
 
   /* ---- Máy không lấy được số ---- */
   const nd = R.noData || [];
@@ -22200,6 +22370,308 @@ function hqExtraCards_(ym, B, R, tot){
       + '</tbody></table></div></div></div>';
   }
   return h;
+}
+
+/* ===========================================================================
+ *  9c · CHUẨN LẠI SỐ LIỆU CỦA BẢN DỰNG — SỬA / DUYỆT TẠI CHỖ, LƯU VÀO SỔ ĐỂ LẦN DỰNG SAU TỰ ÁP
+ * ----------------------------------------------------------------------------
+ *  VẤN ĐỀ (biểu đồ tháng 9 dựng lại có cột 500–900 nghìn kWh/ngày): dựng lại lấy số GỐC của SmartGen/LIXiSE
+ *  rồi chỉ phát lại những gì sheet 24 còn ghi. Ô nào KTV đã sửa trước khi có sổ "Đã sửa" (hoặc sửa thẳng trên
+ *  Google Sheet) thì không còn dấu vết → số rác của mây quay lại. Sheet 9 không bị ảnh hưởng vì server loại ô
+ *  ngoài trần khi cộng, còn biểu đồ web thì cộng thẳng.
+ *
+ *  CÁCH XỬ LÝ — ba lớp, mỗi lớp đứng độc lập:
+ *    1 · KHÔNG tự loại số: biểu đồ/báo cáo của bản dựng hiển thị số gốc; hqSanitizedEff_ chỉ dùng để ĐẾM ô âm /
+ *        vượt trần (>2.500 kWh, >24 h) và báo ở đầu thẻ — nhân sự tự bấm sửa từng ô.
+ *    2 · hqFixBuild_: chạy ĐÚNG bộ luật của trang Cảnh báo trên số gốc, bỏ ô đã duyệt (khoá có tháng, nên duyệt
+ *        của tháng 9 chỉ tắt cảnh báo của tháng 9). Với ô lỗi, nếu máy chỉ có MỘT ô lỗi cho chỉ số đó thì gợi ý
+ *        số = Sheet 9 − tổng các ngày còn lại: Sheet 9 đã chốt qua mọi lần sửa nên đó chính là số KTV đã nhập.
+ *    3 · hqFixSave (server, HQFIX.gs): người dùng nhập số đúng → ghi một dòng "Đã sửa" vào sheet 24 với đúng
+ *        tháng (lần dựng sau hqEvents_ phát lại dòng này) + cập nhật ô ở sheet 5R để xem ngay.
+ *  "✓ Đúng" dùng lại action anomalyApprove sẵn có với khoá tháng của bản dựng.
+ *  KHÔNG ghi Sheet 5 và KHÔNG đụng Sheet 9: số tổng chính thức vẫn là số đã chốt.
+ * ========================================================================= */
+const HQ_FIX = { open: true, cat: '', limit: 60, busy: false, map: new Map() };
+
+function hqFixCap_(metric){ return metric === 'hours' ? ANOMALY_CFG.MAX_HOURS_PER_DAY : ANOMALY_CFG.MAX_KWH_PER_DAY; }
+/** Ô không hợp lệ theo luật của server (_dayVal5_): âm hoặc vượt trần 1 ngày. */
+function hqFixBadVal_(metric, n){ return n != null && isFinite(n) && (n < 0 || n > hqFixCap_(metric)); }
+
+/** S.efficiency của bản dựng đã loại ô không hợp lệ. Giữ cache trên D (đổi bản dựng → D mới → tính lại). */
+function hqSanitizedEff_(D){
+  if (D._san && D._san.src === D.efficiency) return D._san;
+  const eff = D.efficiency || { headers: [], rows: [] };
+  let rows = eff.rows || [];
+  const bad = [];
+  try {
+    const H = (eff.headers || []).filter(Boolean);
+    const dim = Number(D.built && D.built.dim) || 31;
+    const sp = getDailyColSplitForMonth_(H, dim);
+    const hMa = findHeader(H, 'mã.?máy', 'ma may', '^ma$');
+    const specs = [['power', sp.powerCols], ['hours', sp.hoursCols]];
+    rows = rows.map(function (r){
+      let out = r;
+      specs.forEach(function (sp2){
+        sp2[1].forEach(function (c, i){
+          const n = numOrNull_(r[c.header]);
+          if (!hqFixBadVal_(sp2[0], n)) return;
+          if (out === r) out = Object.assign({}, r);
+          out[c.header] = '';
+          bad.push({ code: String(r[hMa] || (r._byLetter && r._byLetter.B) || '').trim(), day: i + 1, metric: sp2[0], val: n });
+        });
+      });
+      return out;
+    });
+  } catch (e){ rows = eff.rows || []; bad.length = 0; }
+  D._san = { src: D.efficiency, eff: Object.assign({}, eff, { rows: rows }), bad: bad };
+  return D._san;
+}
+
+function hqFixKey_(code, day, metric){ return String(code || '').trim().toUpperCase() + '|' + day + '|' + metric; }
+
+/** Danh sách ô cần chuẩn lại của tháng ym (bản dựng đang giữ). Chạy luật cảnh báo trên SỐ GỐC. */
+function hqFixBuild_(ym){
+  const label = hqLabelOf_(ym);
+  const s9 = new Map();
+  try {
+    (rpHqModel_().machines || []).forEach(function (x){
+      const d = (x.byMonth || {})[label];
+      if (d) s9.set(String(x.code || '').trim().toUpperCase(), d);
+    });
+  } catch (e){ /* không có mô hình Sheet 9 thì chỉ không có gợi ý */ }
+
+  return hqWithMonth_(ym, function (){
+    const all = computeDataAnomalies({ includeApproved: true }) || [];
+    const okSet = anomalyOkSet_();
+    const eff = S.efficiency;
+    const H = eff.headers.filter(Boolean);
+    const sp = getDailyColSplitForMonth_(H, getDaysInCurrentMonth_());
+    const hMa = findHeader(H, 'mã.?máy', 'ma may', '^ma$');
+    const rowOf = new Map();
+    eff.rows.forEach(function (r){ rowOf.set(String(r[hMa] || (r._byLetter && r._byLetter.B) || '').trim().toUpperCase(), r); });
+
+    const cells = new Map();
+    all.forEach(function (a){
+      const k = hqFixKey_(a.maCode, a.day, a.metric);
+      let c = cells.get(k);
+      if (!c){
+        const v = anomalyValue_(a).val;
+        const n = numOrNull_(v);
+        c = { key: k, code: String(a.maCode || '').trim(), site: a.site || '', region: a.region || '', day: a.day, metric: a.metric,
+              raw: n, invalid: hqFixBadVal_(a.metric, n), approved: okSet.has(anomalyKeyOf_(a)),
+              cats: [], msgs: [], sev: 'med', target: false, sugg: null };
+        cells.set(k, c);
+      }
+      if (c.cats.indexOf(a.cat) < 0) c.cats.push(a.cat);
+      if (c.msgs.indexOf(a.message) < 0) c.msgs.push(a.message);
+      if (a.severity === 'high') c.sev = 'high';
+      if (a.cat === 'hours-no-power' || a.cat === 'power-no-hours') c.target = true;   // ô BỊ MẤT số (vế kia có)
+    });
+    /* Ô đã duyệt thì không còn cần xử lý — TRỪ ô không hợp lệ: duyệt không cứu được nó (Sheet 9 vẫn bỏ qua). */
+    const list = [];
+    cells.forEach(function (c){ if (!c.approved || c.invalid) list.push(c); });
+    list.forEach(function (c){ if (c.invalid) c.target = true; });
+
+    /* GỢI Ý SỐ ĐÚNG: máy có đúng MỘT ô mất/lỗi cho chỉ số đó → số = Sheet 9 − tổng các ngày hợp lệ còn lại. */
+    const grp = {};
+    list.forEach(function (c){ if (c.target){ const g = c.code.toUpperCase() + '|' + c.metric; grp[g] = (grp[g] || 0) + 1; } });
+    list.forEach(function (c){
+      if (!c.target || grp[c.code.toUpperCase() + '|' + c.metric] !== 1) return;
+      const o = s9.get(c.code.toUpperCase());
+      const tot = o ? (c.metric === 'hours' ? o.hours : o.power) : null;
+      const row = rowOf.get(c.code.toUpperCase());
+      if (tot == null || !isFinite(tot) || !row) return;
+      let sum = 0;
+      (c.metric === 'hours' ? sp.hoursCols : sp.powerCols).forEach(function (col, i){
+        if (i + 1 === c.day) return;
+        const n = numOrNull_(row[col.header]);
+        if (n != null && !hqFixBadVal_(c.metric, n)) sum += n;
+      });
+      const v = Math.round((tot - sum) * 100) / 100;
+      if (v >= 0 && v <= hqFixCap_(c.metric) && (c.invalid || v > 0)) c.sugg = { v: v, tot: tot, sum: sum };
+    });
+
+    list.sort(function (a, b){
+      return (b.invalid - a.invalid) || ((b.sev === 'high') - (a.sev === 'high')) ||
+             a.code.localeCompare(b.code) || (a.day - b.day);
+    });
+    return { cells: list, hasS9: s9.size > 0 };
+  }, { raw: true });
+}
+
+function hqFixToggle(){ HQ_FIX.open = !HQ_FIX.open; hqRefreshView_(); }
+function hqFixCat(c){ HQ_FIX.cat = c || ''; HQ_FIX.limit = 60; hqRefreshView_(); }
+function hqFixMore(){ HQ_FIX.limit += 60; hqRefreshView_(); }
+
+/** Thẻ "Chuẩn lại số liệu". where: 'an' (trang Phân tích) | 'rp' (trang Báo cáo). */
+function hqFixCardHtml_(ym, where){
+  const D = HQ.data;
+  if (!D || D.ym !== ym) return '';
+  let M;
+  try { M = hqFixBuild_(ym); } catch (e){ return ''; }
+  const E = ((D.report || {}).events) || {};
+  const can = hqCanEdit_();
+  const list = M.cells;
+  HQ_FIX.map = new Map(list.map(function (c){ return [c.key, c]; }));
+  const nInv = list.filter(function (c){ return c.invalid; }).length;
+  const nBad = hqSanitizedEff_(D).bad.length;
+  const mg = where === 'an' ? 'margin:0 0 12px' : 'margin:12px 0 0';
+  const label = hqLabelOf_(ym);
+  const lsu = 'Đã áp từ sổ (sheet 24): ' + (E.edit || 0) + ' lần sửa · ' + (E.approve || 0) + ' lần duyệt · ' + (E.unapprove || 0) + ' lần bỏ duyệt.';
+
+  if (!list.length && !nBad){
+    return '<div class="card" style="' + mg + ';border-left:3px solid #0d6e3f"><div class="cb" style="padding:10px 14px;font-size:12px">'
+      + '<b>✓ Số liệu tháng ' + rpE_(label) + ' đã chuẩn</b> — không còn ô bất thường chưa xử lý. ' + rpE_(lsu) + '</div></div>';
+  }
+
+  let h = '<div class="card" style="' + mg + ';border-left:3px solid ' + (nInv ? '#dc2626' : '#7c3aed') + '"><div class="cb" style="padding:10px 14px">'
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+    + '<b style="font-size:13px">⚠ Chuẩn lại số liệu tháng ' + rpE_(label) + '</b>'
+    + '<span class="b ' + (nInv ? 'br' : 'bmu') + '">' + list.length + ' ô chưa xử lý' + (nInv ? ' · ' + nInv + ' ô lỗi' : '') + '</span>'
+    + '<button class="btn bg-gr sm" onclick="hqFixToggle()">' + (HQ_FIX.open ? 'Thu gọn ▲' : 'Mở để chuẩn lại ▼') + '</button></div>'
+    + '<div style="font-size:11.5px;line-height:1.65;margin-top:6px;color:var(--mu)">'
+    + 'Dựng lại lấy số gốc của SmartGen/LIXiSE rồi phát lại lịch sử sửa/duyệt. ' + rpE_(lsu) + ' '
+    + (nBad ? '<b style="color:#b91c1c">' + nBad + ' ô âm / vượt trần (&gt;' + ANOMALY_CFG.MAX_KWH_PER_DAY + ' kWh hoặc &gt;' + ANOMALY_CFG.MAX_HOURS_PER_DAY + ' h/ngày) đang nằm trong biểu đồ theo số gốc</b> '
+        + '— bấm vào từng ô bên dưới để nhập số đúng, biểu đồ sẽ tự cập nhật. ' : '')
+    + 'Ô nào không còn dấu vết trong sổ thì nhập số đúng rồi <b>Lưu</b>: số được ghi vào sổ nên <b>lần dựng lại sau tự áp, không phải sửa lại</b>.'
+    + (can ? '' : ' <b>Chức danh hiện tại chỉ được xem — nhờ kỹ thuật sửa.</b>') + '</div>';
+
+  if (HQ_FIX.open){
+    const nameOf = function (id){ try { const c = ANOMALY_CATS.find(function (x){ return x.id === id; }); return c ? c.label : (id || 'Khác'); } catch (e){ return id || 'Khác'; } };
+    const dem = {};
+    list.forEach(function (c){ c.cats.forEach(function (k){ dem[k] = (dem[k] || 0) + 1; }); });
+    const chip = function (id, txt, n){
+      return '<button class="fchip ' + (HQ_FIX.cat === id ? 'on' : '') + '" onclick="hqFixCat(\'' + id + '\')">' + rpE_(txt) + ' (' + n + ')</button>';
+    };
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">'
+      + chip('', 'Tất cả', list.length)
+      + (nInv ? chip('invalid', 'Lỗi (âm / vượt trần)', nInv) : '')
+      + Object.keys(dem).map(function (k){ return chip(k, nameOf(k), dem[k]); }).join('') + '</div>';
+
+    const view = list.filter(function (c){
+      return !HQ_FIX.cat || (HQ_FIX.cat === 'invalid' ? c.invalid : c.cats.indexOf(HQ_FIX.cat) >= 0);
+    });
+    const shown = view.slice(0, HQ_FIX.limit);
+    const nSugg = shown.filter(function (c){ return c.sugg; }).length;
+    if (can){
+      h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">'
+        + '<button class="btn bg-g sm" ' + (HQ_FIX.busy ? 'disabled' : '') + ' onclick="hqFixSaveAll()">💾 Lưu tất cả ô đã có số (đang hiện)</button>'
+        + '<span style="font-size:11px;color:var(--mu)">' + (nSugg ? nSugg + ' ô đã điền sẵn số GỢI Ý theo Sheet 9 — kiểm tra rồi mới lưu.' : 'Chưa có gợi ý — nhập số đúng vào ô.') + '</span></div>';
+    }
+    h += '<div class="tw" style="margin-top:8px;max-height:460px"><table><thead><tr>'
+      + '<th>Mã máy</th><th>Trại</th><th style="text-align:center">Ngày</th><th>Chỉ số</th><th style="text-align:right">Số hiện tại</th><th>Vấn đề</th>'
+      + (can ? '<th>Số đúng</th><th></th>' : '') + '</tr></thead><tbody>'
+      + shown.map(function (c){
+        const kk = rpAttrJs_(c.key);
+        const cur = c.raw == null ? '(trống)' : rpN_(c.raw, 2);
+        return '<tr><td>' + rpMa_(c.code, 'hq-may') + '</td>'
+          + '<td style="font-size:11px">' + rpE_(c.site) + '</td>'
+          + '<td style="text-align:center">' + c.day + '</td>'
+          + '<td>' + (c.metric === 'hours' ? 'Giờ chạy (h)' : 'Điện phát (kWh)') + '</td>'
+          + '<td style="text-align:right;font-family:var(--mono);font-weight:600;color:' + (c.invalid ? '#b91c1c' : 'inherit') + '">' + cur + '</td>'
+          + '<td style="font-size:11px;white-space:normal;min-width:240px;line-height:1.5">' + c.msgs.map(function (m){ return rpE_(m); }).join('<br>') + '</td>'
+          + (can
+              ? '<td style="white-space:nowrap"><input class="inp hqfx" data-k="' + rpE_(c.key) + '" inputmode="decimal" style="width:96px" placeholder="số đúng" value="' + (c.sugg ? c.sugg.v : '') + '">'
+                + (c.sugg ? '<div style="font-size:10px;color:var(--mu)">gợi ý: Sheet 9 ' + rpN_(c.sugg.tot, 2) + ' − các ngày khác ' + rpN_(c.sugg.sum, 2) + '</div>' : '') + '</td>'
+                + '<td style="white-space:nowrap"><button class="btn bg-g sm" ' + (HQ_FIX.busy ? 'disabled' : '') + ' onclick="hqFixSaveOne(\'' + kk + '\')">Lưu số</button>'
+                + (c.invalid ? '' : ' <button class="btn bg-gr sm" ' + (HQ_FIX.busy ? 'disabled' : '') + ' title="Số này đúng với thực tế — thôi cảnh báo" onclick="hqFixApproveOne(\'' + kk + '\')">✓ Đúng</button>') + '</td>'
+              : '')
+          + '</tr>';
+      }).join('')
+      + '</tbody></table></div>'
+      + (view.length > shown.length
+          ? '<div style="margin-top:6px;font-size:11px;color:var(--mu)">Hiện ' + shown.length + '/' + view.length + ' ô. <a href="javascript:void(0)" onclick="hqFixMore()">Hiện thêm 60 ô</a></div>' : '');
+  }
+  return h + '</div></div>';
+}
+
+/** Ô nhập của một khoá (ưu tiên ô đang hiện trên màn hình). */
+function hqFixInput_(key){
+  const all = Array.prototype.filter.call(document.querySelectorAll('.hqfx'), function (el){ return el.dataset.k === key; });
+  return all.find(function (el){ return el.offsetParent !== null; }) || all[0] || null;
+}
+/** Đọc số người dùng gõ: chấp nhận dấu phẩy thập phân. Trả { v } hoặc { err }. */
+function hqFixParse_(c, raw){
+  const t = String(raw == null ? '' : raw).trim().replace(/\s/g, '').replace(',', '.');
+  if (t === '') return { skip: true };
+  const v = Number(t);
+  if (!isFinite(v)) return { err: 'Ô ' + c.code + ' ngày ' + c.day + ': "' + raw + '" không phải số.' };
+  if (v < 0 || v > hqFixCap_(c.metric))
+    return { err: 'Ô ' + c.code + ' ngày ' + c.day + ': số phải từ 0 đến ' + hqFixCap_(c.metric) + (c.metric === 'hours' ? ' h' : ' kWh') + ' (trần hợp lệ của một ngày).' };
+  return { v: Math.round(v * 100) / 100 };
+}
+
+async function hqFixSaveItems_(items){
+  const D = HQ.data;
+  if (!D || !items.length) return;
+  if (!hqCanEdit_()){ toast('Chức danh hiện tại chỉ được xem.', 'err'); return; }
+  if (HQ_FIX.busy) return;
+  HQ_FIX.busy = true;
+  toast('Đang lưu ' + items.length + ' ô vào sổ…');
+  try {
+    const d = await hqCall_({ action: 'hqFixSave', ym: D.ym,
+      items: items.map(function (x){ return { code: x.code, day: x.day, metric: x.metric, val: x.v, oldVal: x.raw == null ? '' : x.raw }; }) });
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Ghi thất bại');
+    toast('Đã lưu ' + d.n + ' ô — lần dựng lại sau sẽ tự áp.', 'ok');
+    HQ.data = null; HQ.loadErr = '';          // tải lại sheet 5R để công thức/biểu đồ lấy số mới
+    HQ_FIX.busy = false;
+    await hqEnsureData_();
+  } catch (e){
+    toast('Lỗi: ' + e.message, 'err');
+  } finally {
+    HQ_FIX.busy = false;
+    hqRefreshView_();
+  }
+}
+
+function hqFixSaveOne(key){
+  const c = HQ_FIX.map.get(key); if (!c) return;
+  const el = hqFixInput_(key);
+  const r = hqFixParse_(c, el ? el.value : '');
+  if (r.skip){ toast('Nhập số đúng cho ô này trước đã.', 'err'); return; }
+  if (r.err){ toast(r.err, 'err'); return; }
+  hqFixSaveItems_([{ code: c.code, day: c.day, metric: c.metric, v: r.v, raw: c.raw }]);
+}
+
+function hqFixSaveAll(){
+  const items = [];
+  const seen = new Set();
+  const inputs = Array.prototype.filter.call(document.querySelectorAll('.hqfx'), function (el){ return el.offsetParent !== null; });
+  for (let i = 0; i < inputs.length; i++){
+    const key = inputs[i].dataset.k;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const c = HQ_FIX.map.get(key); if (!c) continue;
+    const r = hqFixParse_(c, inputs[i].value);
+    if (r.skip) continue;
+    if (r.err){ toast(r.err, 'err'); return; }
+    items.push({ code: c.code, day: c.day, metric: c.metric, v: r.v, raw: c.raw });
+  }
+  if (!items.length){ toast('Chưa có ô nào có số để lưu.', 'err'); return; }
+  if (!window.confirm('Lưu ' + items.length + ' ô vào sổ (sheet 24)? Các số này sẽ được áp lại mỗi lần dựng lại tháng này.')) return;
+  hqFixSaveItems_(items);
+}
+
+async function hqFixApproveOne(key){
+  const c = HQ_FIX.map.get(key), D = HQ.data;
+  if (!c || !D || HQ_FIX.busy) return;
+  if (!hqCanEdit_()){ toast('Chức danh hiện tại chỉ được xem.', 'err'); return; }
+  HQ_FIX.busy = true;
+  toast('Đang ghi xác nhận…');
+  try {
+    const who = (S.user && S.user.name) || 'admin';
+    const d = await apiPost({ action: 'anomalyApprove', user: who,
+      payload: { items: [{ maCode: c.code, thang: D.ym, ngay: c.day, chiSo: c.metric, giaTri: c.raw, cat: c.cats[0] || '', message: c.msgs[0] || '' }],
+                 unapprove: false, nguoi: who } });
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Ghi thất bại');
+    await loadQlvt(true);
+    toast('Đã xác nhận ô này đúng — áp cho mọi lần dựng lại tháng này.', 'ok');
+  } catch (e){
+    toast('Lỗi: ' + e.message, 'err');
+  } finally {
+    HQ_FIX.busy = false;
+    hqRefreshView_();
+  }
 }
 
 /* ===========================================================================
