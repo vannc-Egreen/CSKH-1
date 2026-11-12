@@ -22024,10 +22024,10 @@ function hqWithMonth_(ym, fn, opt){
   };
 
   const saved = { eff: S.efficiency, ctx: S.dataCtx, bmm: buildMonthlyModel_, cmr: computeMonthlyReport, wx: wXuat_ };
-  /* KHÔNG tự loại số: biểu đồ/báo cáo dựng lại hiển thị đúng số gốc (đã phát lại sổ sửa/duyệt). Ô bất thường
-   * (âm, >2.500 kWh, >24 h…) được LIỆT KÊ ở thẻ "Chuẩn lại số liệu" để nhân sự bấm vào sửa/duyệt; sửa xong
-   * lưu vào sổ (sheet 24) thì biểu đồ tự đúng và các lần dựng lại sau không phải sửa lại. */
-  const SAN = null;
+  /* KHÔNG tự loại số. Ô bất thường mà ĐÃ CÓ số đúng (số đã chốt ở Sheet 9 trừ các ngày còn lại — chính là số KTV
+   * đã sửa/duyệt từ trước) thì DÙNG LUÔN số đó (hqAutoEff_), không bắt ai xác nhận lại. Ô chưa có số đúng thì
+   * còn nguyên số gốc và được LIỆT KÊ ở thẻ "Chuẩn lại số liệu" để nhân sự nhập; nhập xong lưu vào sổ (sheet 24). */
+  const SAN = (opt && opt.raw) ? null : hqAutoEff_(D);
   HQ.swapped = true;
   try {
     S.efficiency = SAN ? SAN.eff : D.efficiency;
@@ -22381,8 +22381,8 @@ function hqExtraCards_(ym, B, R, tot){
  *  ngoài trần khi cộng, còn biểu đồ web thì cộng thẳng.
  *
  *  CÁCH XỬ LÝ — ba lớp, mỗi lớp đứng độc lập:
- *    1 · KHÔNG tự loại số: biểu đồ/báo cáo của bản dựng hiển thị số gốc; hqSanitizedEff_ chỉ dùng để ĐẾM ô âm /
- *        vượt trần (>2.500 kWh, >24 h) và báo ở đầu thẻ — nhân sự tự bấm sửa từng ô.
+ *    1 · hqAutoEff_: ô bất thường ĐÃ CÓ số đúng (Sheet 9 đã chốt − các ngày còn lại) thì dùng luôn, không hỏi lại;
+ *        ô chưa có số đúng giữ số gốc và được liệt kê để nhân sự nhập.
  *    2 · hqFixBuild_: chạy ĐÚNG bộ luật của trang Cảnh báo trên số gốc, bỏ ô đã duyệt (khoá có tháng, nên duyệt
  *        của tháng 9 chỉ tắt cảnh báo của tháng 9). Với ô lỗi, nếu máy chỉ có MỘT ô lỗi cho chỉ số đó thì gợi ý
  *        số = Sheet 9 − tổng các ngày còn lại: Sheet 9 đã chốt qua mọi lần sửa nên đó chính là số KTV đã nhập.
@@ -22397,34 +22397,40 @@ function hqFixCap_(metric){ return metric === 'hours' ? ANOMALY_CFG.MAX_HOURS_PE
 /** Ô không hợp lệ theo luật của server (_dayVal5_): âm hoặc vượt trần 1 ngày. */
 function hqFixBadVal_(metric, n){ return n != null && isFinite(n) && (n < 0 || n > hqFixCap_(metric)); }
 
-/** S.efficiency của bản dựng đã loại ô không hợp lệ. Giữ cache trên D (đổi bản dựng → D mới → tính lại). */
-function hqSanitizedEff_(D){
-  if (D._san && D._san.src === D.efficiency) return D._san;
+/** S.efficiency của bản dựng sau khi DÙNG LUÔN số đã có: mỗi ô bất thường mà hqFixBuild_ tính được số đúng
+ *  (Sheet 9 đã chốt − tổng các ngày còn lại của máy; Sheet 9 đã đi qua mọi lần KTV sửa/duyệt nên đó là số đã chỉnh)
+ *  được thay vào, không hỏi lại. Ô chưa có số đúng giữ nguyên số gốc. Cache trên D (đổi bản dựng → D mới). */
+function hqAutoEff_(D){
+  if (D._auto && D._auto.src === D.efficiency) return D._auto;
   const eff = D.efficiency || { headers: [], rows: [] };
-  let rows = eff.rows || [];
-  const bad = [];
+  const out = { src: D.efficiency, eff: eff, applied: [] };
+  D._auto = out;
   try {
-    const H = (eff.headers || []).filter(Boolean);
-    const dim = Number(D.built && D.built.dim) || 31;
-    const sp = getDailyColSplitForMonth_(H, dim);
-    const hMa = findHeader(H, 'mã.?máy', 'ma may', '^ma$');
-    const specs = [['power', sp.powerCols], ['hours', sp.hoursCols]];
-    rows = rows.map(function (r){
-      let out = r;
-      specs.forEach(function (sp2){
-        sp2[1].forEach(function (c, i){
-          const n = numOrNull_(r[c.header]);
-          if (!hqFixBadVal_(sp2[0], n)) return;
-          if (out === r) out = Object.assign({}, r);
-          out[c.header] = '';
-          bad.push({ code: String(r[hMa] || (r._byLetter && r._byLetter.B) || '').trim(), day: i + 1, metric: sp2[0], val: n });
+    const M = hqFixBuild_(D.ym);
+    const sug = M.cells.filter(function (c){ return c.sugg; });
+    if (sug.length){
+      const H = (eff.headers || []).filter(Boolean);
+      const dim = Number(D.built && D.built.dim) || 31;
+      const sp = getDailyColSplitForMonth_(H, dim);
+      const hMa = findHeader(H, 'mã.?máy', 'ma may', '^ma$');
+      const by = new Map();
+      sug.forEach(function (c){ const k = c.code.toUpperCase(); if (!by.has(k)) by.set(k, []); by.get(k).push(c); });
+      const rows = (eff.rows || []).map(function (r){
+        const mine = by.get(String(r[hMa] || (r._byLetter && r._byLetter.B) || '').trim().toUpperCase());
+        if (!mine) return r;
+        const o = Object.assign({}, r);
+        mine.forEach(function (c){
+          const col = (c.metric === 'hours' ? sp.hoursCols : sp.powerCols)[c.day - 1];
+          if (!col) return;
+          o[col.header] = c.sugg.v;
+          out.applied.push({ code: c.code, site: c.site, day: c.day, metric: c.metric, was: c.raw, val: c.sugg.v });
         });
+        return o;
       });
-      return out;
-    });
-  } catch (e){ rows = eff.rows || []; bad.length = 0; }
-  D._san = { src: D.efficiency, eff: Object.assign({}, eff, { rows: rows }), bad: bad };
-  return D._san;
+      out.eff = Object.assign({}, eff, { rows: rows });
+    }
+  } catch (e){ out.eff = eff; out.applied = []; }
+  return out;
 }
 
 function hqFixKey_(code, day, metric){ return String(code || '').trim().toUpperCase() + '|' + day + '|' + metric; }
@@ -22511,17 +22517,20 @@ function hqFixCardHtml_(ym, where){
   try { M = hqFixBuild_(ym); } catch (e){ return ''; }
   const E = ((D.report || {}).events) || {};
   const can = hqCanEdit_();
-  const list = M.cells;
+  const auto = M.cells.filter(function (c){ return c.sugg; });      // đã có số đúng → ĐÃ dùng luôn (hqAutoEff_)
+  const list = M.cells.filter(function (c){ return !c.sugg; });    // chưa có số đúng → chờ nhân sự nhập
   HQ_FIX.map = new Map(list.map(function (c){ return [c.key, c]; }));
   const nInv = list.filter(function (c){ return c.invalid; }).length;
-  const nBad = hqSanitizedEff_(D).bad.length;
+  const nBad = nInv;
+  const nAuto = auto.length;
+  const autoTxt = nAuto ? '<b style="color:#0d6e3f">' + nAuto + ' ô bất thường đã có số đúng (theo Sheet 9 đã chốt) → tự dùng luôn, không cần xác nhận.</b> ' : '';
   const mg = where === 'an' ? 'margin:0 0 12px' : 'margin:12px 0 0';
   const label = hqLabelOf_(ym);
   const lsu = 'Đã áp từ sổ (sheet 24): ' + (E.edit || 0) + ' lần sửa · ' + (E.approve || 0) + ' lần duyệt · ' + (E.unapprove || 0) + ' lần bỏ duyệt.';
 
   if (!list.length && !nBad){
     return '<div class="card" style="' + mg + ';border-left:3px solid #0d6e3f"><div class="cb" style="padding:10px 14px;font-size:12px">'
-      + '<b>✓ Số liệu tháng ' + rpE_(label) + ' đã chuẩn</b> — không còn ô bất thường chưa xử lý. ' + rpE_(lsu) + '</div></div>';
+      + '<b>✓ Số liệu tháng ' + rpE_(label) + ' đã chuẩn</b> — không còn ô bất thường chưa xử lý. ' + autoTxt + rpE_(lsu) + '</div></div>';
   }
 
   let h = '<div class="card" style="' + mg + ';border-left:3px solid ' + (nInv ? '#dc2626' : '#7c3aed') + '"><div class="cb" style="padding:10px 14px">'
@@ -22530,10 +22539,10 @@ function hqFixCardHtml_(ym, where){
     + '<span class="b ' + (nInv ? 'br' : 'bmu') + '">' + list.length + ' ô chưa xử lý' + (nInv ? ' · ' + nInv + ' ô lỗi' : '') + '</span>'
     + '<button class="btn bg-gr sm" onclick="hqFixToggle()">' + (HQ_FIX.open ? 'Thu gọn ▲' : 'Mở để chuẩn lại ▼') + '</button></div>'
     + '<div style="font-size:11.5px;line-height:1.65;margin-top:6px;color:var(--mu)">'
-    + 'Dựng lại lấy số gốc của SmartGen/LIXiSE rồi phát lại lịch sử sửa/duyệt. ' + rpE_(lsu) + ' '
+    + 'Dựng lại lấy số gốc của SmartGen/LIXiSE rồi phát lại lịch sử sửa/duyệt. ' + rpE_(lsu) + ' ' + autoTxt
     + (nBad ? '<b style="color:#b91c1c">' + nBad + ' ô âm / vượt trần (&gt;' + ANOMALY_CFG.MAX_KWH_PER_DAY + ' kWh hoặc &gt;' + ANOMALY_CFG.MAX_HOURS_PER_DAY + ' h/ngày) đang nằm trong biểu đồ theo số gốc</b> '
-        + '— bấm vào từng ô bên dưới để nhập số đúng, biểu đồ sẽ tự cập nhật. ' : '')
-    + 'Ô nào không còn dấu vết trong sổ thì nhập số đúng rồi <b>Lưu</b>: số được ghi vào sổ nên <b>lần dựng lại sau tự áp, không phải sửa lại</b>.'
+        + '— ô dưới đây CHƯA có số đúng: nhập số rồi <b>Lưu</b>, biểu đồ tự cập nhật. ' : '')
+    + 'Số nhập được ghi vào sổ nên <b>lần dựng lại sau tự áp, không phải sửa lại</b>.'
     + (can ? '' : ' <b>Chức danh hiện tại chỉ được xem — nhờ kỹ thuật sửa.</b>') + '</div>';
 
   if (HQ_FIX.open){
@@ -22552,11 +22561,10 @@ function hqFixCardHtml_(ym, where){
       return !HQ_FIX.cat || (HQ_FIX.cat === 'invalid' ? c.invalid : c.cats.indexOf(HQ_FIX.cat) >= 0);
     });
     const shown = view.slice(0, HQ_FIX.limit);
-    const nSugg = shown.filter(function (c){ return c.sugg; }).length;
     if (can){
       h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">'
         + '<button class="btn bg-g sm" ' + (HQ_FIX.busy ? 'disabled' : '') + ' onclick="hqFixSaveAll()">💾 Lưu tất cả ô đã có số (đang hiện)</button>'
-        + '<span style="font-size:11px;color:var(--mu)">' + (nSugg ? nSugg + ' ô đã điền sẵn số GỢI Ý theo Sheet 9 — kiểm tra rồi mới lưu.' : 'Chưa có gợi ý — nhập số đúng vào ô.') + '</span></div>';
+        + '<span style="font-size:11px;color:var(--mu)">Nhập số đúng vào các ô muốn sửa rồi lưu.</span></div>';
     }
     h += '<div class="tw" style="margin-top:8px;max-height:460px"><table><thead><tr>'
       + '<th>Mã máy</th><th>Trại</th><th style="text-align:center">Ngày</th><th>Chỉ số</th><th style="text-align:right">Số hiện tại</th><th>Vấn đề</th>'
