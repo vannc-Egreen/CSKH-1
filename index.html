@@ -12204,6 +12204,8 @@ const Q = {
      * loại hình · đơn vị hợp tác) để người dùng không phải học lại cách lọc ở mỗi trang. */
     stockRegion:new Set(), stockType:new Set(), stockUnit:new Set(),
     moveQ:'', moveType:'', moveVt:'',  // bộ lọc sổ nhật ký
+    moveTu:'', moveDen:'',             // khoảng ngày (yyyy-MM-dd) của sổ nhật ký
+    dmQ:'', dmTu:'', dmDen:'',         // tab riêng "Điều chỉnh định mức"
     normQ:'', normVt:'',               // bộ lọc bảng sửa định mức (modal)
     catQ:'',                           // bộ lọc trang Danh mục vật tư
     /* Trang SIM. simLv mặc định RỖNG = hiện tất cả: bản cũ mặc định "chỉ SIM tới hạn" nên khi không có SIM nào
@@ -12612,8 +12614,12 @@ function viewStock(){
            tư đều phải chờ lượt gọi đó, kể cả khi người dùng chỉ muốn xem tồn. -->
       <button class="fchip" onclick="kkMoSo()"
         title="Sheet 35 · mọi lần đếm kho thực tế và phần chênh lệch đã phân bổ vào chi phí">⚖ Sổ kiểm kê</button>
+      <!-- "Điều chỉnh định mức" là vết sửa cấu hình (không phải phiếu kho) nên có mục riêng cạnh
+           Sổ kiểm kê, không lẫn trong bảng lịch sử nhập xuất. -->
+      ${t('dm','🎚 Điều chỉnh định mức','Vết sửa định mức / đơn giá / tồn tối thiểu — không phải phiếu nhập xuất, không đụng tới tồn kho')}
     </div>`;
   if (tab === 'vet') return tabs + viewStockAudit_();
+  if (tab === 'dm') return tabs + viewStockNorm_();
   /* Chênh lệch kiểm kê chưa xử lý hiện ngay trên tab Tồn kho — đúng chỗ người dùng đang
    * nhìn con số tồn, vì đó là con số mà chênh lệch giải thích. */
   const kkCard = (tab === 'ton') ? (function(){ try { return kkTheCanhBao_(); } catch(e){ return ''; } })() : '';
@@ -12977,9 +12983,18 @@ function viewStockLog_(){
   const fType = Q.f.moveType || '';
   const fVt = Q.f.moveVt || '';
 
+  const fTu = Q.f.moveTu || '', fDen = Q.f.moveDen || '';
+  const nDm = src.filter(r => qLoai_(g(r,'Loại phiếu')) === 'Điều chỉnh định mức').length;
+  const srcPhieu = src.length - nDm;                    // phiếu kho thật, không tính vết định mức
   let rows = src.filter(r => {
-    if (fType && qLoai_(g(r,'Loại phiếu')) !== fType) return false;
+    const lk = qLoai_(g(r,'Loại phiếu'));
+    if (lk === 'Điều chỉnh định mức') return false;     // đã tách sang tab riêng
+    if (fType && lk !== fType) return false;
     if (fVt && String(g(r,'Mã VT')).trim() !== fVt) return false;
+    if (fTu || fDen){
+      const day = String(g(r,'Thời gian')).slice(0,10);
+      if (day){ if (fTu && day < fTu) return false; if (fDen && day > fDen) return false; }
+    }
     if (!q) return true;
     return `${g(r,'Mã máy')} ${g(r,'Trang trại')} ${g(r,'Tên vật tư')} ${g(r,'Lý do')} ${g(r,'Kỹ thuật viên')} ${g(r,'Người thực hiện')}`
       .toLowerCase().includes(q);
@@ -12998,6 +13013,23 @@ function viewStockLog_(){
    * Đây là tài sản đang di chuyển giữa hai trại: trại giao 900 k thì trại nhận phải
    * nhập đủ 900 k. Chỉ đếm số phiếu thì cuối tháng kho hụt mà không truy ra bao nhiêu. */
   const tienMangDi = sumKind('Xuất - Mang đi');
+  /* NHẬP RÒNG = Nhập − Mang đi: hàng đã chuyển đi không còn là hàng nhập cho máy này
+   * (khớp readStockMap_ bên server: Mang đi trừ cả tổng nhập, tổng tiền nhập lẫn tồn). */
+  const nhapRong = nhap - tienMangDi;
+  /* Tổng theo từng loại cho hàng TỔNG cuối bảng — tính trên TOÀN BỘ phiếu khớp lọc, không
+   * chỉ 400 dòng đang vẽ. Phiếu Kiểm kê mang SỐ ĐẾM TỒN (không phải lượng nhập/xuất) nên
+   * không cộng vào SL. */
+  const TK = {};
+  ['Nhập','Xuất - Sử dụng','Xuất - Mang đi','Kiểm kê','Bù kiểm kê'].forEach(k => TK[k] = { n:0, sl:0, tien:0 });
+  rows.forEach(r => {
+    const k = qLoai_(g(r,'Loại phiếu')); const t = TK[k]; if (!t) return;
+    t.n++; t.sl += (numOrNull_(g(r,'Số lượng')) || 0); t.tien += (numOrNull_(g(r,'Thành tiền (đ)')) || 0);
+  });
+  const slRong = TK['Nhập'].sl - TK['Xuất - Mang đi'].sl;
+  const tonDoi = TK['Nhập'].sl - TK['Xuất - Sử dụng'].sl - TK['Xuất - Mang đi'].sl;
+  const slTong = TK['Nhập'].sl + TK['Xuất - Sử dụng'].sl + TK['Xuất - Mang đi'].sl;
+  const tienTong = rows.reduce((s,r)=>s+(numOrNull_(g(r,'Thành tiền (đ)'))||0),0);
+  Q._moveView = rows;                                   // để nút CSV xuất ĐÚNG phần đang lọc
 
   const items = qItems_(false);
   const chip = (on,label,onclick) => `<button class="fchip ${on?'on':''}" onclick="${onclick}">${label}</button>`;
@@ -13007,8 +13039,8 @@ function viewStockLog_(){
   return `
     <div class="ph">
       <h1>Nhật ký nhập xuất vật tư</h1>
-      <p>${nint_(src.length)} phiếu · lọc ${nint_(rows.length)}
-        ${Q.perm.viewPrice?` · nhập <b style="color:var(--s3)">${fmtVnd_(nhap)}</b> · đã dùng <b style="color:var(--red)">${fmtVnd_(xuatDung)}</b>`:''}
+      <p>${nint_(srcPhieu)} phiếu · lọc ${nint_(rows.length)}
+        ${Q.perm.viewPrice?` · nhập <b style="color:var(--s3)" title="Nhập ${fmtVnd_(nhap)} − Mang đi ${fmtVnd_(tienMangDi)}">${fmtVnd_(nhapRong)}</b>${nMangDi?' <span style="font-size:11px;color:var(--mu)">(đã trừ mang đi)</span>':''} · đã dùng <b style="color:var(--red)">${fmtVnd_(xuatDung)}</b>`:''}
         ${nMangDi?` · <b style="color:var(--amb)">${nint_(nMangDi)} phiếu mang đi</b>${Q.perm.viewPrice?` <b style="color:var(--amb)">${fmtVnd_(tienMangDi)}</b>`:''} <span style="font-size:11px;color:var(--mu)">(giảm tồn &amp; giảm tài sản kho · chi phí máy = 0)</span>`:''}
         <br><span style="font-size:11px;color:var(--mu)">Sổ cái “15. Nhật ký nhập xuất vật tư”. Phiếu ghi sai thì bấm <b>✎</b> để sửa hoặc <b>🗑</b> để xoá —
         tồn kho, cột “Tồn sau phiếu” và chi phí tự tính lại; mỗi lần sửa/xoá để lại vết ở “34. Lịch sử sửa/xoá phiếu vật tư” (khôi phục được).
@@ -13019,14 +13051,17 @@ function viewStockLog_(){
     <div class="fbar">
       <span class="mslbl">Loại phiếu</span>
       ${chip(!fType,'Tất cả',"Q.f.moveType='';renderPage('stock')")}
-      ${['Nhập','Xuất - Sử dụng','Xuất - Mang đi','Kiểm kê','Điều chỉnh định mức']
+      ${['Nhập','Xuất - Sử dụng','Xuất - Mang đi','Kiểm kê','Bù kiểm kê']
         .map(l=>chip(fType===l,l,`Q.f.moveType='${l}';renderPage('stock')`)).join('')}
+      ${nDm ? `<span style="font-size:11px;color:var(--mu);margin-left:6px">${nint_(nDm)} dòng điều chỉnh định mức → mục
+        <a href="#" onclick="Q.f.stockTab='dm';renderPage('stock');return false">🎚 Điều chỉnh định mức</a></span>` : ''}
     </div>
     <div class="fbar">
       <span class="mslbl">Vật tư</span>
       ${chip(!fVt,'Tất cả',"Q.f.moveVt='';renderPage('stock')")}
       ${items.map(v=>chip(fVt===v.vt, esc(v.ten), `Q.f.moveVt='${esc(v.vt)}';renderPage('stock')`)).join('')}
     </div>
+    ${qDateBar_('moveTu','moveDen','mv')}
 
     <div class="msf">
       <!-- id BẮT BUỘC: renderPage() chỉ trả lại con trỏ cho input CÓ id. Thiếu id thì
@@ -13035,7 +13070,7 @@ function viewStockLog_(){
       <input class="si" id="qMoveSearch" style="flex:1" placeholder="🔍 Tìm mã máy, trại, lý do, kỹ thuật viên…"
              value="${esc(Q.f.moveQ||'')}" oninput="Q.f.moveQ=this.value;renderPage('stock')">
       <button class="btn bg-b sm" onclick="qPickMachine()">+ Lập phiếu</button>
-      <button class="btn bg-gr sm" onclick="exportCsv(Q.moveLog,'nhat-ky-nhap-xuat-vat-tu')">⤓ CSV</button>
+      <button class="btn bg-gr sm" onclick="exportCsv({headers:(Q.moveLog||{}).headers||[],rows:Q._moveView||[]},'nhat-ky-nhap-xuat-vat-tu')" title="Xuất đúng phần đang lọc">⤓ CSV</button>
     </div>
 
     <div class="card"><div class="tw" style="max-height:64vh"><table>
@@ -13094,11 +13129,187 @@ function viewStockLog_(){
           })()}</td>
         </tr>`;
       }).join('') || '<tr><td colspan="14"><div class="empty">Chưa có phiếu nào khớp bộ lọc.</div></td></tr>'}</tbody>
+      ${rows.length ? (() => {
+        const pr = Q.perm.viewPrice;
+        const st = 'position:sticky;bottom:0;background:#f1f5f2;font-weight:700;border-top:2px solid var(--g);';
+        const mono = 'text-align:right;font-family:var(--mono);white-space:nowrap;';
+        const sub = (lbl, t, col) => `<tr style="background:#fafcfb">
+          <td colspan="5" style="font-size:11px;color:${col||'var(--mu)'};padding-left:18px">${lbl}${t.n!=null?` · ${nint_(t.n)} phiếu`:''}</td>
+          <td style="${mono}font-size:11px">${nfd_(t.sl)}</td>
+          ${pr?`<td style="${mono}font-size:11px">${t.tien==null?'':fmtVnd_(t.tien)}</td>`:''}
+          <td colspan="${pr?7:6}"></td></tr>`;
+        const mixed = !fVt ? ' title="Đang gộp nhiều vật tư (khác đơn vị tính) — chọn 1 vật tư ở bộ lọc để SL có nghĩa"' : '';
+        return `<tfoot>
+          <tr style="${st}">
+            <td colspan="5">Σ TỔNG · ${nint_(rows.length)} phiếu khớp lọc${fTu||fDen?` · ${esc(fTu||'…')} → ${esc(fDen||'…')}`:''}</td>
+            <td style="${mono}"${mixed}>${nfd_(slTong)}</td>
+            ${pr?`<td style="${mono}">${fmtVnd_(tienTong)}</td>`:''}
+            <td colspan="${pr?7:6}" style="font-size:11px;font-weight:400;color:var(--mu)">SL = Nhập + Xuất dùng + Mang đi (không gồm Kiểm kê) · tiền = mọi phiếu khớp lọc</td>
+          </tr>
+          ${sub('Nhập', TK['Nhập'], 'var(--s3)')}
+          ${sub('Xuất – Sử dụng', TK['Xuất - Sử dụng'], 'var(--red)')}
+          ${sub('Xuất – Mang đi', TK['Xuất - Mang đi'], 'var(--amb)')}
+          ${sub('= Nhập ròng (Nhập − Mang đi)', { n:null, sl:slRong, tien:nhapRong })}
+          ${TK['Kiểm kê'].n ? sub('Kiểm kê (SL = số đếm tồn, không cộng vào tổng)', { n:TK['Kiểm kê'].n, sl:null, tien:TK['Kiểm kê'].tien }) : ''}
+          ${TK['Bù kiểm kê'].n ? sub('Bù kiểm kê', TK['Bù kiểm kê']) : ''}
+          ${sub('Biến động tồn ròng (Nhập − Dùng − Mang đi)', { n:null, sl:tonDoi, tien:null })}
+        </tfoot>`;
+      })() : ''}
     </table></div>
     ${rows.length>400?`<div class="cb" style="padding:8px 14px;font-size:11px;color:var(--mu)">
       Hiển thị 400 phiếu mới nhất trong ${nint_(rows.length)} phiếu khớp lọc — tải CSV để xem đủ.</div>`:''}
     </div>
   `;
+}
+
+/* ---------------------------------------------------------------------------
+ *  NGỮ CẢNH MÀN HÌNH CHO CHATBOT — trang đang mở + bộ lọc đang chọn.
+ *  Người dùng hỏi "vì sao hai con số này lệch" mà không nói lại bộ lọc; thiếu thông tin này bot
+ *  không biết đang so tập máy nào (vd. Thuê + Hợp tác) nên không dựng lại được con số họ thấy.
+ *  Khoá đặt trùng tên tham số công cụ reconcile để bot truyền thẳng. Server lọc lại (cbotUiClean_).
+ * ------------------------------------------------------------------------- */
+function chatUiCtx_(){
+  const pg = document.querySelector('.page.on');
+  const page = pg ? String(pg.id || '').replace(/^pg-/, '') : '';
+  if (!page) return null;
+  const arr = x => Array.from(x || []).map(String);
+  const o = { page: page, filters: {} };
+  const put = (k, v) => { if (Array.isArray(v) ? v.length : (v !== '' && v != null)) o.filters[k] = v; };
+  const F = (S && S.filters) || {};
+  if (page === 'analysis' && F.analysis){
+    const a = F.analysis;
+    put('machine_types', arr(a.type)); put('region', arr(a.region)); put('owner', arr(a.unit)); put('machines', arr(a.machine));
+  } else if (page === 'monthly' && F.monthly){
+    const m = F.monthly;
+    if (m.month) o.month = String(m.month);
+    put('machine_types', arr(m.type)); put('region', arr(m.region)); put('owner', arr(m.unit)); put('q', m.q || '');
+  } else if (page === 'stock'){
+    o.tab = (Q.f && Q.f.stockTab) || '';
+    if (Q.f){ put('machine_types', arr(Q.f.stockType)); put('region', arr(Q.f.stockRegion)); put('owner', arr(Q.f.stockUnit)); put('q', Q.f.moveQ || ''); put('from', Q.f.moveTu || ''); put('to', Q.f.moveDen || ''); }
+  } else if (page === 'matcost'){
+    if (RP && RP.cpThang) o.month = String(RP.cpThang);
+    if (RP && RP.f){ put('region', arr(RP.f.khu)); put('province', arr(RP.f.tinh)); put('machine_types', arr(RP.f.loai)); put('owner', arr(RP.f.donVi)); }
+  }
+  return o;
+}
+
+/* ---------------------------------------------------------------------------
+ *  BỘ LỌC THỜI GIAN DÙNG CHUNG (sổ nhật ký + tab Điều chỉnh định mức)
+ *  kTu / kDen = tên khoá trong Q.f lưu 'yyyy-MM-dd'. Chọn mốc hoặc gõ khoảng ngày tuỳ ý.
+ * ------------------------------------------------------------------------- */
+function qYmd_(d){
+  const p = n => String(n).padStart(2,'0');
+  return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate());
+}
+function qDatePreset_(kTu, kDen, k){
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+  let tu = '', den = '';
+  if (k === 'hom'){ tu = den = qYmd_(now); }
+  else if (k === '7'){ const d = new Date(now); d.setDate(d.getDate()-6); tu = qYmd_(d); den = qYmd_(now); }
+  else if (k === '30'){ const d = new Date(now); d.setDate(d.getDate()-29); tu = qYmd_(d); den = qYmd_(now); }
+  else if (k === 'thang'){ tu = qYmd_(new Date(y, m, 1)); den = qYmd_(new Date(y, m+1, 0)); }
+  else if (k === 'thangtr'){ tu = qYmd_(new Date(y, m-1, 1)); den = qYmd_(new Date(y, m, 0)); }
+  else if (k === 'nam'){ tu = y + '-01-01'; den = y + '-12-31'; }
+  Q.f[kTu] = tu; Q.f[kDen] = den;
+  renderPage('stock');
+}
+function qDateSet_(kTu, kDen, which, v){
+  Q.f[which === 'tu' ? kTu : kDen] = String(v || '');
+  /* Đảo ngược khoảng (từ > đến) thì hoán đổi, đừng để bảng trống mà không ai hiểu vì sao. */
+  if (Q.f[kTu] && Q.f[kDen] && Q.f[kTu] > Q.f[kDen]){ const t = Q.f[kTu]; Q.f[kTu] = Q.f[kDen]; Q.f[kDen] = t; }
+  renderPage('stock');
+}
+function qDateBar_(kTu, kDen, pre){
+  const tu = Q.f[kTu] || '', den = Q.f[kDen] || '';
+  const on = !!(tu || den);
+  const chip = (lbl, k) => `<button class="fchip" onclick="qDatePreset_('${kTu}','${kDen}','${k}')">${lbl}</button>`;
+  return `<div class="fbar">
+    <span class="mslbl">Thời gian</span>
+    <button class="fchip ${on?'':'on'}" onclick="qDatePreset_('${kTu}','${kDen}','')">Tất cả</button>
+    ${chip('Hôm nay','hom')}${chip('7 ngày','7')}${chip('30 ngày','30')}${chip('Tháng này','thang')}${chip('Tháng trước','thangtr')}${chip('Năm nay','nam')}
+    <span style="font-size:11px;color:var(--mu);margin-left:8px">Từ</span>
+    <input type="date" class="si" id="${pre}Tu" style="width:140px" value="${esc(tu)}" onchange="qDateSet_('${kTu}','${kDen}','tu',this.value)">
+    <span style="font-size:11px;color:var(--mu)">đến</span>
+    <input type="date" class="si" id="${pre}Den" style="width:140px" value="${esc(den)}" onchange="qDateSet_('${kTu}','${kDen}','den',this.value)">
+  </div>`;
+}
+
+/* ---------------------------------------------------------------------------
+ *  TAB 4 · ĐIỀU CHỈNH ĐỊNH MỨC — vết sửa cấu hình (đơn giá, tồn tối thiểu, định mức dòng máy)
+ *  Vẫn nằm trong Sheet 15 (loại "Điều chỉnh định mức") để tra ai đổi gì lúc nào, nhưng KHÔNG
+ *  phải phiếu kho: không đổi tồn, không vào tổng nhập/xuất. Nên tách khỏi bảng lịch sử.
+ *  Gói tải về chỉ có 800 phiếu cuối; vết cũ hơn thì hỏi server (cùng cách với sổ nhật ký).
+ * ------------------------------------------------------------------------- */
+const DCN = { key:'', res:null, pending:'', timer:null };
+function dcNormKey_(){ return JSON.stringify([Q.f.dmQ || '', Q.f.dmTu || '', Q.f.dmDen || '']); }
+function dcNormEnsure_(){
+  const m = Q.moveLog || {};
+  if (!(Number(m.total) > (m.rows || []).length)) return;              // sổ đã tải đủ
+  const key = dcNormKey_();
+  if (DCN.key === key || DCN.pending === key) return;
+  clearTimeout(DCN.timer);
+  DCN.pending = key;
+  DCN.timer = setTimeout(async () => {
+    try {
+      const a = JSON.parse(key);
+      const d = await apiPost({ action: 'qlvtMoveLog', payload: { q: a[0], tu: a[1], den: a[2], loai: 'Điều chỉnh định mức', limit: 5000 } });
+      if (d && d.ok){ DCN.key = key; DCN.res = d; }
+    } catch (e){ /* mạng chập chờn: giữ phần đã tải */ }
+    finally { if (DCN.pending === key) DCN.pending = ''; }
+    if (Q.f.stockTab === 'dm' && dcNormKey_() === key) renderPage('stock');
+  }, 350);
+}
+function viewStockNorm_(){
+  try { dcNormEnsure_(); } catch (e){}
+  const g = (r,n) => (r[n] === undefined || r[n] === null) ? '' : String(r[n]);
+  const full = !!(DCN.res && DCN.key === dcNormKey_());                 // đã quét toàn sổ
+  const base = full ? DCN.res.rows : ((Q.moveLog && Q.moveLog.rows) || []);
+  const q = String(Q.f.dmQ || '').toLowerCase().trim();
+  const tu = Q.f.dmTu || '', den = Q.f.dmDen || '';
+  let rows = base.filter(r => {
+    if (qLoai_(g(r,'Loại phiếu')) !== 'Điều chỉnh định mức') return false;
+    const day = g(r,'Thời gian').slice(0,10);
+    if (day){ if (tu && day < tu) return false; if (den && day > den) return false; }
+    if (!q) return true;
+    return `${g(r,'Mã máy')} ${g(r,'Tên vật tư')} ${g(r,'Mã VT')} ${g(r,'Lý do')} ${g(r,'Người thực hiện')}`.toLowerCase().includes(q);
+  }).slice().reverse();                                                 // mới nhất lên đầu
+  Q._dmView = rows;
+  const nVt = new Set(rows.map(r => g(r,'Mã VT'))).size;
+  const nNguoi = new Set(rows.map(r => g(r,'Người thực hiện')).filter(Boolean)).size;
+  return `
+    <div class="ph">
+      <h1>Điều chỉnh định mức</h1>
+      <p>${nint_(rows.length)} lần chỉnh${full ? ' (đã tìm trên toàn bộ sổ)' : ''}
+        <br><span style="font-size:11px;color:var(--mu)">Vết sửa định mức, đơn giá, tồn tối thiểu — ghi trong Sheet 15 nhưng <b>không phải phiếu nhập/xuất</b>:
+        không làm đổi tồn kho, không tính vào nhập/xuất/chi phí. Muốn sửa định mức thì vào trang Định mức máy.
+        ${Q.moveLog && Q.moveLog.total > (Q.moveLog.rows||[]).length && !full ? '<br>Đang hiện trong 800 phiếu mới nhất; vết cũ hơn sẽ tự tải khi bộ lọc có hiệu lực.' : ''}</span></p>
+    </div>
+    ${qDateBar_('dmTu','dmDen','dm')}
+    <div class="msf">
+      <input class="si" id="qDmSearch" style="flex:1" placeholder="🔍 Tìm mã máy, vật tư, nội dung thay đổi, người sửa…"
+             value="${esc(Q.f.dmQ||'')}" oninput="Q.f.dmQ=this.value;renderPage('stock')">
+      <button class="btn bg-gr sm" onclick="exportCsv({headers:(Q.moveLog||{}).headers||[],rows:Q._dmView||[]},'dieu-chinh-dinh-muc')" title="Xuất đúng phần đang lọc">⤓ CSV</button>
+    </div>
+    <div class="card"><div class="tw" style="max-height:64vh"><table>
+      <thead><tr>
+        <th>Thời gian</th><th>Mã máy</th><th>Vật tư</th><th>Nội dung thay đổi</th><th>Người sửa</th><th>Nguồn</th>
+      </tr></thead>
+      <tbody>${rows.slice(0,500).map(r => {
+        const mm = g(r,'Mã máy');
+        return `<tr>
+          <td style="font-size:11px;white-space:nowrap">${esc(g(r,'Thời gian'))}</td>
+          <td>${mm ? `<span class="mm">${esc(mm)}</span>` : '<span class="b bmu" title="Sửa theo DÒNG MÁY, áp cho mọi máy cùng dòng">cả dòng máy</span>'}</td>
+          <td style="font-size:11px">${esc(g(r,'Tên vật tư'))}</td>
+          <td style="font-size:12px;max-width:520px">${esc(g(r,'Lý do'))}</td>
+          <td style="font-size:11px">${esc(g(r,'Người thực hiện'))}</td>
+          <td style="font-size:10px;color:var(--mu)">${esc(g(r,'Nguồn ghi'))}</td>
+        </tr>`; }).join('') || '<tr><td colspan="6"><div class="empty">Chưa có lần điều chỉnh nào khớp bộ lọc.</div></td></tr>'}</tbody>
+      ${rows.length ? `<tfoot><tr style="position:sticky;bottom:0;background:#f1f5f2;font-weight:700;border-top:2px solid var(--g)">
+          <td colspan="6">Σ TỔNG · ${nint_(rows.length)} lần chỉnh · ${nint_(nVt)} vật tư · ${nint_(nNguoi)} người sửa${tu||den?` · ${esc(tu||'…')} → ${esc(den||'…')}`:''}</td>
+        </tr></tfoot>` : ''}
+    </table></div>
+    ${rows.length>500?`<div class="cb" style="padding:8px 14px;font-size:11px;color:var(--mu)">Hiển thị 500 lần mới nhất trong ${nint_(rows.length)} — tải CSV để xem đủ.</div>`:''}
+    </div>`;
 }
 
 /* ============================================================================
@@ -24802,6 +25013,7 @@ RP_CT['ls-may'] = function (code, label){
     var body = { action: 'chatAsk', question: q, history: hist };
     if (imgs.length){ body.images = imgs.map(function (x){ return { mime: x.mime, data: x.data }; }); ST.waitLbl = 'AI đang xem ảnh…'; }
     if (mems.length) body.mem = mems;
+    try { var ui = (typeof chatUiCtx_ === 'function') ? chatUiCtx_() : null; if (ui) body.ui = ui; } catch (e) {}   // màn hình + bộ lọc đang mở: để bot điều tra đúng tập máy người dùng đang nhìn
     if (opt.deep) body.deep = true;
     if (opt.fresh) body.fresh = true;
     call(body).then(function (d){
@@ -25019,11 +25231,11 @@ viewMaster = function(){
  *  thì hỏi server quét cả sổ rồi đưa kết quả vào đúng hàm vẽ cũ (hoán tạm Q.moveLog, vẽ xong trả lại).
  * ========================================================================== */
 const DCM = { key: '', res: null, pending: '', timer: null };
-function dcMoveKey_(){ return JSON.stringify([Q.f.moveQ || '', Q.f.moveType || '', Q.f.moveVt || '']); }
+function dcMoveKey_(){ return JSON.stringify([Q.f.moveQ || '', Q.f.moveType || '', Q.f.moveVt || '', Q.f.moveTu || '', Q.f.moveDen || '']); }
 function dcMoveNeed_(){
   const m = Q.moveLog || {};
   if (!(Number(m.total) > (m.rows || []).length)) return false;        // sổ đã tải đủ
-  return !!(String(Q.f.moveQ || '').trim() || Q.f.moveType || Q.f.moveVt);
+  return !!(String(Q.f.moveQ || '').trim() || Q.f.moveType || Q.f.moveVt || Q.f.moveTu || Q.f.moveDen);
 }
 function dcMoveEnsure_(){
   if (!dcMoveNeed_()) return;
@@ -25034,7 +25246,7 @@ function dcMoveEnsure_(){
   DCM.timer = setTimeout(async () => {
     try {
       const a = JSON.parse(key);
-      const d = await apiPost({ action: 'qlvtMoveLog', payload: { q: a[0], loai: a[1], vt: a[2], limit: 2000 } });
+      const d = await apiPost({ action: 'qlvtMoveLog', payload: { q: a[0], loai: a[1], vt: a[2], tu: a[3], den: a[4], limit: (a[3] || a[4]) ? 5000 : 2000 } });
       if (d && d.ok){ DCM.key = key; DCM.res = d; }
     } catch (e){ /* mạng chập chờn: giữ 800 phiếu đang có */ }
     finally { if (DCM.pending === key) DCM.pending = ''; }
