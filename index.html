@@ -12203,7 +12203,8 @@ const Q = {
     /* Bộ lọc trang Kho vật tư — ĐA CHỌN, cùng bộ ba với các trang khác (khu vực ·
      * loại hình · đơn vị hợp tác) để người dùng không phải học lại cách lọc ở mỗi trang. */
     stockRegion:new Set(), stockType:new Set(), stockUnit:new Set(),
-    moveQ:'', moveType:'', moveVt:'',  // bộ lọc sổ nhật ký
+    moveQ:'', moveTypes:new Set(), moveVt:'',  // bộ lọc sổ nhật ký · moveTypes: CHỌN NHIỀU loại phiếu cùng lúc (rỗng = tất cả)
+    moveRegion:'',                     // '' | 'Miền Bắc' | 'Miền Nam'
     moveTu:'', moveDen:'',             // khoảng ngày (yyyy-MM-dd) của sổ nhật ký
     dmQ:'', dmTu:'', dmDen:'',         // tab riêng "Điều chỉnh định mức"
     normQ:'', normVt:'',               // bộ lọc bảng sửa định mức (modal)
@@ -12980,7 +12981,8 @@ function viewStockLog_(){
   const src = (Q.moveLog && Q.moveLog.rows) || [];
   const g = (r,...names) => { for (const n of names){ if (r[n] !== undefined && r[n] !== '') return r[n]; } return ''; };
   const q = (Q.f.moveQ||'').toLowerCase();
-  const fType = Q.f.moveType || '';
+  const fTypes = (Q.f.moveTypes instanceof Set) ? Q.f.moveTypes : (Q.f.moveTypes = new Set());
+  const fReg = Q.f.moveRegion || '';
   const fVt = Q.f.moveVt || '';
 
   const fTu = Q.f.moveTu || '', fDen = Q.f.moveDen || '';
@@ -12989,7 +12991,7 @@ function viewStockLog_(){
   let rows = src.filter(r => {
     const lk = qLoai_(g(r,'Loại phiếu'));
     if (lk === 'Điều chỉnh định mức') return false;     // đã tách sang tab riêng
-    if (fType && lk !== fType) return false;
+    if (fTypes.size && !fTypes.has(lk)) return false;
     if (fVt && String(g(r,'Mã VT')).trim() !== fVt) return false;
     if (fTu || fDen){
       const day = String(g(r,'Thời gian')).slice(0,10);
@@ -12999,7 +13001,9 @@ function viewStockLog_(){
     return `${g(r,'Mã máy')} ${g(r,'Trang trại')} ${g(r,'Tên vật tư')} ${g(r,'Lý do')} ${g(r,'Kỹ thuật viên')} ${g(r,'Người thực hiện')}`
       .toLowerCase().includes(q);
   });
-  rows = rows.slice().reverse();                       // mới nhất lên đầu
+  /* rowsPre = khớp MỌI bộ lọc trừ Miền → bảng so sánh Bắc/Nam luôn có đủ hai cột, kể cả khi đang lọc một miền. */
+  const rowsPre = rows.slice().reverse();               // mới nhất lên đầu
+  rows = fReg ? rowsPre.filter(r => qRowRegion_(r) === fReg) : rowsPre;
 
   /* Cộng tiền theo NHÓM đã chuẩn hoá, không so chuỗi thô: sổ đang có lẫn phiếu cũ ghi
    * "Xuất" trơn (trước khi tách hai loại) và phiếu mới ghi "Xuất - Sử dụng". So chuỗi
@@ -13050,9 +13054,10 @@ function viewStockLog_(){
 
     <div class="fbar">
       <span class="mslbl">Loại phiếu</span>
-      ${chip(!fType,'Tất cả',"Q.f.moveType='';renderPage('stock')")}
+      ${chip(!fTypes.size,'Tất cả',"Q.f.moveTypes=new Set();renderPage('stock')")}
       ${['Nhập','Xuất - Sử dụng','Xuất - Mang đi','Kiểm kê','Bù kiểm kê']
-        .map(l=>chip(fType===l,l,`Q.f.moveType='${l}';renderPage('stock')`)).join('')}
+        .map(l=>chip(fTypes.has(l),l,`qMoveTypeToggle_('${l}')`)).join('')}
+      ${fTypes.size>1?`<span style="font-size:11px;color:var(--mu);margin-left:6px">đang chọn ${fTypes.size} loại</span>`:''}
       ${nDm ? `<span style="font-size:11px;color:var(--mu);margin-left:6px">${nint_(nDm)} dòng điều chỉnh định mức → mục
         <a href="#" onclick="Q.f.stockTab='dm';renderPage('stock');return false">🎚 Điều chỉnh định mức</a></span>` : ''}
     </div>
@@ -13061,6 +13066,7 @@ function viewStockLog_(){
       ${chip(!fVt,'Tất cả',"Q.f.moveVt='';renderPage('stock')")}
       ${items.map(v=>chip(fVt===v.vt, esc(v.ten), `Q.f.moveVt='${esc(v.vt)}';renderPage('stock')`)).join('')}
     </div>
+    ${qRegionBar_(rowsPre)}
     ${qDateBar_('moveTu','moveDen','mv')}
 
     <div class="msf">
@@ -13073,6 +13079,7 @@ function viewStockLog_(){
       <button class="btn bg-gr sm" onclick="exportCsv({headers:(Q.moveLog||{}).headers||[],rows:Q._moveView||[]},'nhat-ky-nhap-xuat-vat-tu')" title="Xuất đúng phần đang lọc">⤓ CSV</button>
     </div>
 
+    ${qRegionCompare_(rowsPre)}
     <div class="card"><div class="tw" style="max-height:64vh"><table>
       <thead><tr>
         <th title="WHEN — thời điểm sự vụ xảy ra">Thời gian</th>
@@ -13087,6 +13094,32 @@ function viewStockLog_(){
         <th title="HOW">Nguồn</th>
         <th></th>
       </tr></thead>
+      ${rows.length ? (() => {
+        const pr = Q.perm.viewPrice;
+        const st = 'background:#e8f1ec;font-weight:700;border-bottom:2px solid var(--g);';
+        const mono = 'text-align:right;font-family:var(--mono);white-space:nowrap;';
+        const sub = (lbl, t, col) => `<tr style="background:#fafcfb">
+          <td colspan="5" style="font-size:11px;color:${col||'var(--mu)'};padding-left:18px">${lbl}${t.n!=null?` · ${nint_(t.n)} phiếu`:''}</td>
+          <td style="${mono}font-size:11px">${nfd_(t.sl)}</td>
+          ${pr?`<td style="${mono}font-size:11px">${t.tien==null?'':fmtVnd_(t.tien)}</td>`:''}
+          <td colspan="${pr?7:6}"></td></tr>`;
+        const mixed = !fVt ? ' title="Đang gộp nhiều vật tư (khác đơn vị tính) — chọn 1 vật tư ở bộ lọc để SL có nghĩa"' : '';
+        return `<tbody>
+          <tr style="${st}">
+            <td colspan="5">Σ TỔNG${fReg?' · '+esc(fReg):''} · ${nint_(rows.length)} phiếu khớp lọc${fTu||fDen?` · ${esc(fTu||'…')} → ${esc(fDen||'…')}`:''}</td>
+            <td style="${mono}"${mixed}>${nfd_(slTong)}</td>
+            ${pr?`<td style="${mono}">${fmtVnd_(tienTong)}</td>`:''}
+            <td colspan="${pr?7:6}" style="font-size:11px;font-weight:400;color:var(--mu)">SL = Nhập + Xuất dùng + Mang đi (không gồm Kiểm kê) · tiền = mọi phiếu khớp lọc</td>
+          </tr>
+          ${sub('Nhập', TK['Nhập'], 'var(--s3)')}
+          ${sub('Xuất – Sử dụng', TK['Xuất - Sử dụng'], 'var(--red)')}
+          ${sub('Xuất – Mang đi', TK['Xuất - Mang đi'], 'var(--amb)')}
+          ${sub('= Nhập ròng (Nhập − Mang đi)', { n:null, sl:slRong, tien:nhapRong })}
+          ${TK['Kiểm kê'].n ? sub('Kiểm kê (SL = số đếm tồn, không cộng vào tổng)', { n:TK['Kiểm kê'].n, sl:null, tien:TK['Kiểm kê'].tien }) : ''}
+          ${TK['Bù kiểm kê'].n ? sub('Bù kiểm kê', TK['Bù kiểm kê']) : ''}
+          ${sub('Biến động tồn ròng (Nhập − Dùng − Mang đi)', { n:null, sl:tonDoi, tien:null })}
+        </tbody>`;
+      })() : ''}
       <tbody>${rows.slice(0,400).map(r=>{
         const loai = String(g(r,'Loại phiếu')).trim();
         const trai = String(g(r,'Trang trại'));
@@ -13129,37 +13162,107 @@ function viewStockLog_(){
           })()}</td>
         </tr>`;
       }).join('') || '<tr><td colspan="14"><div class="empty">Chưa có phiếu nào khớp bộ lọc.</div></td></tr>'}</tbody>
-      ${rows.length ? (() => {
-        const pr = Q.perm.viewPrice;
-        const st = 'position:sticky;bottom:0;background:#f1f5f2;font-weight:700;border-top:2px solid var(--g);';
-        const mono = 'text-align:right;font-family:var(--mono);white-space:nowrap;';
-        const sub = (lbl, t, col) => `<tr style="background:#fafcfb">
-          <td colspan="5" style="font-size:11px;color:${col||'var(--mu)'};padding-left:18px">${lbl}${t.n!=null?` · ${nint_(t.n)} phiếu`:''}</td>
-          <td style="${mono}font-size:11px">${nfd_(t.sl)}</td>
-          ${pr?`<td style="${mono}font-size:11px">${t.tien==null?'':fmtVnd_(t.tien)}</td>`:''}
-          <td colspan="${pr?7:6}"></td></tr>`;
-        const mixed = !fVt ? ' title="Đang gộp nhiều vật tư (khác đơn vị tính) — chọn 1 vật tư ở bộ lọc để SL có nghĩa"' : '';
-        return `<tfoot>
-          <tr style="${st}">
-            <td colspan="5">Σ TỔNG · ${nint_(rows.length)} phiếu khớp lọc${fTu||fDen?` · ${esc(fTu||'…')} → ${esc(fDen||'…')}`:''}</td>
-            <td style="${mono}"${mixed}>${nfd_(slTong)}</td>
-            ${pr?`<td style="${mono}">${fmtVnd_(tienTong)}</td>`:''}
-            <td colspan="${pr?7:6}" style="font-size:11px;font-weight:400;color:var(--mu)">SL = Nhập + Xuất dùng + Mang đi (không gồm Kiểm kê) · tiền = mọi phiếu khớp lọc</td>
-          </tr>
-          ${sub('Nhập', TK['Nhập'], 'var(--s3)')}
-          ${sub('Xuất – Sử dụng', TK['Xuất - Sử dụng'], 'var(--red)')}
-          ${sub('Xuất – Mang đi', TK['Xuất - Mang đi'], 'var(--amb)')}
-          ${sub('= Nhập ròng (Nhập − Mang đi)', { n:null, sl:slRong, tien:nhapRong })}
-          ${TK['Kiểm kê'].n ? sub('Kiểm kê (SL = số đếm tồn, không cộng vào tổng)', { n:TK['Kiểm kê'].n, sl:null, tien:TK['Kiểm kê'].tien }) : ''}
-          ${TK['Bù kiểm kê'].n ? sub('Bù kiểm kê', TK['Bù kiểm kê']) : ''}
-          ${sub('Biến động tồn ròng (Nhập − Dùng − Mang đi)', { n:null, sl:tonDoi, tien:null })}
-        </tfoot>`;
-      })() : ''}
     </table></div>
     ${rows.length>400?`<div class="cb" style="padding:8px 14px;font-size:11px;color:var(--mu)">
       Hiển thị 400 phiếu mới nhất trong ${nint_(rows.length)} phiếu khớp lọc — tải CSV để xem đủ.</div>`:''}
     </div>
   `;
+}
+
+/* ---------------------------------------------------------------------------
+ *  MIỀN BẮC / MIỀN NAM CHO SỔ NHẬT KÝ
+ *  Miền của một phiếu = cột "Khu vực" đã đóng băng trên phiếu; phiếu cũ chưa có cột này thì suy từ
+ *  danh sách máy hiện tại (regionOf — cùng hàm với mọi trang khác). Không suy được → "Chưa xác định".
+ * ------------------------------------------------------------------------- */
+const QREG = { src:null, map:null, cnt:null };
+function qRegionMaps_(){
+  const rows = (S.master && S.master.rows) || [];
+  if (QREG.src !== rows){
+    QREG.src = rows; QREG.map = new Map(); QREG.cnt = { 'Miền Bắc':0, 'Miền Nam':0, 'Chưa xác định':0 };
+    rows.forEach(r => {
+      const rg = regionOf(r);
+      QREG.map.set(String(r._byLetter.B || '').trim().toUpperCase(), rg);
+      QREG.cnt[rg] = (QREG.cnt[rg] || 0) + 1;
+    });
+  }
+  return QREG;
+}
+function qRowRegion_(r){
+  const kv = String(r['Khu vực'] || '').trim();
+  if (/bắc/i.test(kv)) return 'Miền Bắc';
+  if (/nam/i.test(kv)) return 'Miền Nam';
+  return qRegionMaps_().map.get(String(r['Mã máy'] || '').trim().toUpperCase()) || 'Chưa xác định';
+}
+function qMoveTypeToggle_(l){
+  if (!(Q.f.moveTypes instanceof Set)) Q.f.moveTypes = new Set();
+  if (Q.f.moveTypes.has(l)) Q.f.moveTypes.delete(l); else Q.f.moveTypes.add(l);
+  renderPage('stock');
+}
+function qRegionBar_(rowsPre){
+  const cur = Q.f.moveRegion || '';
+  const n = { 'Miền Bắc':0, 'Miền Nam':0 };
+  rowsPre.forEach(r => { const k = qRowRegion_(r); if (n[k] !== undefined) n[k]++; });
+  const chip = (on, lbl, v) => `<button class="fchip ${on?'on':''}" onclick="Q.f.moveRegion='${v}';renderPage('stock')">${lbl}</button>`;
+  return `<div class="fbar">
+    <span class="mslbl">Khu vực</span>
+    ${chip(!cur,'Tất cả','')}
+    ${chip(cur==='Miền Bắc',`Miền Bắc · ${nint_(n['Miền Bắc'])}`,'Miền Bắc')}
+    ${chip(cur==='Miền Nam',`Miền Nam · ${nint_(n['Miền Nam'])}`,'Miền Nam')}
+    <span style="font-size:11px;color:var(--mu);margin-left:8px">số phiếu theo các bộ lọc còn lại — bảng so sánh bên dưới luôn hiện cả hai miền</span>
+  </div>`;
+}
+/** Bảng so sánh Miền Bắc ↔ Miền Nam trên các phiếu khớp mọi bộ lọc TRỪ bộ lọc Miền. */
+function qRegionCompare_(rowsPre){
+  const g = (r, n) => (r[n] === undefined || r[n] === null) ? '' : r[n];
+  const KS = ['Nhập','Xuất - Sử dụng','Xuất - Mang đi','Kiểm kê','Bù kiểm kê'];
+  const mk = () => { const o = { n:0, may:new Set(), k:{} }; KS.forEach(k => o.k[k] = { n:0, sl:0, tien:0 }); return o; };
+  const R = { 'Miền Bắc':mk(), 'Miền Nam':mk(), 'Chưa xác định':mk(), 'Tổng':mk() };
+  rowsPre.forEach(r => {
+    const k = qLoai_(g(r,'Loại phiếu')); if (!R['Tổng'].k[k]) return;
+    const sl = numOrNull_(g(r,'Số lượng')) || 0, tien = numOrNull_(g(r,'Thành tiền (đ)')) || 0;
+    [R[qRowRegion_(r)] || R['Chưa xác định'], R['Tổng']].forEach(o => {
+      o.n++; o.may.add(String(g(r,'Mã máy')).trim().toUpperCase());
+      const t = o.k[k]; t.n++; t.sl += sl; t.tien += tien;
+    });
+  });
+  if (!R['Tổng'].n) return '';
+  const pr = Q.perm.viewPrice;
+  const cnt = qRegionMaps_().cnt;
+  const showX = R['Chưa xác định'].n > 0;
+  const cols = ['Miền Bắc','Miền Nam'].concat(showX ? ['Chưa xác định'] : []).concat(['Tổng']);
+  const cell = (sl, tien, bold) => `<td style="text-align:right;font-family:var(--mono);white-space:nowrap;${bold?'font-weight:700;':''}">${nfd_(sl)}${pr && tien != null ? `<div style="font-size:11px;color:var(--mu)">${fmtVnd_(tien)}</div>` : ''}</td>`;
+  const diff = (a, b) => { const d = a - b; return `<td style="text-align:right;font-family:var(--mono);font-size:11px;color:${d>0?'var(--s3)':d<0?'var(--red)':'var(--mu)'}">${d>0?'+':''}${nfd_(d)}</td>`; };
+  const diffT = (a, b) => `<td style="text-align:right;font-family:var(--mono);font-size:11px;color:var(--mu)">${pr ? (a-b>0?'+':'') + fmtVnd_(a-b) : ''}</td>`;
+  const B = R['Miền Bắc'], N = R['Miền Nam'];
+  const line = (lbl, fn, col, skipDiff) => `<tr>
+      <td style="font-size:12px;color:${col||'inherit'}">${lbl}</td>
+      ${cols.map(c => { const v = fn(R[c]); return cell(v.sl, v.tien, c==='Tổng'); }).join('')}
+      ${skipDiff ? '<td></td>' : (() => { const a = fn(B), b = fn(N); return pr ? diffT(a.tien||0, b.tien||0) : diff(a.sl, b.sl); })()}
+    </tr>`;
+  const cntRow = (lbl, fn) => `<tr><td style="font-size:12px">${lbl}</td>
+      ${cols.map(c => `<td style="text-align:right;font-family:var(--mono)${c==='Tổng'?';font-weight:700':''}">${nint_(fn(R[c], c))}</td>`).join('')}
+      <td style="text-align:right;font-family:var(--mono);font-size:11px;color:var(--mu)">${nint_(fn(B,'Miền Bắc') - fn(N,'Miền Nam'))}</td></tr>`;
+  const rong = o => ({ sl:o.k['Nhập'].sl - o.k['Xuất - Mang đi'].sl, tien:o.k['Nhập'].tien - o.k['Xuất - Mang đi'].tien });
+  const dung = o => o.k['Xuất - Sử dụng'];
+  const nMay = c => c === 'Tổng' ? ((cnt['Miền Bắc']||0) + (cnt['Miền Nam']||0) + (cnt['Chưa xác định']||0)) : (cnt[c] || 0);
+  return `<div class="card" style="margin-bottom:10px"><div class="tw"><table>
+    <thead><tr><th>So sánh Miền Bắc ↔ Miền Nam <span style="font-weight:400;color:var(--mu);font-size:11px">(SL, dưới là thành tiền)</span></th>
+      ${cols.map(c => `<th style="text-align:right">${esc(c)}</th>`).join('')}<th style="text-align:right">${pr?'Bắc − Nam (đ)':'Bắc − Nam'}</th></tr></thead>
+    <tbody>
+      ${cntRow('Số phiếu', (o) => o.n)}
+      ${cntRow('Số máy có phiếu', (o) => o.may.size)}
+      ${cntRow('Tổng số máy trong danh sách', (o, c) => nMay(c))}
+      ${line('Nhập', o => o.k['Nhập'], 'var(--s3)')}
+      ${line('Xuất – Sử dụng', o => o.k['Xuất - Sử dụng'], 'var(--red)')}
+      ${line('Xuất – Mang đi', o => o.k['Xuất - Mang đi'], 'var(--amb)')}
+      ${line('= Nhập ròng (Nhập − Mang đi)', rong)}
+      ${R['Tổng'].k['Bù kiểm kê'].n ? line('Bù kiểm kê', o => o.k['Bù kiểm kê']) : ''}
+      ${pr ? `<tr style="background:#f6faf7"><td style="font-size:12px" title="Thành tiền Xuất – Sử dụng ÷ tổng số máy của miền (cả máy không có phiếu) — để so hai miền công bằng dù số máy khác nhau">Chi phí dùng / máy</td>
+        ${cols.map(c => { const m = nMay(c); return `<td style="text-align:right;font-family:var(--mono)${c==='Tổng'?';font-weight:700':''}">${m ? fmtVnd_(dung(R[c]).tien / m) : '—'}</td>`; }).join('')}
+        <td style="text-align:right;font-family:var(--mono);font-size:11px;color:var(--mu)">${nMay('Miền Bắc') && nMay('Miền Nam') ? fmtVnd_(dung(B).tien / nMay('Miền Bắc') - dung(N).tien / nMay('Miền Nam')) : ''}</td></tr>` : ''}
+      <tr><td style="font-size:12px;color:var(--mu)">Kiểm kê (số phiếu)</td>${cols.map(c => `<td style="text-align:right;font-family:var(--mono);color:var(--mu)">${nint_(R[c].k['Kiểm kê'].n)}</td>`).join('')}<td></td></tr>
+    </tbody>
+  </table></div></div>`;
 }
 
 /* ---------------------------------------------------------------------------
@@ -13185,7 +13288,7 @@ function chatUiCtx_(){
     put('machine_types', arr(m.type)); put('region', arr(m.region)); put('owner', arr(m.unit)); put('q', m.q || '');
   } else if (page === 'stock'){
     o.tab = (Q.f && Q.f.stockTab) || '';
-    if (Q.f){ put('machine_types', arr(Q.f.stockType)); put('region', arr(Q.f.stockRegion)); put('owner', arr(Q.f.stockUnit)); put('q', Q.f.moveQ || ''); put('from', Q.f.moveTu || ''); put('to', Q.f.moveDen || ''); }
+    if (Q.f){ put('machine_types', arr(Q.f.stockType)); put('region', arr(Q.f.stockRegion)); put('owner', arr(Q.f.stockUnit)); put('q', Q.f.moveQ || ''); put('from', Q.f.moveTu || ''); put('to', Q.f.moveDen || ''); put('loai_phieu', arr(Q.f.moveTypes)); put('mien', Q.f.moveRegion || ''); }
   } else if (page === 'matcost'){
     if (RP && RP.cpThang) o.month = String(RP.cpThang);
     if (RP && RP.f){ put('region', arr(RP.f.khu)); put('province', arr(RP.f.tinh)); put('machine_types', arr(RP.f.loai)); put('owner', arr(RP.f.donVi)); }
@@ -13294,6 +13397,9 @@ function viewStockNorm_(){
       <thead><tr>
         <th>Thời gian</th><th>Mã máy</th><th>Vật tư</th><th>Nội dung thay đổi</th><th>Người sửa</th><th>Nguồn</th>
       </tr></thead>
+      ${rows.length ? `<tbody><tr style="background:#e8f1ec;font-weight:700;border-bottom:2px solid var(--g)">
+          <td colspan="6">Σ TỔNG · ${nint_(rows.length)} lần chỉnh · ${nint_(nVt)} vật tư · ${nint_(nNguoi)} người sửa${tu||den?` · ${esc(tu||'…')} → ${esc(den||'…')}`:''}</td>
+        </tr></tbody>` : ''}
       <tbody>${rows.slice(0,500).map(r => {
         const mm = g(r,'Mã máy');
         return `<tr>
@@ -13304,9 +13410,6 @@ function viewStockNorm_(){
           <td style="font-size:11px">${esc(g(r,'Người thực hiện'))}</td>
           <td style="font-size:10px;color:var(--mu)">${esc(g(r,'Nguồn ghi'))}</td>
         </tr>`; }).join('') || '<tr><td colspan="6"><div class="empty">Chưa có lần điều chỉnh nào khớp bộ lọc.</div></td></tr>'}</tbody>
-      ${rows.length ? `<tfoot><tr style="position:sticky;bottom:0;background:#f1f5f2;font-weight:700;border-top:2px solid var(--g)">
-          <td colspan="6">Σ TỔNG · ${nint_(rows.length)} lần chỉnh · ${nint_(nVt)} vật tư · ${nint_(nNguoi)} người sửa${tu||den?` · ${esc(tu||'…')} → ${esc(den||'…')}`:''}</td>
-        </tr></tfoot>` : ''}
     </table></div>
     ${rows.length>500?`<div class="cb" style="padding:8px 14px;font-size:11px;color:var(--mu)">Hiển thị 500 lần mới nhất trong ${nint_(rows.length)} — tải CSV để xem đủ.</div>`:''}
     </div>`;
@@ -25231,11 +25334,11 @@ viewMaster = function(){
  *  thì hỏi server quét cả sổ rồi đưa kết quả vào đúng hàm vẽ cũ (hoán tạm Q.moveLog, vẽ xong trả lại).
  * ========================================================================== */
 const DCM = { key: '', res: null, pending: '', timer: null };
-function dcMoveKey_(){ return JSON.stringify([Q.f.moveQ || '', Q.f.moveType || '', Q.f.moveVt || '', Q.f.moveTu || '', Q.f.moveDen || '']); }
+function dcMoveKey_(){ return JSON.stringify([Q.f.moveQ || '', Array.from(Q.f.moveTypes || []).sort().join('|'), Q.f.moveVt || '', Q.f.moveTu || '', Q.f.moveDen || '', Q.f.moveRegion || '']); }
 function dcMoveNeed_(){
   const m = Q.moveLog || {};
   if (!(Number(m.total) > (m.rows || []).length)) return false;        // sổ đã tải đủ
-  return !!(String(Q.f.moveQ || '').trim() || Q.f.moveType || Q.f.moveVt || Q.f.moveTu || Q.f.moveDen);
+  return !!(String(Q.f.moveQ || '').trim() || (Q.f.moveTypes && Q.f.moveTypes.size) || Q.f.moveVt || Q.f.moveTu || Q.f.moveDen || Q.f.moveRegion);
 }
 function dcMoveEnsure_(){
   if (!dcMoveNeed_()) return;
@@ -25246,7 +25349,7 @@ function dcMoveEnsure_(){
   DCM.timer = setTimeout(async () => {
     try {
       const a = JSON.parse(key);
-      const d = await apiPost({ action: 'qlvtMoveLog', payload: { q: a[0], loai: a[1], vt: a[2], tu: a[3], den: a[4], limit: (a[3] || a[4]) ? 5000 : 2000 } });
+      const d = await apiPost({ action: 'qlvtMoveLog', payload: { q: a[0], loai: (a[1] && a[1].indexOf('|') < 0) ? a[1] : '', vt: a[2], tu: a[3], den: a[4], limit: (a[3] || a[4] || a[5] || a[1]) ? 5000 : 2000 } });
       if (d && d.ok){ DCM.key = key; DCM.res = d; }
     } catch (e){ /* mạng chập chờn: giữ 800 phiếu đang có */ }
     finally { if (DCM.pending === key) DCM.pending = ''; }
